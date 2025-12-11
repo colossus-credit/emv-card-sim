@@ -17,7 +17,9 @@ import javax.smartcardio.ResponseAPDU;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
+@Tag("simulator")
 public class SimulatorTest {
     private static native void sendApduResponse(byte[] responseApdu);
 

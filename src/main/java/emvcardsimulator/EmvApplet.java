@@ -298,9 +298,18 @@ public abstract class EmvApplet extends Applet {
     }
 
     protected EmvApplet() {
-        tmpBuffer = JCSystem.makeTransientByteArray((short) 255, JCSystem.CLEAR_ON_DESELECT);
+        // Increased to 512 bytes to support RSA-2048 operations (256-byte signatures)
+        tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         
-        factoryReset();
+        // Inline factoryReset() to avoid this-escape warning
+        JCSystem.beginTransaction();
+        responseTemplateTag = (short) 0x0077;
+        randomResponseSuffixData = false;
+        JCSystem.commitTransaction();
+        
+        ApduLog.clear();
+        ReadRecord.clear();
+        EmvTag.clear();
 
         responseTemplateGetProcessingOptions = new TagTemplate();
         responseTemplateDda = new TagTemplate();

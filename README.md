@@ -30,6 +30,29 @@ If you have all developer tools existing, or enter to `nix-shell`, then you can 
 gradle build
 ```
 
+## Colossus Credit Card Network Support
+
+This simulator now includes full support for the **Colossus Credit Card Network** with CDA (Combined Dynamic Data Authentication):
+
+- **AID**: `A0000000951`
+- **BIN**: `67676767`
+- **RSA-2048 only** (RSA-1024 not supported)
+- **CDA authentication** with custom CDOL
+- **Forced online transactions** (ARQC only)
+- **MTI 200 (SMS)** transaction type
+
+See [COLOSSUS.md](COLOSSUS.md) for detailed documentation.
+
+### Quick Start - Colossus Card
+
+```bash
+# Run Colossus test suite
+gradle test --tests ColossusPaymentApplicationTest
+
+# Deploy Colossus card to JavaCard
+gradle deployPaymentApp -Pjc_version=3.0.5 -Ppaymentapp_applet_aid=A0000000951
+```
+
 ## Update dependencies
 
 Run the [GitHub Actions Workflow](https://github.com/mrautio/emv-card-simulator/actions/workflows/update-dependencies.yml).

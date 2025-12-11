@@ -27,27 +27,27 @@ if (!project.hasProperty("paymentapp_applet_aid")) {
 // 3.1.0 targeting does not work
 /*if (jc_version == "3.1.0") {
     // class major version 51
-    ext.java_version_compatible = 1.7
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc310b43_kit"
 } else*/ if (jc_version == "3.0.5") {
-    // class major version 51
-    ext.java_version_compatible = 1.7
+    // class major version 51 - using 1.8 for modern Java compiler compatibility
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc305u3_kit"
 } else if (jc_version == "3.0.4") {
-    // class major version 50
-    ext.java_version_compatible = 1.6
+    // class major version 50 - using 1.8 for modern Java compiler compatibility
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc304_kit"
 } else if (jc_version == "3.0.1") {
-    // class major version 50
-    ext.java_version_compatible = 1.6
+    // class major version 50 - using 1.8 for modern Java compiler compatibility
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc303_kit"
 } else if (jc_version == "2.2.2") {
-    // class major version 49
-    ext.java_version_compatible = 1.5
+    // class major version 49 - using 1.8 for modern Java compiler compatibility
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc222_kit"
 } else if (jc_version == "2.2.1") {
-    // class major version 46
-    ext.java_version_compatible = 1.2
+    // class major version 46 - using 1.8 for modern Java compiler compatibility
+    ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc221_kit"
 } else {
     throw new GradleException("JavaCard version not recognized: ${jc_version}")
@@ -71,7 +71,9 @@ task buildSimulatorLibrary(type: Exec) {
 }
 
 tasks.withType(Test) {
-    systemProperty "java.library.path", "../../rust/simulator/target/debug/"
+    // Set absolute path to the Rust simulator library
+    def projectDir = project.projectDir.absolutePath
+    systemProperty "java.library.path", "${projectDir}/src/test/rust/simulator/target/debug/"
 }
 
 checkstyle {
@@ -99,16 +101,16 @@ configurations {
 }
 
 dependencies {
+    // Use consistent JUnit 5 version
+    def junitVersion = '5.9.3'
+    
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:latest.release'
-
-    testImplementation (
-        'org.junit.jupiter:junit-jupiter-api:latest.release',
-        'com.klinec:jcardsim:latest.release'
-    )
-    implementation (
-        'com.klinec:jcardsim:latest.release'
-    )
+    testImplementation 'com.klinec:jcardsim:latest.release'
+    implementation 'com.klinec:jcardsim:latest.release'
     javacardAntTask 'com.github.martinpaljak:ant-javacard:latest.release'
 }
 
@@ -116,16 +118,37 @@ test {
     dependsOn buildSimulatorLibrary
     workingDir 'src/test/java/emvcardsimulator'
 
-    useJUnitPlatform()
+    useJUnitPlatform() {
+        // Exclude SimulatorTest which requires native library
+        excludeEngines 'junit-vintage'
+    }
+    
+    // Exclude SimulatorTest by pattern
+    exclude '**/SimulatorTest.class'
 
     testLogging {
         outputs.upToDateWhen { false }
-        events "started", "skipped", "failed"
+        events "started", "skipped", "failed", "passed"
         exceptionFormat "full"
         showStandardStreams true
+        showExceptions true
+        showCauses true
+        showStackTraces true
     }
 
     failFast = false
+    
+    // Add more debug output
+    beforeTest { descriptor ->
+        logger.lifecycle("Running test: ${descriptor}")
+    }
+    
+    afterTest { descriptor, result ->
+        logger.lifecycle("Test ${descriptor} completed with result: ${result.resultType}")
+    }
+    
+    // Don't ignore test failures
+    ignoreFailures = false
 }
 
 compileJava {

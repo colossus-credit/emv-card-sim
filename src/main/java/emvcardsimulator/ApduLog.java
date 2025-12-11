@@ -20,7 +20,8 @@ public class ApduLog {
         data = new byte[(short) (length & 0x00FF)];
         this.length = length;
 
-        setData(src, srcOffset, this.length);
+        // Inline setData to avoid this-escape warning
+        Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
 
         next = null;
         previous = tail;
@@ -120,7 +121,7 @@ public class ApduLog {
     /**
      * Set the data/value and length of the tag.
      */
-    public void setData(byte[] src, short srcOffset, byte length) {
+    public final void setData(byte[] src, short srcOffset, byte length) {
         this.length = length;
         Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
     }

@@ -26,7 +26,8 @@ public class EmvTag {
 
         Util.setShort(tag, (short) 0, tagId);
         if (this.length != 0) {
-            setData(src, srcOffset, this.length);
+            // Inline setData to avoid this-escape warning
+            Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
         }
 
         next = null;
@@ -139,7 +140,7 @@ public class EmvTag {
     /**
      * Set the data/value and length of the tag.
      */
-    public void setData(byte[] src, short srcOffset, byte length) {
+    public final void setData(byte[] src, short srcOffset, byte length) {
         this.length = length;
         Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
     }

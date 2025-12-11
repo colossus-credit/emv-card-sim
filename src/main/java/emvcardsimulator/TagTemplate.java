@@ -17,7 +17,7 @@ public class TagTemplate {
     /**
      * Set BER-TLV EMV tag list. All tags should be stored as EmvTag before serialization.
      */
-    public void setData(byte[] src, short srcOffset, byte length) {
+    public final void setData(byte[] src, short srcOffset, byte length) {
         if (length % 2 != 0) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
