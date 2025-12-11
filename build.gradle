@@ -30,12 +30,13 @@ if (!project.hasProperty("paymentapp_applet_aid")) {
     ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc310b43_kit"
 } else*/ if (jc_version == "3.0.5") {
-    // class major version 51 - using 1.8 for modern Java compiler compatibility
-    ext.java_version_compatible = 1.8
+    // class major version 51 - Java 1.7 required for JavaCard 3.0.5
+    ext.java_version_compatible = 1.7
     ext.jc_sdk = "jc305u3_kit"
 } else if (jc_version == "3.0.4") {
-    // class major version 50 - using 1.8 for modern Java compiler compatibility
-    ext.java_version_compatible = 1.8
+    // class major version 50 - Java 1.6 required but not supported by Java 17+
+    // Use jc_version=3.0.5 instead or install older JDK
+    ext.java_version_compatible = 1.7
     ext.jc_sdk = "jc304_kit"
 } else if (jc_version == "3.0.1") {
     // class major version 50 - using 1.8 for modern Java compiler compatibility
@@ -159,8 +160,15 @@ compileJava {
             '-Werror'
     ]
 
-    sourceCompatibility = java_version_compatible
-    targetCompatibility = java_version_compatible
+    // Use --release for proper cross-compilation with modern JDK
+    // This ensures both API and bytecode compatibility
+    if (JavaVersion.current().isJava9Compatible()) {
+        def releaseVersion = java_version_compatible.toString().replace("1.", "").toInteger()
+        options.release = releaseVersion
+    } else {
+        sourceCompatibility = java_version_compatible
+        targetCompatibility = java_version_compatible
+    }
 
     // in case need to target for very old Java class major version
     if (project.hasProperty("compile_javac_path")) {

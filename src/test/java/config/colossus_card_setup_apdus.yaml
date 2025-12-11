@@ -208,11 +208,13 @@
 
 # CDOL1 (Card Risk Management Data Object List 1) - Colossus custom CDOL
 # 9F02(6) + 9F03(6) + 9F1A(2) + 95(5) + 5F2A(2) + 9A(3) + 9C(1) + 9F37(4) + 9F1C(8) + 9F16(15) + 9F01(6)
-- req: '80 01 00 8C 24 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04 9F 1C 08 9F 16 0F 9F 01 06'
+# CDOL structure data: 30 bytes (0x1E)
+- req: '80 01 00 8C 1E 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04 9F 1C 08 9F 16 0F 9F 01 06'
   res: '90 00'
 
-# CDOL2 (for second GENERATE AC) - similar structure
-- req: '80 01 00 8D 26 8A 02 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04 9F 1C 08 9F 16 0F 9F 01 06'
+# CDOL2 (for second GENERATE AC) - similar structure with 8A prepended
+# CDOL structure data: 32 bytes (0x20)
+- req: '80 01 00 8D 20 8A 02 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04 9F 1C 08 9F 16 0F 9F 01 06'
   res: '90 00'
 
 # FCI Proprietary Template (tag A5)

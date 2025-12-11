@@ -423,9 +423,9 @@ public class ColossusPaymentApplicationTest {
 
     private void setupColossusCdol() throws CardException {
         // Set CDOL1 - Colossus custom structure
-        // CLA INS P1 P2 LC [36 bytes of CDOL definition]
-        // Total: 5 header + 36 data = 41 bytes
-        byte[] cdolCmd = new byte[41];
+        // CLA INS P1 P2 LC [30 bytes of CDOL definition]
+        // Total: 5 header + 30 data = 35 bytes
+        byte[] cdolCmd = new byte[35];
         int idx = 0;
         
         // Header
@@ -433,7 +433,7 @@ public class ColossusPaymentApplicationTest {
         cdolCmd[idx++] = (byte) 0x01;  // INS (SET_EMV_TAG)
         cdolCmd[idx++] = (byte) 0x00;  // P1 (tag high byte)
         cdolCmd[idx++] = (byte) 0x8C;  // P2 (tag low byte - CDOL1)
-        cdolCmd[idx++] = (byte) 0x24;  // LC = 36 bytes
+        cdolCmd[idx++] = (byte) 0x1E;  // LC = 30 bytes (0x1E)
         
         // CDOL structure: tag + length for each field (3 bytes per entry)
         cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x02; cdolCmd[idx++] = (byte) 0x06;  // Amount, Authorised
