@@ -3,7 +3,14 @@
 # Colossus Card Personalization Script
 # Personalizes a JavaCard with Colossus payment application (RSA-2048, CDA enabled)
 #
-# Usage: ./personalize-colossus-card.sh [OPTIONS]
+# Usage: ./personalize-colossus-card.sh [PAN]
+#
+# Arguments:
+#   PAN (optional) - 16-digit PAN to use. If not provided, generates random PAN with Colossus BIN
+#
+# Examples:
+#   ./personalize-colossus-card.sh                    # Auto-generate random PAN
+#   ./personalize-colossus-card.sh 6767676712345674   # Use specific PAN
 #
 # Requirements:
 # - JavaCard with deployed paymentapp.cap
@@ -14,7 +21,6 @@ set -e  # Exit on error
 
 # Configuration
 APPLET_AID="AFFFFFFFFF1234"  # Default from build.gradle
-PAN="6767676712345678"        # Colossus BIN 67676767
 CARDHOLDER_NAME="COLOSSUS/CARDHOLDER"
 EXPIRY_DATE="251231"          # YYMMDD format
 PIN_CODE="1234"               # Optional PIN
@@ -41,6 +47,76 @@ print_error() {
 
 print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+# Luhn checksum calculation (for generating check digit)
+calculate_luhn() {
+    local number="$1"
+    local sum=0
+    local length=${#number}
+    
+    # Process from right to left, double every second digit
+    for ((i=length-1; i>=0; i--)); do
+        digit=${number:$i:1}
+        position=$(( (length - 1 - i) % 2 ))
+        
+        if [ $position -eq 0 ]; then
+            # Double this digit (it's at odd position from right)
+            digit=$(( digit * 2 ))
+            if [ $digit -gt 9 ]; then
+                digit=$(( digit - 9 ))
+            fi
+        fi
+        
+        sum=$(( sum + digit ))
+    done
+    
+    checksum=$(( (10 - (sum % 10)) % 10 ))
+    echo $checksum
+}
+
+# Verify Luhn checksum (for complete PAN)
+verify_luhn() {
+    local number="$1"
+    local sum=0
+    local length=${#number}
+    
+    # Process from right to left, double every second digit starting from second-to-last
+    for ((i=length-1; i>=0; i--)); do
+        digit=${number:$i:1}
+        position=$(( (length - 1 - i) % 2 ))
+        
+        if [ $position -eq 1 ]; then
+            # Double this digit (it's at even position from right, but not rightmost)
+            digit=$(( digit * 2 ))
+            if [ $digit -gt 9 ]; then
+                digit=$(( digit - 9 ))
+            fi
+        fi
+        
+        sum=$(( sum + digit ))
+    done
+    
+    [ $(( sum % 10 )) -eq 0 ]
+}
+
+# Generate random digits
+generate_random_digits() {
+    local count=$1
+    local result=""
+    for ((i=0; i<count; i++)); do
+        result="${result}$(( RANDOM % 10 ))"
+    done
+    echo "$result"
+}
+
+# Generate random 16-digit PAN with Colossus BIN
+generate_random_pan() {
+    local bin="67676767"  # Colossus BIN
+    local account=$(generate_random_digits 7)
+    local base="${bin}${account}"
+    local checksum=$(calculate_luhn "$base")
+    echo "${base}${checksum}"
 }
 
 # Function to send APDU via gp.jar
@@ -72,6 +148,38 @@ send_apdu() {
         return 1
     fi
 }
+
+# Parse PAN parameter or generate random
+if [ -n "$1" ]; then
+    # PAN provided as parameter
+    PAN="$1"
+    # Remove spaces and validate
+    PAN=$(echo "$PAN" | tr -d ' -')
+    
+    # Validate PAN length
+    if [ ${#PAN} -lt 8 ] || [ ${#PAN} -gt 19 ]; then
+        print_error "Invalid PAN length: ${#PAN}. Must be 8-19 digits."
+        exit 1
+    fi
+    
+    # Validate PAN is numeric
+    if ! [[ "$PAN" =~ ^[0-9]+$ ]]; then
+        print_error "Invalid PAN: must contain only digits"
+        exit 1
+    fi
+    
+    # Verify Luhn checksum
+    if ! verify_luhn "$PAN"; then
+        print_error "Invalid PAN: Luhn checksum failed"
+        exit 1
+    fi
+    
+    print_info "Using provided PAN: $PAN"
+else
+    # Generate random PAN
+    PAN=$(generate_random_pan)
+    print_success "Generated random PAN: $PAN"
+fi
 
 # Check if gp.jar exists
 if [ ! -f "gp.jar" ]; then
@@ -172,7 +280,15 @@ echo ""
 print_info "Step 6: Setup Card Data"
 send_apdu "ATC (counter)" "80 01 9F 36 02 00 01"
 send_apdu "AID (A0000000951)" "80 01 00 84 06 A0 00 00 00 09 51"
-send_apdu "PAN" "80 01 00 5A 08 67 67 67 67 12 34 56 78"
+
+# Format PAN for APDU (BCD encoding: 2 digits = 1 byte)
+# PAN digits are already in format that looks like hex (e.g., "67" = 0x67)
+pan_formatted=$(echo "$PAN" | sed 's/../& /g' | sed 's/ $//')
+pan_byte_length=$(( ${#PAN} / 2 ))  # Each byte holds 2 digits
+pan_length=$(printf '%02X' $pan_byte_length)
+pan_apdu="80 01 00 5A $pan_length $pan_formatted"
+send_apdu "PAN ($PAN)" "$pan_apdu"
+
 send_apdu "Expiry date" "80 01 5F 24 03 25 12 31"
 send_apdu "PAN sequence" "80 01 5F 34 01 01"
 send_apdu "Application label" "80 01 00 50 08 43 4F 4C 4F 53 53 55 53"
