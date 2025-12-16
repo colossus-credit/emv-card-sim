@@ -22,6 +22,35 @@ export JAVA_HOME=/usr/local/Cellar/openjdk@17/17.0.16/libexec/openjdk.jdk/Conten
 export PATH=$JAVA_HOME/bin:$PATH
 ```
 
+### Certificate Generation (Production Setup)
+
+Generate the complete EMV certificate chain for your Colossus network:
+
+```bash
+# 1. Generate CAPK (Certificate Authority Public Key) - Root of Trust
+./generate-capk.sh 92 ./keys/capk
+# Output: capk_private.pem, capk_public.pem, capk_modulus.bin, etc.
+
+# 2. Generate Issuer Key and Certificate (signed by CAPK)
+./generate-issuer-cert.sh ./keys/capk/capk_private.pem COLOSSUS_BANK ./keys/issuer
+# Output: issuer_private.pem, issuer_certificate.bin (256 bytes), etc.
+
+# 3. Generate ICC (Card) Key and Certificate (signed by Issuer)
+./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674 ./keys/icc
+# Output: icc_private.pem, icc_certificate.bin (256 bytes), etc.
+
+# Each script generates:
+# - PEM keys (private & public)
+# - Raw binary files (modulus, exponent, certificate)
+# - YAML configuration for card personalization
+# - Detailed information file
+```
+
+**Certificate Chain**: CAPK → Issuer → ICC  
+**Key Sizes**: All RSA-2048 (256 bytes)  
+**Exponent**: 3 (standard EMV)  
+**Hash**: SHA-256
+
 ### Running Tests
 
 ```bash

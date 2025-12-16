@@ -46,11 +46,26 @@ See [COLOSSUS.md](COLOSSUS.md) for detailed documentation.
 ### Quick Start - Colossus Card
 
 ```bash
-# Run Colossus test suite
+# 1. Generate Certificate Authority keys (root of trust)
+./generate-capk.sh
+
+# 2. Generate Issuer certificate (signed by CAPK)
+./generate-issuer-cert.sh ./keys/capk/capk_private.pem COLOSSUS_BANK
+
+# 3. Generate ICC (card) certificate (signed by Issuer)
+./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674
+
+# 4. Generate additional test PANs with Colossus BIN
+./generate-pan.sh 16
+
+# 5. Run Colossus test suite
 gradle test --tests ColossusPaymentApplicationTest
 
-# Deploy Colossus card to JavaCard
+# 6. Deploy Colossus card to JavaCard
 gradle deployPaymentApp -Pjc_version=3.0.5 -Ppaymentapp_applet_aid=A0000000951
+
+# 7. Personalize card with generated certificates
+./personalize-colossus-card.sh 6767676712345674
 ```
 
 ## Update dependencies
