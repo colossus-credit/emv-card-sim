@@ -10,7 +10,7 @@
 #
 # Examples:
 #   ./personalize-colossus-card.sh                    # Auto-generate random PAN
-#   ./personalize-colossus-card.sh 6767676712345674   # Use specific PAN
+#   ./personalize-colossus-card.sh 4206942012345674   # Use specific PAN
 #
 # Requirements:
 # - JavaCard with deployed paymentapp.cap
@@ -112,7 +112,7 @@ generate_random_digits() {
 
 # Generate random 16-digit PAN with Colossus BIN
 generate_random_pan() {
-    local bin="67676767"  # Colossus BIN
+    local bin="42069420"  # Colossus BIN
     local account=$(generate_random_digits 7)
     local base="${bin}${account}"
     local checksum=$(calculate_luhn "$base")

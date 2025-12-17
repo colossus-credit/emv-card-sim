@@ -5,7 +5,7 @@ JavaCard implementation of CDA (Combined Dynamic Data Authentication) for the Co
 ## Network Specifications
 
 - **AID**: `A0000000951`
-- **BIN**: `67676767`
+- **BIN**: `42069420`
 - **Crypto**: RSA-2048 with SHA-256
 - **Authentication**: CDA (Combined Dynamic Data Authentication)
 - **Transaction Mode**: Forced online (ARQC only)
@@ -36,7 +36,7 @@ Generate the complete EMV certificate chain for your Colossus network:
 # Output: issuer_private.pem, issuer_certificate.bin (256 bytes), etc.
 
 # 3. Generate ICC (Card) Key and Certificate (signed by Issuer)
-./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674 ./keys/icc
+./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674 ./keys/icc
 # Output: icc_private.pem, icc_certificate.bin (256 bytes), etc.
 
 # Each script generates:

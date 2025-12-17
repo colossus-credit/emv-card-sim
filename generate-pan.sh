@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Generate Random PAN with Luhn Checksum
-# Supports Colossus BIN (67676767) and custom formats
+# Supports Colossus BIN (42069420) and custom formats
 #
 # Usage:
 #   ./generate-pan.sh [length] [prefix]
 #
 # Examples:
 #   ./generate-pan.sh 8              # Random 8-digit PAN
-#   ./generate-pan.sh 16             # 16-digit PAN with Colossus BIN (67676767)
+#   ./generate-pan.sh 16             # 16-digit PAN with Colossus BIN (42069420)
 #   ./generate-pan.sh 16 12345678    # 16-digit PAN with custom BIN
 #   ./generate-pan.sh 12 4111        # 12-digit PAN starting with 4111
 
@@ -106,11 +106,11 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     echo "Examples:"
     echo "  ./generate-pan.sh                # 16-digit PAN with Colossus BIN (default)"
     echo "  ./generate-pan.sh 8              # Random 8-digit PAN"
-    echo "  ./generate-pan.sh 16             # 16-digit PAN with Colossus BIN (67676767)"
+    echo "  ./generate-pan.sh 16             # 16-digit PAN with Colossus BIN (42069420)"
     echo "  ./generate-pan.sh 16 12345678    # 16-digit PAN with custom BIN"
     echo "  ./generate-pan.sh 12 4111        # 12-digit PAN starting with 4111"
     echo ""
-    echo "Default: 16-digit PAN with Colossus BIN (67676767)"
+    echo "Default: 16-digit PAN with Colossus BIN (42069420)"
     exit 0
 fi
 
@@ -146,7 +146,7 @@ case "$MODE" in
         
     16)
         # Generate 16-digit PAN with Colossus BIN (8 + 7 + 1 Luhn)
-        BIN="67676767"  # Colossus BIN
+        BIN="42069420"  # Colossus BIN
         
         if [ -n "$CUSTOM_PREFIX" ]; then
             # Override BIN
@@ -195,7 +195,7 @@ print_info "PAN Details:"
 echo "  Raw:      $pan"
 echo "  Length:   ${#pan} digits"
 if [ "$MODE" = "16" ] && [ -z "$CUSTOM_PREFIX" ]; then
-    echo "  BIN:      67676767 (Colossus)"
+    echo "  BIN:      42069420 (Colossus)"
     echo "  Account:  ${pan:8:7}"
     echo "  Checksum: ${pan:15:1}"
 elif [ "$MODE" = "16" ]; then

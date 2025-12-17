@@ -13,8 +13,8 @@
 #
 # Examples:
 #   ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem
-#   ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674
-#   ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674 ./card_keys
+#   ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674
+#   ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674 ./card_keys
 #
 # Outputs:
 #   - icc_private.pem      - ICC private key (KEEP ON CARD ONLY!)
@@ -86,7 +86,7 @@ verify_luhn() {
 
 # Generate random PAN with Colossus BIN
 generate_pan() {
-    local bin="67676767"
+    local bin="42069420"
     local account=$(printf "%07d" $(( RANDOM * RANDOM % 10000000 )))
     local base="${bin}${account}"
     
@@ -126,8 +126,8 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     echo ""
     echo "Examples:"
     echo "  ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem"
-    echo "  ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674"
-    echo "  ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674 ./card_keys"
+    echo "  ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674"
+    echo "  ./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674 ./card_keys"
     echo ""
     echo "Output Files:"
     echo "  icc_private.pem      - ICC private key (KEEP ON CARD!)"
@@ -183,7 +183,7 @@ fi
 # Configuration
 KEY_SIZE=2048
 EXPONENT=3  # Standard EMV exponent
-COLOSSUS_BIN="67676767"
+COLOSSUS_BIN="42069420"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CERT_SERIAL=$(printf "%08X" $RANDOM$RANDOM)
 EXPIRY_DATE="251231"  # YYMMDD format (Dec 31, 2025)

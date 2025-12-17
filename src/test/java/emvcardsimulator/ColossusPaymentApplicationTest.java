@@ -21,7 +21,7 @@ import org.junit.jupiter.api.DisplayName;
  * 
  * Colossus Network Specifications:
  * - AID: A0000000951
- * - BIN: 67676767
+ * - BIN: 42069420
  * - RSA-2048 only (no RSA-1024)
  * - CDA (Combined Dynamic Data Authentication) required
  * - Forced online transactions (ARQC only)
@@ -34,7 +34,7 @@ public class ColossusPaymentApplicationTest {
         (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51 
     };
     
-    // Colossus BIN: 67676767
+    // Colossus BIN: 42069420
     private static final byte[] COLOSSUS_BIN = new byte[] { 
         (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67 
     };
@@ -218,7 +218,7 @@ public class ColossusPaymentApplicationTest {
     public void testColossusBinInPan() throws CardException {
         setupColossusCard();
         
-        // Set PAN with Colossus BIN (67676767)
+        // Set PAN with Colossus BIN (42069420)
         byte[] pan = new byte[] {
             (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,  // Colossus BIN
             (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78   // Account number
