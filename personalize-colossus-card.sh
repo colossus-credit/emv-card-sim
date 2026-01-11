@@ -279,7 +279,7 @@ echo ""
 # Step 6: Setup Card Data
 print_info "Step 6: Setup Card Data"
 send_apdu "ATC (counter)" "80 01 9F 36 02 00 01"
-send_apdu "AID (A0000000951)" "80 01 00 84 06 A0 00 00 00 09 51"
+send_apdu "AID (A000000951)" "80 01 00 84 05 A0 00 00 09 51"
 
 # Format PAN for APDU (BCD encoding: 2 digits = 1 byte)
 # PAN digits are already in format that looks like hex (e.g., "67" = 0x67)
