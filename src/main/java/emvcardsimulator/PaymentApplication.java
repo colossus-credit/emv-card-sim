@@ -22,7 +22,6 @@ public class PaymentApplication extends EmvApplet {
 
     private Cipher rsaCipher;
     private MessageDigest shaMessageDigest;
-    private MessageDigest sha256MessageDigest;
     private byte[] challenge;
     private byte[] tag9f4cDynamicNumber;
 
@@ -30,19 +29,8 @@ public class PaymentApplication extends EmvApplet {
     private short rsaPrivateKeyByteSize = 0;
     private byte[] pinCode = null;
     private boolean useRandom = true;
-    private boolean cdaEnabled = false;
-    
-    // For handling chained APDUs (RSA-2048 key loading)
-    private byte[] chainedDataBuffer = null;
-    private short chainedDataLength = 0;
-    
-    // Buffer for CDA signature construction (RSA-2048 = 256 bytes)
-    private byte[] cdaSignatureBuffer = null;
 
     private void processSetSettings(APDU apdu, byte[] buf) {
-        // Check if this is a chained APDU (CLA bit 4 set = 0x10)
-        boolean isChained = ((buf[ISO7816.OFFSET_CLA] & 0x10) != 0);
-        
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
         switch (settingsId) {
             // PIN CODE
@@ -60,44 +48,8 @@ public class PaymentApplication extends EmvApplet {
                 break;
             // ICC RSA KEY MODULUS
             case 0x0004:
-                short modulusDataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-                
-                // Handle chained APDUs for RSA-2048 (256 bytes)
-                if (isChained) {
-                    // First chunk - initialize buffer
-                    if (chainedDataBuffer == null) {
-                        chainedDataBuffer = new byte[512];  // Max buffer for chaining
-                        chainedDataLength = 0;
-                    }
-                    
-                    // Append this chunk to buffer
-                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, chainedDataBuffer, chainedDataLength, modulusDataLength);
-                    chainedDataLength += modulusDataLength;
-                    
-                    // Return success, waiting for next chunk
-                    break;
-                }
-                
-                // Last chunk or single APDU
-                if (chainedDataBuffer != null && chainedDataLength > 0) {
-                    // Append final chunk
-                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, chainedDataBuffer, chainedDataLength, modulusDataLength);
-                    chainedDataLength += modulusDataLength;
-                    
-                    // Use chained data
-                    rsaPrivateKeyByteSize = chainedDataLength;
-                } else {
-                    // Single APDU (RSA-1024 or smaller)
-                    rsaPrivateKeyByteSize = modulusDataLength;
-                }
-                
+                rsaPrivateKeyByteSize = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
                 short keyLength = (short) (rsaPrivateKeyByteSize * 8);
-                
-                // Enforce RSA-2048 for CDA when enabled (Colossus requirement)
-                if (cdaEnabled && keyLength != (short) 2048) {
-                    throw new CryptoException(CryptoException.ILLEGAL_USE);
-                }
-                
                 switch (keyLength) {
                     case (short) 1024:
                         keyLength = KeyBuilder.LENGTH_RSA_1024;
@@ -111,9 +63,6 @@ public class PaymentApplication extends EmvApplet {
                     case (short) 1984:
                         keyLength = KeyBuilder.LENGTH_RSA_1984;
                         break;
-                    case (short) 2048:
-                        keyLength = KeyBuilder.LENGTH_RSA_2048;
-                        break;
                     default:
                         throw new CryptoException(CryptoException.ILLEGAL_USE);
                 }
@@ -122,57 +71,11 @@ public class PaymentApplication extends EmvApplet {
                 rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
                 rsaPrivateKey.clearKey();
 
-                // Set modulus from appropriate buffer
-                if (chainedDataBuffer != null && chainedDataLength > 0) {
-                    // Verify we have exactly 256 bytes for RSA-2048
-                    if (rsaPrivateKeyByteSize != (short) 256) {
-                        throw new CryptoException(CryptoException.ILLEGAL_VALUE);
-                    }
-                    rsaPrivateKey.setModulus(chainedDataBuffer, (short) 0, rsaPrivateKeyByteSize);
-                    // Clear chained buffer
-                    chainedDataBuffer = null;
-                    chainedDataLength = 0;
-                } else {
-                    rsaPrivateKey.setModulus(buf, ISO7816.OFFSET_CDATA, rsaPrivateKeyByteSize);
-                }
+                rsaPrivateKey.setModulus(buf, (short) ISO7816.OFFSET_CDATA, rsaPrivateKeyByteSize);
                 break;
             // ICC RSA KEY PRIVATE EXPONENT
             case 0x0005:
-                short expDataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-                
-                // Handle chained APDUs for RSA-2048
-                if (isChained) {
-                    if (chainedDataBuffer == null) {
-                        chainedDataBuffer = new byte[512];
-                        chainedDataLength = 0;
-                    }
-                    
-                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, chainedDataBuffer, chainedDataLength, expDataLength);
-                    chainedDataLength += expDataLength;
-                    break;
-                }
-                
-                // Last chunk or single APDU
-                short expLength;
-                if (chainedDataBuffer != null && chainedDataLength > 0) {
-                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, chainedDataBuffer, chainedDataLength, expDataLength);
-                    chainedDataLength += expDataLength;
-                    expLength = chainedDataLength;
-                    
-                    // Verify we have exactly 256 bytes for RSA-2048
-                    if (cdaEnabled && expLength != (short) 256) {
-                        throw new CryptoException(CryptoException.ILLEGAL_VALUE);
-                    }
-                    
-                    rsaPrivateKey.setExponent(chainedDataBuffer, (short) 0, expLength);
-                    
-                    // Clear chained buffer
-                    chainedDataBuffer = null;
-                    chainedDataLength = 0;
-                } else {
-                    expLength = expDataLength;
-                    rsaPrivateKey.setExponent(buf, ISO7816.OFFSET_CDATA, expLength);
-                }
+                rsaPrivateKey.setExponent(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF));
                 break;
             // FALLBACK READ RECORD
             case 0x0006:
@@ -180,10 +83,6 @@ public class PaymentApplication extends EmvApplet {
                 defaultReadRecord = null;
                 defaultReadRecord = new byte[dataLength];
                 Util.arrayCopy(buf, (short) ISO7816.OFFSET_CDATA, defaultReadRecord, (short) 0, dataLength);
-                break;
-            // CDA MODE ENABLE
-            case 0x0007:
-                cdaEnabled = (buf[ISO7816.OFFSET_CDATA] != (byte) 0x00);
                 break;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -204,17 +103,6 @@ public class PaymentApplication extends EmvApplet {
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
         shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
-        
-        // SHA-256 for CDA (Colossus requirement)
-        try {
-            sha256MessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
-        } catch (CryptoException e) {
-            // Fallback to SHA-1 if SHA-256 not available
-            sha256MessageDigest = null;
-        }
-        
-        // Allocate buffer for CDA signature construction (RSA-2048 = 256 bytes)
-        cdaSignatureBuffer = new byte[512];
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
@@ -262,7 +150,7 @@ public class PaymentApplication extends EmvApplet {
             case (byte) 0x40: // TC
                 responseCryptogramType = requestCryptogramType;
                 break;
-            case (byte) 0x80: // ARQC (forced online for Colossus)
+            case (byte) 0x80: // ARQC
                 responseCryptogramType = requestCryptogramType;
                 break;
             case (byte) 0x00: // AAC
@@ -273,59 +161,12 @@ public class PaymentApplication extends EmvApplet {
                 break;
         }
 
-        // Generate CDA signature FIRST, before any other operations
-        if (cdaEnabled && rsaPrivateKey != null && rsaPrivateKey.isInitialized()) {
-            try {
-                generateCdaSignature(buf);
-            } catch (CryptoException e) {
-                // JCardSim may have limitations with RSA signing - set dummy signature
-                // In a real card, this would not happen
-                Util.arrayFillNonAtomic(tmpBuffer, (short) 0, rsaPrivateKeyByteSize, (byte) 0x00);
-                EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 0, (byte) rsaPrivateKeyByteSize);
-            }
-        }
-        
         tmpBuffer[0] = responseCryptogramType;
         EmvTag.setTag((short) 0x9F27, tmpBuffer, (short) 0, (byte) 1);
-
-        // Set dummy cryptogram (8 bytes) for testing
-        // In a real implementation, this would be calculated using DES/3DES with card keys
-        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, (short) 8, (byte) 0x00);
-        EmvTag.setTag((short) 0x9F26, tmpBuffer, (short) 0, (byte) 8);
 
         incrementApplicationTransactionCounter();
 
         sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
-    }
-    
-    /**
-     * Generate CDA Signed Dynamic Application Data (tag 9F4B).
-     * Copy of DDA implementation with Format 3 for CDA.
-     */
-    private void generateCdaSignature(byte[] apduBuf) {
-        short signedDataSize = rsaPrivateKeyByteSize;
-        
-        // COPY DDA METHOD EXACTLY
-        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, signedDataSize, (byte) 0xBB);
-
-        tmpBuffer[0] = (byte) 0x6A;
-        tmpBuffer[1] = (byte) 0x05;  // Format 5 for DDA
-        tmpBuffer[2] = (byte) 0x01;
-        tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
-
-        tmpBuffer[3] = (byte) tag9f4cDynamicNumber.length;
-        arrayRandomFill(tag9f4cDynamicNumber);
-        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 4, (short) tmpBuffer[3]);
-
-        short checksumStartIndex = (short) (signedDataSize - 21);
-        shaMessageDigest.reset();
-        shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));        
-        shaMessageDigest.doFinal(apduBuf, (short) ISO7816.OFFSET_CDATA, (short) (apduBuf[ISO7816.OFFSET_LC] & 0x00FF), tmpBuffer, checksumStartIndex);
-
-        rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
-        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, apduBuf, (short) 0);
-
-        EmvTag.setTag((short) 0x9F4B, apduBuf, (short) 0, (byte) signedDataSize);
     }
 
     private void externalAuthenticate(APDU apdu, byte[] buf) {
@@ -376,10 +217,11 @@ public class PaymentApplication extends EmvApplet {
         short signedDataSize = rsaPrivateKeyByteSize;
 
         // Build data to-be-encrypted
+
         Util.arrayFillNonAtomic(tmpBuffer, (short) 0, signedDataSize, (byte) 0xBB);
 
         tmpBuffer[0] = (byte) 0x6A;
-        tmpBuffer[1] = (byte) 0x05;  // Format 5 (DDA)
+        tmpBuffer[1] = (byte) 0x05;
         tmpBuffer[2] = (byte) 0x01; // SHA-1 hash algo
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
 
@@ -394,6 +236,7 @@ public class PaymentApplication extends EmvApplet {
         shaMessageDigest.doFinal(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF), tmpBuffer, checksumStartIndex);
 
         // Build Template
+
         rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
         rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, buf, (short) 0);
 
@@ -484,13 +327,22 @@ public class PaymentApplication extends EmvApplet {
      * Process PSE application selection and read records.
      */
     public void process(APDU apdu) {
-        byte[] buf = apdu.getBuffer(); 
+        byte[] buf = apdu.getBuffer();
+
+        // CRITICAL: Must call setIncomingAndReceive() to receive command data
+        // Without this, the data portion of the APDU buffer contains zeros
+        byte lc = buf[ISO7816.OFFSET_LC];
+        if (lc > 0) {
+            short bytesRead = apdu.setIncomingAndReceive();
+            // Verify we received all expected data
+            if (bytesRead != (short)(lc & 0x00FF)) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+        }
 
         ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
 
-        // Strip chaining bit from CLA for command matching (bit 4 = 0x10)
-        byte cla = (byte) (buf[ISO7816.OFFSET_CLA] & 0xEF);  // Clear bit 4
-        short cmd = (short) ((cla << 8) | (buf[ISO7816.OFFSET_INS] & 0xFF));
+        short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
         switch (cmd) {
             case CMD_SELECT:

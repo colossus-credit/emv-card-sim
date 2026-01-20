@@ -264,11 +264,12 @@ public abstract class EmvApplet extends Applet {
 
     protected void sendResponse(APDU apdu, byte[] buf, byte[] data, short dataOffset, short length) {
         if (data != buf) {
-            Util.arrayCopy(data, dataOffset, buf, ISO7816.OFFSET_CDATA, length);
+            Util.arrayCopy(data, dataOffset, buf, (short) ISO7816.OFFSET_CDATA, length);
         }
 
-        ApduLog.addLogEntry(buf, ISO7816.OFFSET_CDATA, (byte) length);
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, length);
+        ApduLog.addLogEntry(buf, (short) ISO7816.OFFSET_CDATA, (byte) length);
+
+        apdu.setOutgoingAndSend((short) ISO7816.OFFSET_CDATA, length);
     }
 
     protected void processReadRecord(APDU apdu, byte[] buf) {
@@ -298,18 +299,9 @@ public abstract class EmvApplet extends Applet {
     }
 
     protected EmvApplet() {
-        // Increased to 512 bytes to support RSA-2048 operations (256-byte signatures)
-        tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
+        tmpBuffer = JCSystem.makeTransientByteArray((short) 255, JCSystem.CLEAR_ON_DESELECT);
         
-        // Inline factoryReset() to avoid this-escape warning
-        JCSystem.beginTransaction();
-        responseTemplateTag = (short) 0x0077;
-        randomResponseSuffixData = false;
-        JCSystem.commitTransaction();
-        
-        ApduLog.clear();
-        ReadRecord.clear();
-        EmvTag.clear();
+        factoryReset();
 
         responseTemplateGetProcessingOptions = new TagTemplate();
         responseTemplateDda = new TagTemplate();

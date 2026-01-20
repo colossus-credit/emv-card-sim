@@ -181,12 +181,16 @@ else
 fi
 
 # Configuration
-KEY_SIZE=2048
+# NOTE: Using RSA-1984 (248 bytes) because:
+# 1. Verifone SDK supports max 248 bytes for CAPK modulus
+# 2. Original EmvTag code supports max 255 bytes
+# 3. Standard APDU LC field supports max 255 bytes without extended APDU
+KEY_SIZE=1984
 EXPONENT=3  # Standard EMV exponent
 COLOSSUS_BIN="67676767"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CERT_SERIAL=$(printf "%08X" $RANDOM$RANDOM)
-EXPIRY_DATE="251231"  # YYMMDD format (Dec 31, 2025)
+EXPIRY_DATE="271231"  # YYMMDD format (Dec 31, 2027)
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -194,7 +198,7 @@ mkdir -p "$OUTPUT_DIR"
 # Show banner
 echo ""
 print_header "═══════════════════════════════════════════════════════════"
-print_header "  Colossus ICC Certificate Generator (RSA-2048)"
+print_header "  Colossus ICC Certificate Generator (RSA-1984)"
 print_header "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -226,7 +230,7 @@ INFO_FILE="$OUTPUT_DIR/icc_info.txt"
 CONFIG_FILE="$OUTPUT_DIR/icc_config.yaml"
 
 # Step 1: Generate ICC RSA-2048 key pair
-print_step "1/6 Generating ICC RSA-2048 key pair..."
+print_step "1/6 Generating ICC RSA-1984 key pair..."
 openssl genrsa -out "$ICC_PRIVATE_KEY" -3 $KEY_SIZE 2>&1 | grep -v "^[.+]" || true
 print_success "ICC private key generated"
 
@@ -271,7 +275,7 @@ CERT_SIZE=$ISSUER_MODULUS_SIZE
 # EMV ICC Public Key Certificate structure
 # Similar to Issuer cert but with different fields
 METADATA_SIZE=21  # ICC certs have more metadata
-HASH_AND_TRAILER=33
+HASH_AND_TRAILER=21
 KEY_SPACE=$(( CERT_SIZE - METADATA_SIZE - HASH_AND_TRAILER ))
 
 # Step 5: Build EMV ICC Certificate
@@ -312,10 +316,11 @@ CERT_METADATA=$(mktemp)
 EXPONENT_LEN=${#ICC_EXPONENT_HEX}
 EXPONENT_LEN=$(( (EXPONENT_LEN + 1) / 2 ))
 
-# Extract PAN parts
+# Extract PAN for certificate
 PAN_LENGTH=${#CARD_PAN}
-# For ICC cert, we typically use rightmost 10 digits of PAN (excluding check digit)
-PAN_RIGHTMOST_10="${CARD_PAN:$(($PAN_LENGTH-11)):10}"
+# For ICC cert, use full PAN (up to 10 bytes / 20 digits in BCD)
+# EMV uses leftmost digits, padded with F on the right
+PAN_FOR_CERT="$CARD_PAN"
 
 # Build metadata
 {
@@ -325,9 +330,9 @@ PAN_RIGHTMOST_10="${CARD_PAN:$(($PAN_LENGTH-11)):10}"
     # Certificate Format (1 byte) - 0x04 for ICC Public Key
     printf '\x04'
     
-    # Application PAN - rightmost 10 digits, left justified (10 bytes)
+    # Application PAN - full PAN in BCD, left justified (10 bytes)
     # BCD encoded, padded with 'F' on right if needed
-    PAN_HEX=$(echo -n "$PAN_RIGHTMOST_10" | sed 's/\(.\)\(.\)/\1\2/g')
+    PAN_HEX=$(echo -n "$PAN_FOR_CERT" | sed 's/\(.\)\(.\)/\1\2/g')
     # Pad to 10 bytes (20 hex chars)
     while [ ${#PAN_HEX} -lt 20 ]; do
         PAN_HEX="${PAN_HEX}F"
@@ -340,8 +345,8 @@ PAN_RIGHTMOST_10="${CARD_PAN:$(($PAN_LENGTH-11)):10}"
     # Certificate Serial Number (3 bytes)
     echo -n "${CERT_SERIAL:0:6}" | xxd -r -p
     
-    # Hash Algorithm Indicator (1 byte) - 0x02 for SHA-256
-    printf '\x02'
+    # Hash Algorithm Indicator (1 byte) - 0x01 for SHA-1
+    printf '\x01'
     
     # ICC Public Key Algorithm (1 byte) - 0x01 for RSA
     printf '\x01'
@@ -357,20 +362,44 @@ PAN_RIGHTMOST_10="${CARD_PAN:$(($PAN_LENGTH-11)):10}"
 
 METADATA_ACTUAL=$(stat -f%z "$CERT_METADATA" 2>/dev/null || stat -c%s "$CERT_METADATA" 2>/dev/null)
 
+# Build data to be hashed (Format byte through PK data, plus remainder and exponent)
+# EMV hash is computed over: Format || PAN || Expiry || Serial || Hash Algo || PK Algo || PK Len || Exp Len || PK Data || Remainder || Exponent
+HASH_INPUT=$(mktemp)
+{
+    # Skip header (0x6A), start from Format byte
+    tail -c +2 "$CERT_METADATA"
+
+    # ICC Public Key or Leftmost Digits
+    cat "$ICC_KEY_IN_CERT"
+
+    # Remainder (if any)
+    if [ -s "$ICC_REMAINDER" ]; then
+        cat "$ICC_REMAINDER"
+    fi
+
+    # Exponent
+    cat "$ICC_EXPONENT"
+} > "$HASH_INPUT"
+
+# Compute SHA-1 hash of the data
+CERT_HASH=$(openssl dgst -sha1 -binary "$HASH_INPUT")
+
 # Build full certificate
 {
     cat "$CERT_METADATA"
-    
+
     # ICC Public Key or Leftmost Digits
     cat "$ICC_KEY_IN_CERT"
-    
-    # Hash (SHA-256 = 32 bytes) - placeholder
-    dd if=/dev/urandom bs=1 count=32 2>/dev/null
-    
+
+    # Hash (SHA-1 = 20 bytes)
+    echo -n "$CERT_HASH"
+
     # Trailer (1 byte)
     printf '\xBC'
-    
+
 } > "$CERT_PLAINTEXT"
+
+rm -f "$HASH_INPUT"
 
 PLAINTEXT_SIZE=$(stat -f%z "$CERT_PLAINTEXT" 2>/dev/null || stat -c%s "$CERT_PLAINTEXT" 2>/dev/null)
 print_info "Certificate plaintext: $PLAINTEXT_SIZE bytes"
@@ -431,7 +460,7 @@ Colossus Network ICC (Card) Certificate
 Generated: $(date)
 Card PAN: $CARD_PAN
 Algorithm: RSA-$KEY_SIZE
-Hash Algorithm: SHA-256
+Hash Algorithm: SHA-1
 
 ICC Public Key Parameters:
 ---------------------------
@@ -444,7 +473,7 @@ Certificate Size: $CERT_SIZE_ACTUAL bytes
 Serial Number:    $CERT_SERIAL
 Expiry Date:      $EXPIRY_DATE
 PAN:              $CARD_PAN
-PAN (in cert):    $PAN_RIGHTMOST_10
+PAN (in cert):    $PAN_FOR_CERT
 Remainder Size:   $REMAINDER_SIZE bytes
 
 File Locations:

@@ -97,7 +97,18 @@ public class PaymentSystemEnvironment extends EmvApplet {
      * Process PSE application selection and read records.
      */
     public void process(APDU apdu) {
-        byte[] buf = apdu.getBuffer(); 
+        byte[] buf = apdu.getBuffer();
+
+        // CRITICAL: Must call setIncomingAndReceive() to receive command data
+        // Without this, the data portion of the APDU buffer contains zeros
+        byte lc = buf[ISO7816.OFFSET_LC];
+        if (lc > 0) {
+            short bytesRead = apdu.setIncomingAndReceive();
+            // Verify we received all expected data
+            if (bytesRead != (short)(lc & 0x00FF)) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+        }
 
         ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
 
