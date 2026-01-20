@@ -111,13 +111,17 @@ if [ ! -f "$CAPK_PRIVATE_KEY" ]; then
 fi
 
 # Configuration
-KEY_SIZE=2048
+# NOTE: Using RSA-1984 (248 bytes) because:
+# 1. Verifone SDK supports max 248 bytes for CAPK modulus
+# 2. Original EmvTag code supports max 255 bytes
+# 3. Standard APDU LC field supports max 255 bytes without extended APDU
+KEY_SIZE=1984
 EXPONENT=3  # Standard EMV exponent
 COLOSSUS_BIN="67676767"  # Colossus BIN
 CA_INDEX="92"  # Must match CAPK index
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CERT_SERIAL=$(printf "%08X" $RANDOM$RANDOM)
-EXPIRY_DATE="251231"  # YYMMDD format (Dec 31, 2025)
+EXPIRY_DATE="271231"  # YYMMDD format (Dec 31, 2027)
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -125,7 +129,7 @@ mkdir -p "$OUTPUT_DIR"
 # Show banner
 echo ""
 print_header "═══════════════════════════════════════════════════════════"
-print_header "  Colossus Issuer Certificate Generator (RSA-2048)"
+print_header "  Colossus Issuer Certificate Generator (RSA-1984)"
 print_header "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -158,7 +162,7 @@ INFO_FILE="$OUTPUT_DIR/issuer_info.txt"
 CONFIG_FILE="$OUTPUT_DIR/issuer_config.yaml"
 
 # Step 1: Generate Issuer RSA-2048 key pair
-print_step "1/6 Generating Issuer RSA-2048 key pair..."
+print_step "1/6 Generating Issuer RSA-1984 key pair..."
 openssl genrsa -out "$ISSUER_PRIVATE_KEY" -3 $KEY_SIZE 2>&1 | grep -v "^[.+]" || true
 print_success "Issuer private key generated"
 
@@ -213,19 +217,19 @@ CERT_SIZE=$CAPK_MODULUS_SIZE
 # 4 bytes: Issuer Identifier (BIN)
 # 2 bytes: Certificate Expiration Date (MMYY)
 # 3 bytes: Certificate Serial Number
-# 1 byte:  Hash Algorithm Indicator (0x01 = SHA-1, 0x02 = SHA-256)
+# 1 byte:  Hash Algorithm Indicator (0x01 = SHA-1)
 # 1 byte:  Issuer Public Key Algorithm Indicator (0x01 = RSA)
 # 1 byte:  Issuer Public Key Length (in bytes)
 # 1 byte:  Issuer Public Key Exponent Length (in bytes)
 # N bytes: Issuer Public Key or Leftmost Digits
-# 32 bytes: Hash Result (SHA-256)
+# 20 bytes: Hash Result (SHA-1)
 # 1 byte:  Trailer (0xBC)
-# 
-# Total: 15 bytes metadata + N bytes key + 33 bytes (hash+trailer) = CERT_SIZE
-# Therefore: N = CERT_SIZE - 48
+#
+# Total: 15 bytes metadata + N bytes key + 21 bytes (hash+trailer) = CERT_SIZE
+# Therefore: N = CERT_SIZE - 36
 
 METADATA_SIZE=15
-HASH_AND_TRAILER=33
+HASH_AND_TRAILER=21
 KEY_SPACE=$(( CERT_SIZE - METADATA_SIZE - HASH_AND_TRAILER ))
 
 print_info "Certificate structure:"
@@ -282,8 +286,8 @@ EXPONENT_LEN=$(( (EXPONENT_LEN + 1) / 2 ))
     # Certificate Serial Number (3 bytes)
     echo -n "${CERT_SERIAL:0:6}" | xxd -r -p
     
-    # Hash Algorithm Indicator (1 byte) - 0x02 for SHA-256
-    printf '\x02'
+    # Hash Algorithm Indicator (1 byte) - 0x01 for SHA-1
+    printf '\x01'
     
     # Issuer Public Key Algorithm (1 byte) - 0x01 for RSA
     printf '\x01'
@@ -300,21 +304,44 @@ EXPONENT_LEN=$(( (EXPONENT_LEN + 1) / 2 ))
 
 METADATA_ACTUAL=$(stat -f%z "$CERT_METADATA" 2>/dev/null || stat -c%s "$CERT_METADATA" 2>/dev/null)
 
+# Build data to be hashed (Format byte through PK data, plus remainder and exponent)
+# EMV hash is computed over: Format || Issuer ID || Expiry || Serial || Hash Algo || PK Algo || PK Len || Exp Len || PK Data || Remainder || Exponent
+HASH_INPUT=$(mktemp)
+{
+    # Skip header (0x6A), start from Format byte
+    tail -c +2 "$CERT_METADATA"
+
+    # Issuer Public Key or Leftmost Digits
+    cat "$ISSUER_KEY_IN_CERT"
+
+    # Remainder (if any)
+    if [ -s "$ISSUER_REMAINDER" ]; then
+        cat "$ISSUER_REMAINDER"
+    fi
+
+    # Exponent
+    cat "$ISSUER_EXPONENT"
+} > "$HASH_INPUT"
+
+# Compute SHA-1 hash of the data
+CERT_HASH=$(openssl dgst -sha1 -binary "$HASH_INPUT")
+
 # Now build full certificate
 {
     cat "$CERT_METADATA"
-    
+
     # Issuer Public Key or Leftmost Digits (exactly KEY_SPACE bytes)
     cat "$ISSUER_KEY_IN_CERT"
-    
-    # Hash of certificate data (SHA-256 = 32 bytes)
-    # For now, use placeholder (in production, hash the actual data)
-    dd if=/dev/urandom bs=1 count=32 2>/dev/null
-    
+
+    # Hash of certificate data (SHA-1 = 20 bytes)
+    echo -n "$CERT_HASH"
+
     # Trailer (1 byte)
     printf '\xBC'
-    
+
 } > "$CERT_PLAINTEXT"
+
+rm -f "$HASH_INPUT"
 
 PLAINTEXT_SIZE=$(stat -f%z "$CERT_PLAINTEXT" 2>/dev/null || stat -c%s "$CERT_PLAINTEXT" 2>/dev/null)
 print_info "Certificate plaintext: $PLAINTEXT_SIZE bytes"
@@ -327,8 +354,8 @@ if [ $PLAINTEXT_SIZE -ne $CERT_SIZE ]; then
     KEY_IN_CERT_SIZE=$(stat -f%z "$ISSUER_KEY_IN_CERT" 2>/dev/null || stat -c%s "$ISSUER_KEY_IN_CERT" 2>/dev/null)
     print_info "Debug: Metadata size: $METADATA_ACTUAL bytes (expected: $METADATA_SIZE bytes)"
     print_info "Debug: Key-in-cert size: $KEY_IN_CERT_SIZE bytes (expected: $KEY_SPACE bytes)"
-    print_info "Debug: Hash+Trailer: 33 bytes"
-    print_info "Debug: Sum: $(( METADATA_ACTUAL + KEY_IN_CERT_SIZE + 33 )) bytes"
+    print_info "Debug: Hash+Trailer: 21 bytes"
+    print_info "Debug: Sum: $(( METADATA_ACTUAL + KEY_IN_CERT_SIZE + 21 )) bytes"
     
     exit 1
 fi
@@ -377,7 +404,7 @@ Colossus Network Issuer Certificate
 Generated: $(date)
 Issuer Name: $ISSUER_NAME
 Algorithm: RSA-$KEY_SIZE
-Hash Algorithm: SHA-256
+Hash Algorithm: SHA-1
 CA Index: 0x$CA_INDEX
 
 Issuer Public Key Parameters:

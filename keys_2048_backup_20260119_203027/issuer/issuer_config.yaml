@@ -1,0 +1,19 @@
+# Colossus Network Issuer Certificate Configuration
+# Generated: Mon Jan 19 19:39:42 CST 2026
+# Issuer: COLOSSUS_BANK
+# Serial: 5AC46DBE
+
+# Issuer Public Key Exponent (tag 9F32)
+- req: '80 01 9F 32 01 03'
+  res: '90 00'
+
+# Issuer Public Key Certificate (tag 90) - Signed by CAPK
+- req: '80 01 00 92 100 ae 1a a2 c3 7a f7 cf 13 00 f1 29 f9 05 dc ce cc 7d 1f 7d 70 db 6b 7c 69 3d bb 6b 5f 8a dc c1 5c 28 45 1f f2 1c 4e b1 7d 5e f7 07 2e f2 51 79 15 8a 1e f1 45 9d 81 8e 6c 2f 38 9d 7f 2a 74 f0 de f3 8c 20 48 2d 79 42 2b b2 44 7d 15 24 d0 46 d9 28 04 d7 b2 7f fc 35 fa f2 e0 dc c1 48 d3 ff 3f 9d 6b fa 9f 6d 61 3e 8b 18 27 bd 21 15 4c 13 26 45 f4 b8 64 f0 18 b6 5e 79 30 04 14 1a b3 94 ec 76 03 95 12 be b1 cf ed 25 15 24 ec c1 76 27 7e ec 58 b8 33 42 88 96 5e c4 c9 ee af 37 c0 db 0a f8 9c 49 4a 18 b8 52 21 20 bf 00 2d ae f4 02 3f c5 8c 7a 7d 3e 01 7e d2 85 0d d7 60 29 ac 30 56 a4 9a d6 27 ac 68 e5 10 46 9f bf 87 d9 0e 00 70 86 f3 ea d6 16 69 8a 86 5f 21 9f a5 05 7b e9 6c 99 f0 f8 ae ca 77 dc 43 e6 97 05 1f db a6 d6 e8 1e e5 72 6a 53 5a dd f4 fb 24 41 cf cc 91 bf c4'
+  res: '90 00'
+
+# Issuer Public Key Remainder (tag 90) - 36 bytes
+- req: '80 01 00 90 24 dd fd de 01 58 74 27 3b 8e f0 da 0d f5 74 c0 47 86 63 5f 36 3b 99 38 d8 3f 01 51 f9 c7 d2 0a 09 e9 4d 1b 69'
+  res: '90 00'
+
+# Note: This issuer certificate must be verified by terminals using the CAPK
+# The certificate chain ensures: CAPK → Issuer → ICC

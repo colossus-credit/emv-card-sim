@@ -1,0 +1,63 @@
+Colossus Network CAPK
+=====================
+
+Generated: Mon Jan 19 19:39:32 CST 2026
+CA Index: 0x92
+Algorithm: RSA-2048
+Hash Algorithm: SHA-256
+
+CAPK Parameters:
+----------------
+Modulus Size:     256 bytes (2048 bits)
+Public Exponent:  3 (0x03)
+
+File Locations:
+---------------
+Private Key:      ./keys/capk/capk_private.pem
+Public Key:       ./keys/capk/capk_public.pem
+Modulus (binary): ./keys/capk/capk_modulus.bin
+Exponent (binary): ./keys/capk/capk_exponent.bin
+
+CAPK Modulus (Hex):
+effcd953612e2227a7f33d89ef5aae5ead44c46652b3f0f69e58c5c456debb75
+9d974c6d6f8178bf720beb17530326023824820ec5c8ee7c19a6fc628ae9fc47
+b7744b38fb929f750f3847117480135c3ab928044a2903e1761781fc989233d8
+295636f8a468633cb76a94b0d026307ee389eacf1f432c0c83e0b158bb99d96d
+df164c306671120bf7c5c0b7b1e2b49336b5288967733518163787affb2d695c
+6f801bdfd1827b4e58eaed8fa4cb11c92a3af531421eee71796b5bbea4054acb
+12d9d41ca2f9c6de1aff9583e3594c6ef196fc332c14a96a9abd5787a62e8b8e
+b24263d15036c0fdf6414dced85a523cbf362532ad8a4326156a8e8993453165
+
+CAPK Public Exponent (Hex):
+03
+
+Security Notice:
+----------------
+⚠️  THIS IS THE ROOT CERTIFICATE AUTHORITY KEY!
+⚠️  The CAPK private key signs all issuer certificates
+⚠️  Store ./keys/capk/capk_private.pem securely - it controls the entire network
+⚠️  In production, use HSM for key storage
+⚠️  Limit access to authorized personnel only
+
+EMV Usage:
+----------
+1. This CAPK will be stored in payment terminals
+2. Terminals use this CAPK to verify issuer certificates
+3. Issuer certificates are signed with this CAPK private key
+4. The certificate chain: CAPK → Issuer → ICC
+
+Certificate Chain:
+------------------
+CAPK (this) → Signs issuer certificates
+Issuer Key → Signs ICC (card) certificates
+ICC Key → Signs transaction data (DDA/CDA)
+
+Next Steps:
+-----------
+1. ✓ CAPK generated (this step)
+2. → Generate issuer keys and certificates
+3. → Generate ICC keys for cards
+4. → Load certificates onto cards via personalization
+5. → Deploy CAPK to terminals for verification
+
+For more information, see COLOSSUS.md

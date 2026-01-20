@@ -26,8 +26,7 @@ public class EmvTag {
 
         Util.setShort(tag, (short) 0, tagId);
         if (this.length != 0) {
-            // Inline setData to avoid this-escape warning
-            Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
+            setData(src, srcOffset, this.length);
         }
 
         next = null;
@@ -139,10 +138,15 @@ public class EmvTag {
 
     /**
      * Set the data/value and length of the tag.
+     * Uses byte-by-byte copy for T=0 compatibility.
      */
-    public final void setData(byte[] src, short srcOffset, byte length) {
+    public void setData(byte[] src, short srcOffset, byte length) {
         this.length = length;
-        Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
+        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
+        short shortLength = (short) (this.length & 0x00FF);
+        for (short i = 0; i < shortLength; i++) {
+            data[i] = src[(short)(srcOffset + i)];
+        }
     }
 
     /**
@@ -182,15 +186,19 @@ public class EmvTag {
 
     /**
      * Serialize tag as BER-TLV to array.
+     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyToArray(byte[] dst, short dstOffset) {
         short copyOffset = dstOffset;
 
         if (tag[0] == (byte) 0x00) {
-            Util.arrayCopy(tag, (short) 1, dst, dstOffset, (short) 1);
+            // Single byte tag - copy byte-by-byte for T=0 compatibility
+            dst[dstOffset] = tag[1];
             copyOffset += (short) 1;
         } else {
-            Util.arrayCopy(tag, (short) 0, dst, dstOffset, (short) 2);
+            // Two byte tag - copy byte-by-byte for T=0 compatibility
+            dst[dstOffset] = tag[0];
+            dst[(short)(dstOffset + 1)] = tag[1];
             copyOffset += (short) 2;
         }
 
@@ -219,11 +227,15 @@ public class EmvTag {
 
     /**
      * Serialize tag's data to array, i.e. no BER-TLV header.
+     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyDataToArray(byte[] dst, short dstOffset) {
         short shortLength = (short) (length & 0x00FF);
 
-        Util.arrayCopy(data, (short) 0, dst, dstOffset, shortLength);
+        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
+        for (short i = 0; i < shortLength; i++) {
+            dst[(short)(dstOffset + i)] = data[i];
+        }
 
         if (fuzzLength > (byte) 0x00) {
             byte doFuzzing = (byte) 0x00;

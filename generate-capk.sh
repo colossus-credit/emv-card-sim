@@ -18,7 +18,7 @@
 # Outputs:
 #   - capk_private.pem      - CAPK private key (KEEP SECURE!)
 #   - capk_public.pem       - CAPK public key in PEM format
-#   - capk_modulus.bin      - Raw modulus (256 bytes)
+#   - capk_modulus.bin      - Raw modulus (248 bytes)
 #   - capk_exponent.bin     - Raw exponent
 #   - capk_info.txt         - Key details
 #   - capk_config.yaml      - YAML configuration for card setup
@@ -102,7 +102,11 @@ fi
 CA_INDEX=$(printf "%02X" $((16#$CA_INDEX)))
 
 # Configuration
-KEY_SIZE=2048
+# NOTE: Using RSA-1984 (248 bytes) because:
+# 1. Verifone SDK supports max 248 bytes for CAPK modulus
+# 2. Original EmvTag code supports max 255 bytes
+# 3. Standard APDU LC field supports max 255 bytes without extended APDU
+KEY_SIZE=1984
 EXPONENT=3  # Standard EMV exponent
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -112,7 +116,7 @@ mkdir -p "$OUTPUT_DIR"
 # Show banner
 echo ""
 print_header "═══════════════════════════════════════════════════════════"
-print_header "  Colossus CAPK Generator (RSA-2048)"
+print_header "  Colossus CAPK Generator (RSA-1984)"
 print_header "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -137,8 +141,8 @@ CAPK_EXPONENT="$OUTPUT_DIR/capk_exponent.bin"
 INFO_FILE="$OUTPUT_DIR/capk_info.txt"
 CONFIG_FILE="$OUTPUT_DIR/capk_config.yaml"
 
-# Step 1: Generate CAPK RSA-2048 key pair
-print_step "1/4 Generating CAPK RSA-2048 key pair..."
+# Step 1: Generate CAPK RSA-1984 key pair
+print_step "1/4 Generating CAPK RSA-1984 key pair..."
 openssl genrsa -out "$CAPK_PRIVATE_KEY" -3 $KEY_SIZE 2>&1 | grep -v "^[.+]" || true
 print_success "CAPK private key generated"
 
@@ -247,7 +251,7 @@ cat > "$CONFIG_FILE" << EOF
 - req: '80 01 9F 32 01 $(printf '%02X' $CAPK_EXPONENT_DEC)'
   res: '90 00'
 
-# CAPK Modulus (tag 9F06) - 256 bytes for RSA-2048
+# CAPK Modulus (tag 9F06) - 248 bytes for RSA-1984
 - req: '80 01 00 06 00 $CAPK_MODULUS_HEX'
   res: '90 00'
 
