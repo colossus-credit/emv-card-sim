@@ -40,7 +40,7 @@ public abstract class EmvApplet extends Applet {
     }
     */
 
-    protected static final short CMD_SET_SETTINGS              = (short) 0x8000;
+    protected static final short CMD_SET_SETTINGS              = (short) 0x8004;
     protected static final short CMD_SET_EMV_TAG               = (short) 0x8001;
     protected static final short CMD_SET_EMV_TAG_FUZZ          = (short) 0x8011;
     protected static final short CMD_SET_TAG_TEMPLATE          = (short) 0x8002;
@@ -163,7 +163,9 @@ public abstract class EmvApplet extends Applet {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        JCSystem.beginTransaction();
         EmvTag tag = EmvTag.setTag(tagId, buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -216,7 +218,9 @@ public abstract class EmvApplet extends Applet {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        JCSystem.beginTransaction();
         template.setData(buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -228,7 +232,9 @@ public abstract class EmvApplet extends Applet {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        JCSystem.beginTransaction();
         ReadRecord.setRecord(readRecordId, buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }

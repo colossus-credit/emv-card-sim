@@ -331,11 +331,16 @@ public class PaymentApplication extends EmvApplet {
 
         // CRITICAL: Must call setIncomingAndReceive() to receive command data
         // Without this, the data portion of the APDU buffer contains zeros
-        byte lc = buf[ISO7816.OFFSET_LC];
+        // Use a loop because setIncomingAndReceive() may return partial data
+        short lc = (short)(buf[ISO7816.OFFSET_LC] & 0x00FF);
         if (lc > 0) {
-            short bytesRead = apdu.setIncomingAndReceive();
-            // Verify we received all expected data
-            if (bytesRead != (short)(lc & 0x00FF)) {
+            short total = apdu.setIncomingAndReceive();
+            while (total < lc) {
+                short read = apdu.receiveBytes(ISO7816.OFFSET_CDATA);
+                if (read <= 0) break;
+                total += read;
+            }
+            if (total != lc) {
                 ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
             }
         }
