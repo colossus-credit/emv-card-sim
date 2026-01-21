@@ -144,6 +144,8 @@ public class PaymentApplication extends EmvApplet {
     private void processGenerateAc(APDU apdu, byte[] buf) {
         byte referenceControlParameter = buf[ISO7816.OFFSET_P1];
         byte requestCryptogramType = (byte) ((short) (referenceControlParameter >> ((byte) 6)) << ((byte) 6));
+        // Check if CDA is requested (P1 bit 4 = 0x10)
+        boolean cdaRequested = ((referenceControlParameter & (byte) 0x10) != 0);
 
         byte responseCryptogramType = (byte) 0x40;
         switch (requestCryptogramType) {
@@ -161,12 +163,138 @@ public class PaymentApplication extends EmvApplet {
                 break;
         }
 
-        tmpBuffer[0] = responseCryptogramType;
+        // Set Cryptogram Information Data (9F27)
+        // For CDA, bit 7 indicates CDA performed successfully
+        byte cid = responseCryptogramType;
+        if (cdaRequested && rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
+            cid |= (byte) 0x80; // Set bit 7 to indicate CDA was performed
+        }
+        tmpBuffer[0] = cid;
         EmvTag.setTag((short) 0x9F27, tmpBuffer, (short) 0, (byte) 1);
 
         incrementApplicationTransactionCounter();
 
+        // Generate Application Cryptogram (9F26)
+        short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
+
+        // If CDA requested and we have ICC private key, generate SDAD
+        if (cdaRequested && rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
+            generateSdad(buf, cid, cdolLen);
+        }
+
         sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+    }
+
+    /**
+     * Generate Application Cryptogram (9F26).
+     * For simulation, we create a pseudo-cryptogram based on transaction data.
+     * Real implementation would use 3DES MAC with derived session key.
+     */
+    private void generateApplicationCryptogram(byte[] buf, short cdolOffset, short cdolLen) {
+        shaMessageDigest.reset();
+
+        // Include ATC in hash
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) {
+            shaMessageDigest.update(atcTag.getData(), (short) 0, (short) 2);
+        }
+
+        // Include PAN in hash for uniqueness
+        EmvTag panTag = EmvTag.findTag((short) 0x5A);
+        if (panTag != null) {
+            shaMessageDigest.update(panTag.getData(), (short) 0, (short) (panTag.getLength() & 0xFF));
+        }
+
+        // Include CDOL data in hash
+        if (cdolLen > 0) {
+            shaMessageDigest.update(buf, cdolOffset, cdolLen);
+        }
+
+        // Finalize hash - result goes to tmpBuffer temporarily
+        shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, (short) 200);
+
+        // Take first 8 bytes as Application Cryptogram
+        EmvTag.setTag((short) 0x9F26, tmpBuffer, (short) 200, (byte) 8);
+    }
+
+    /**
+     * Generate Signed Dynamic Application Data (SDAD) for CDA.
+     * Per EMV Book 2, Table 16.
+     */
+    private void generateSdad(byte[] buf, byte cryptogramInfoData, short cdolLen) {
+        short signedDataSize = rsaPrivateKeyByteSize;
+
+        // Fill with padding (0xBB)
+        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, signedDataSize, (byte) 0xBB);
+
+        // Build SDAD structure per EMV Book 2 Table 16
+        tmpBuffer[0] = (byte) 0x6A;  // Header
+        tmpBuffer[1] = (byte) 0x05;  // Signed Data Format for CDA
+        tmpBuffer[2] = (byte) 0x01;  // Hash Algorithm Indicator (SHA-1)
+
+        // ICC Dynamic Data:
+        // - ICC Dynamic Number Length (1 byte)
+        // - ICC Dynamic Number (LDD bytes, we use 8)
+        // - Cryptogram Information Data (1 byte)
+        // - Application Cryptogram (8 bytes)
+        // Total: 1 + 8 + 1 + 8 = 18 bytes
+
+        byte iccDynNumLen = (byte) 8;
+        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8); // len + DN + CID + AC
+        tmpBuffer[3] = iccDynamicDataLength;
+
+        short offset = 4;
+
+        // ICC Dynamic Number Length
+        tmpBuffer[offset++] = iccDynNumLen;
+
+        // ICC Dynamic Number (8 bytes) - generate fresh random value
+        randomData.generateData(tmpBuffer, offset, (short) iccDynNumLen);
+        if (!useRandom) {
+            // For testing, use predictable value
+            Util.arrayFillNonAtomic(tmpBuffer, offset, (short) iccDynNumLen, (byte) 0xAB);
+        }
+        // Store ICC Dynamic Number in tag 9F4C for reference
+        EmvTag.setTag((short) 0x9F4C, tmpBuffer, offset, iccDynNumLen);
+        offset += iccDynNumLen;
+
+        // Cryptogram Information Data (1 byte)
+        tmpBuffer[offset++] = cryptogramInfoData;
+
+        // Application Cryptogram (8 bytes) - get from tag 9F26
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        if (acTag != null) {
+            Util.arrayCopy(acTag.getData(), (short) 0, tmpBuffer, offset, (short) 8);
+        }
+        offset += 8;
+
+        // Trailer at end
+        tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
+
+        // Compute hash
+        // Hash input: bytes 1 through (signedDataSize - 22) of SDAD structure
+        //             + transaction data (CDOL) from GENERATE AC command
+        short checksumStartIndex = (short) (signedDataSize - 21);
+
+        shaMessageDigest.reset();
+        // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)
+        shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));
+
+        // Include CDOL data in hash (transaction-specific data)
+        if (cdolLen > 0) {
+            shaMessageDigest.update(buf, (short) ISO7816.OFFSET_CDATA, cdolLen);
+        }
+
+        // Finalize hash into the SDAD structure
+        shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, checksumStartIndex);
+
+        // RSA sign (encrypt with private key)
+        rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
+        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, buf, (short) 0);
+
+        // Store SDAD in tag 9F4B
+        EmvTag.setTag((short) 0x9F4B, buf, (short) 0, (byte) signedDataSize);
     }
 
     private void externalAuthenticate(APDU apdu, byte[] buf) {
