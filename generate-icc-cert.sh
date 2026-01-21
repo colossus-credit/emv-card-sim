@@ -362,8 +362,34 @@ PAN_FOR_CERT="$CARD_PAN"
 
 METADATA_ACTUAL=$(stat -f%z "$CERT_METADATA" 2>/dev/null || stat -c%s "$CERT_METADATA" 2>/dev/null)
 
-# Build data to be hashed (Format byte through PK data, plus remainder and exponent)
-# EMV hash is computed over: Format || PAN || Expiry || Serial || Hash Algo || PK Algo || PK Len || Exp Len || PK Data || Remainder || Exponent
+# Build data to be hashed (Format byte through PK data, plus remainder, exponent, AND Static Data Auth)
+# EMV ICC cert hash is computed over:
+#   Format || PAN || Expiry || Serial || Hash Algo || PK Algo || PK Len || Exp Len || PK Data || Remainder || Exponent || Static Data Auth
+#
+# IMPORTANT: The Static Data to be Authenticated must be included in the hash!
+# This consists of:
+#   1. Data authentication records from AFL (records where 4th byte > 0)
+#   2. Additional tags specified in SDA Tag List (9F4A), typically AIP (82)
+#
+# For Colossus cards, the static data auth is:
+#   - Record content: 8F 01 92 9F 32 01 03 9F 4A 01 82 (CAPK Index, Issuer PK Exp, SDA Tag List)
+#   - AIP value: 3D 01 (because 9F4A=82 means include tag 82)
+#
+# These values can be overridden via environment variables:
+#   STATIC_DATA_AUTH_RECORD - hex string of data auth record content
+#   AIP_VALUE - hex string of AIP value (tag 82)
+
+STATIC_DATA_AUTH_RECORD="${STATIC_DATA_AUTH_RECORD:-8F0192 9F320103 9F4A0182}"
+AIP_VALUE="${AIP_VALUE:-3D01}"
+
+# Clean up hex strings (remove spaces)
+STATIC_DATA_AUTH_RECORD=$(echo "$STATIC_DATA_AUTH_RECORD" | tr -d ' ')
+AIP_VALUE=$(echo "$AIP_VALUE" | tr -d ' ')
+
+print_info "Static Data Authentication:"
+echo "  Data Auth Record: $STATIC_DATA_AUTH_RECORD"
+echo "  AIP Value:        $AIP_VALUE"
+
 HASH_INPUT=$(mktemp)
 {
     # Skip header (0x6A), start from Format byte
@@ -379,7 +405,13 @@ HASH_INPUT=$(mktemp)
 
     # Exponent
     cat "$ICC_EXPONENT"
+
+    # Static Data to be Authenticated (CRITICAL for CDA!)
+    # This includes: data auth records + AIP (if listed in 9F4A)
+    echo -n "${STATIC_DATA_AUTH_RECORD}${AIP_VALUE}" | xxd -r -p
 } > "$HASH_INPUT"
+
+print_info "Hash input size: $(stat -f%z "$HASH_INPUT" 2>/dev/null || stat -c%s "$HASH_INPUT" 2>/dev/null) bytes"
 
 # Compute SHA-1 hash of the data
 CERT_HASH=$(openssl dgst -sha1 -binary "$HASH_INPUT")
