@@ -18,10 +18,10 @@ if (!project.hasProperty("jc_version")) {
     ext.jc_version = "3.0.5"
 }
 if (!project.hasProperty("paymentapp_cap_aid")) {
-    ext.paymentapp_cap_aid = "AFFFFFFFFF0000"
+    ext.paymentapp_cap_aid = "A000000951000000"
 }
 if (!project.hasProperty("paymentapp_applet_aid")) {
-    ext.paymentapp_applet_aid = "AFFFFFFFFF1234"
+    ext.paymentapp_applet_aid = "A0000009510001"
 }
 
 // 3.1.0 targeting does not work
