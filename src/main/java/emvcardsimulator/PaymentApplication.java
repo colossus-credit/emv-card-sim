@@ -63,19 +63,40 @@ public class PaymentApplication extends EmvApplet {
                     case (short) 1984:
                         keyLength = KeyBuilder.LENGTH_RSA_1984;
                         break;
+                    case (short) 2048:
+                        keyLength = KeyBuilder.LENGTH_RSA_2048;
+                        break;
                     default:
-                        throw new CryptoException(CryptoException.ILLEGAL_USE);
+                        // Return 6A80 (Incorrect data field) for unsupported key size
+                        ISOException.throwIt((short) 0x6A80);
                 }
 
-                // XXX. JCardSim doesn't do "throw new CryptoException(CryptoException.ILLEGAL_VALUE)" as specified in the Java Card documentation. I.e. Sim allows any key size but JavaCard needs specific, hence keyLength is determined.
-                rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
-                rsaPrivateKey.clearKey();
-
-                rsaPrivateKey.setModulus(buf, (short) ISO7816.OFFSET_CDATA, rsaPrivateKeyByteSize);
+                // Use try-catch to detect if card doesn't support requested key size
+                try {
+                    // Use false for transient (RAM) storage - some cards don't support persistent RSA-1984
+                    rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
+                    rsaPrivateKey.clearKey();
+                    rsaPrivateKey.setModulus(buf, (short) ISO7816.OFFSET_CDATA, rsaPrivateKeyByteSize);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    // Return 6A81 (Function not supported) if key type not available
+                    ISOException.throwIt((short) 0x6A81);
+                }
                 break;
             // ICC RSA KEY PRIVATE EXPONENT
             case 0x0005:
-                rsaPrivateKey.setExponent(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF));
+                if (rsaPrivateKey == null) {
+                    // Modulus must be set first (case 0x0004)
+                    ISOException.throwIt((short) 0x6985); // Conditions not satisfied
+                }
+                try {
+                    rsaPrivateKey.setExponent(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF));
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    ISOException.throwIt((short) 0x6A81); // Function not supported
+                }
                 break;
             // FALLBACK READ RECORD
             case 0x0006:
@@ -84,6 +105,15 @@ public class PaymentApplication extends EmvApplet {
                 defaultReadRecord = new byte[dataLength];
                 Util.arrayCopy(buf, (short) ISO7816.OFFSET_CDATA, defaultReadRecord, (short) 0, dataLength);
                 break;
+            // DIAGNOSTIC: Get RSA key state
+            case 0x0007:
+                // Return: [key_present, key_size_hi, key_size_lo, key_initialized]
+                buf[0] = (rsaPrivateKey != null) ? (byte) 0x01 : (byte) 0x00;
+                buf[1] = (byte) ((rsaPrivateKeyByteSize >> 8) & 0xFF);
+                buf[2] = (byte) (rsaPrivateKeyByteSize & 0xFF);
+                buf[3] = (rsaPrivateKey != null && rsaPrivateKey.isInitialized()) ? (byte) 0x01 : (byte) 0x00;
+                apdu.setOutgoingAndSend((short) 0, (short) 4);
+                return;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
@@ -163,10 +193,13 @@ public class PaymentApplication extends EmvApplet {
                 break;
         }
 
+        // Check if CDA can be performed
+        boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
+
         // Set Cryptogram Information Data (9F27)
         // For CDA, bit 7 indicates CDA performed successfully
         byte cid = responseCryptogramType;
-        if (cdaRequested && rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
+        if (cdaRequested && canPerformCda) {
             cid |= (byte) 0x80; // Set bit 7 to indicate CDA was performed
         }
         tmpBuffer[0] = cid;
@@ -179,8 +212,14 @@ public class PaymentApplication extends EmvApplet {
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
         // If CDA requested and we have ICC private key, generate SDAD
-        if (cdaRequested && rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
-            generateSdad(buf, cid, cdolLen);
+        if (cdaRequested && canPerformCda) {
+            generateSdad(cid);
+            // generateSdad completed successfully
+        } else if (cdaRequested) {
+            // CDA requested but key not available - create empty SDAD placeholder
+            // to avoid SW_DATA_INVALID when template expansion looks for 9F4B
+            // Return 6985 (Conditions of use not satisfied) for CDA failure
+            EmvApplet.logAndThrow((short) 0x6985);
         }
 
         sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
@@ -222,7 +261,7 @@ public class PaymentApplication extends EmvApplet {
      * Generate Signed Dynamic Application Data (SDAD) for CDA.
      * Per EMV Book 2, Table 16.
      */
-    private void generateSdad(byte[] buf, byte cryptogramInfoData, short cdolLen) {
+    private void generateSdad(byte cryptogramInfoData) {
         short signedDataSize = rsaPrivateKeyByteSize;
 
         // Fill with padding (0xBB)
@@ -279,22 +318,18 @@ public class PaymentApplication extends EmvApplet {
 
         shaMessageDigest.reset();
         // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)
-        shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));
-
-        // Include CDOL data in hash (transaction-specific data)
-        if (cdolLen > 0) {
-            shaMessageDigest.update(buf, (short) ISO7816.OFFSET_CDATA, cdolLen);
-        }
-
-        // Finalize hash into the SDAD structure
-        shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, checksumStartIndex);
+        // Per EMV Book 2 section 6.5.1 for CDA Format 05, the hash is ONLY over
+        // the SDAD structure (Format || Hash Algo || ICC Dynamic Data || Pad Pattern)
+        // NOT the transaction data - that's already embedded in the CID and AC
+        shaMessageDigest.doFinal(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1), tmpBuffer, checksumStartIndex);
 
         // RSA sign (encrypt with private key)
+        // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header
         rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
-        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, buf, (short) 0);
+        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, tmpBuffer, (short) 256);
 
         // Store SDAD in tag 9F4B
-        EmvTag.setTag((short) 0x9F4B, buf, (short) 0, (byte) signedDataSize);
+        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, (byte) signedDataSize);
     }
 
     private void externalAuthenticate(APDU apdu, byte[] buf) {
@@ -310,6 +345,40 @@ public class PaymentApplication extends EmvApplet {
         // 6300 = Issuer authentication failed
 
         EmvApplet.logAndThrow(ISO7816.SW_NO_ERROR);
+    }
+
+    private void processGetResponse(APDU apdu, byte[] buf) {
+        if (pendingResponseLength <= 0) {
+            EmvApplet.logAndThrow(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+        }
+
+        // Requested length from Le byte (P3)
+        short requestedLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        if (requestedLength == 0) {
+            requestedLength = (short) 256; // Le=00 means 256 bytes
+        }
+
+        // Send up to requested length from pending data
+        short sendLength = (pendingResponseLength < requestedLength) ? pendingResponseLength : requestedLength;
+        if (sendLength > (short) 256) {
+            sendLength = (short) 256;
+        }
+
+        apdu.setOutgoing();
+        apdu.setOutgoingLength(sendLength);
+        apdu.sendBytesLong(tmpBuffer, pendingResponseOffset, sendLength);
+
+        pendingResponseOffset += sendLength;
+        pendingResponseLength -= sendLength;
+
+        // If more data remaining, indicate with 61xx
+        if (pendingResponseLength > 0) {
+            short remaining = pendingResponseLength;
+            if (remaining > (short) 255) {
+                remaining = (short) 255;
+            }
+            ISOException.throwIt((short) (0x6100 | remaining));
+        }
     }
 
     private void processGetData(APDU apdu, byte[] buf) {
@@ -364,11 +433,11 @@ public class PaymentApplication extends EmvApplet {
         shaMessageDigest.doFinal(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF), tmpBuffer, checksumStartIndex);
 
         // Build Template
-
+        // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header
         rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
-        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, buf, (short) 0);
+        rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, tmpBuffer, (short) 256);
 
-        EmvTag.setTag((short) 0x9F4B, buf, (short) 0, (byte) signedDataSize);
+        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, (byte) signedDataSize);
 
         sendResponseTemplate(apdu, buf, responseTemplateDda);
     }
@@ -457,22 +526,6 @@ public class PaymentApplication extends EmvApplet {
     public void process(APDU apdu) {
         byte[] buf = apdu.getBuffer();
 
-        // CRITICAL: Must call setIncomingAndReceive() to receive command data
-        // Without this, the data portion of the APDU buffer contains zeros
-        // Use a loop because setIncomingAndReceive() may return partial data
-        short lc = (short)(buf[ISO7816.OFFSET_LC] & 0x00FF);
-        if (lc > 0) {
-            short total = apdu.setIncomingAndReceive();
-            while (total < lc) {
-                short read = apdu.receiveBytes(ISO7816.OFFSET_CDATA);
-                if (read <= 0) break;
-                total += read;
-            }
-            if (total != lc) {
-                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
-            }
-        }
-
         ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
 
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
@@ -537,6 +590,9 @@ public class PaymentApplication extends EmvApplet {
                 break;
             case CMD_EXTERNAL_AUTHENTICATE:
                 externalAuthenticate(apdu, buf);
+                break;
+            case CMD_GET_RESPONSE:
+                processGetResponse(apdu, buf);
                 break;
             default:
                 EmvApplet.logAndThrow(ISO7816.SW_INS_NOT_SUPPORTED);

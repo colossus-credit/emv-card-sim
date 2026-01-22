@@ -2,6 +2,7 @@ package emvcardsimulator;
 
 import javacard.framework.APDU;
 import javacard.framework.Applet;
+import javacardx.apdu.ExtendedLength;
 import javacard.framework.ISO7816;
 import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
@@ -13,7 +14,7 @@ import javacard.security.RSAPublicKey;
 import javacard.security.RandomData;
 import javacardx.crypto.Cipher;
 
-public abstract class EmvApplet extends Applet {
+public abstract class EmvApplet extends Applet implements ExtendedLength {
     /*// for dev "debugging"
     static void printAsHex(String type, byte[] buf) {
         printAsHex(type, buf, 0, buf.length);
@@ -57,9 +58,14 @@ public abstract class EmvApplet extends Applet {
     protected static final short CMD_GET_PROCESSING_OPTIONS = (short) 0x80A8;
     protected static final short CMD_GENERATE_AC = (short) 0x80AE;
     protected static final short CMD_EXTERNAL_AUTHENTICATE = (short) 0x0082;
+    protected static final short CMD_GET_RESPONSE = (short) 0x00C0;
 
     public static RandomData randomData;
     public static byte[] tmpBuffer;
+
+    // For GET RESPONSE chaining of large responses
+    protected static short pendingResponseOffset = 0;
+    protected static short pendingResponseLength = 0;
 
     protected static void logAndThrow(short responseTrailer) {
         ApduLog.addLogEntry(responseTrailer);
@@ -245,6 +251,7 @@ public abstract class EmvApplet extends Applet {
         if (responseTemplateTag == (short) 0x0077) {
             // Template 2, tag 77
             templateTagLength = template.expandTlvToArray(tmpBuffer, (short) 0);
+            // expandTlvToArray completed
         } else if (responseTemplateTag == (short) 0x0080) {
             // Template 1, tag 80
             templateTagLength = template.expandTagDataToArray(tmpBuffer, (short) 0);
@@ -252,8 +259,46 @@ public abstract class EmvApplet extends Applet {
             EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
         }
 
-        EmvTag.setTag(responseTemplateTag, tmpBuffer, (short) 0, (byte) templateTagLength);
-        sendResponse(apdu, buf, responseTemplateTag);
+        // For responses <= 255 bytes, use original EmvTag-based approach
+        // For larger responses (CDA), build in tmpBuffer and use sendBytesLong
+        if (templateTagLength <= (short) 255) {
+            EmvTag.setTag(responseTemplateTag, tmpBuffer, (short) 0, (byte) templateTagLength);
+            sendResponse(apdu, buf, responseTemplateTag);
+        } else {
+            // For large responses, build TLV header at start of a separate area
+            // Shift content in tmpBuffer to make room for header
+            short headerSize = (short) 4; // tag(1) + 82(1) + len(2)
+
+            // Move content to make room for header (work backwards to avoid overlap issues)
+            for (short i = (short)(templateTagLength - 1); i >= 0; i--) {
+                tmpBuffer[(short)(headerSize + i)] = tmpBuffer[i];
+            }
+
+            // Write TLV header at start
+            tmpBuffer[0] = (byte) (responseTemplateTag & 0xFF);
+            tmpBuffer[1] = (byte) 0x82;
+            tmpBuffer[2] = (byte) ((templateTagLength >> 8) & 0xFF);
+            tmpBuffer[3] = (byte) (templateTagLength & 0xFF);
+
+            short totalLength = (short) (headerSize + templateTagLength);
+
+            // Send first 256 bytes, then use SW=61xx for GET RESPONSE chaining
+            short firstChunk = (totalLength > (short) 256) ? (short) 256 : totalLength;
+            apdu.setOutgoing();
+            apdu.setOutgoingLength(firstChunk);
+            apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
+
+            // If more data remaining, store for GET RESPONSE and return 61xx
+            if (totalLength > (short) 256) {
+                pendingResponseOffset = firstChunk;
+                pendingResponseLength = (short) (totalLength - firstChunk);
+                short remaining = pendingResponseLength;
+                if (remaining > (short) 255) {
+                    remaining = (short) 255;
+                }
+                ISOException.throwIt((short) (0x6100 | remaining));
+            }
+        }
     }
 
     protected void sendResponse(APDU apdu, byte[] buf, short tagId) {
@@ -305,7 +350,7 @@ public abstract class EmvApplet extends Applet {
     }
 
     protected EmvApplet() {
-        tmpBuffer = JCSystem.makeTransientByteArray((short) 255, JCSystem.CLEAR_ON_DESELECT);
+        tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         
         factoryReset();
 
