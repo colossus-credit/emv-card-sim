@@ -219,14 +219,17 @@ task cap {
     doLast {
         ant.taskdef(name: 'javacard', classname: 'pro.javacard.ant.JavaCard', classpath: configurations.javacardAntTask.asPath)
 
+        // Create build/card directory
+        file('build/card').mkdirs()
+
         // 1PAY.SYS.DDF01
         ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
-                output: 'build/pse.cap',
-                jca: 'build/pse.jca',
-                export: 'build',
+                output: 'build/card/pse.cap',
+                jca: 'build/card/pse.jca',
+                export: 'build/card',
                 classes: "build/classes/java/main",
                 aid: '315041592E000000000000000000') {
                     applet (class: 'emvcardsimulator.PaymentSystemEnvironment', aid: '315041592E5359532E4444463031')
@@ -237,9 +240,9 @@ task cap {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
-                output: 'build/paymentapp.cap',
-                jca: 'build/paymentapp.jca',
-                export: 'build',
+                output: 'build/card/paymentapp.cap',
+                jca: 'build/card/paymentapp.jca',
+                export: 'build/card',
                 classes: "build/classes/java/main",
                 aid: paymentapp_cap_aid) {
                     applet (class: 'emvcardsimulator.PaymentApplication', aid: paymentapp_applet_aid)
@@ -256,7 +259,7 @@ task deployPse(type: Exec) {
     group "JavaCard"
     description "Deploy PaymentSystemEnvironment applet to JavaCard"
 
-    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/pse.cap'
+    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/pse.cap'
 }
 
 task deployPaymentApp(type: Exec) {
@@ -264,5 +267,5 @@ task deployPaymentApp(type: Exec) {
     group "JavaCard"
     description "Deploy payment application applet to JavaCard"
 
-    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/paymentapp.cap'
+    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/paymentapp.cap'
 }
