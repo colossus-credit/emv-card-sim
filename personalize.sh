@@ -1,0 +1,713 @@
+#!/bin/bash
+#
+# EMV Card Personalization Script
+# Comprehensive tool for deploying and personalizing EMV JavaCard applets
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
+KEYS_DIR="${SCRIPT_DIR}/keys"
+BUILD_DIR="${SCRIPT_DIR}/build"
+
+# Source helper scripts
+source "${SCRIPTS_DIR}/luhn.sh"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Logging functions
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+# Default values
+DEFAULT_RID="A000000951"
+DEFAULT_AID="0001"
+DEFAULT_BIN="66907500"
+DEFAULT_APP_LABEL="COLOSSUS"
+DEFAULT_EXPIRY="271231"
+
+# Configuration variables
+RID=""
+AID=""
+KEY_ENC=""
+KEY_MAC=""
+KEY_DEK=""
+PAN=""
+BIN=""
+ICC_CERT=""
+ICC_REM=""
+ICC_EXP=""
+ICC_PRIVKEY=""
+ICC_MODULUS=""
+ISSUER_CERT=""
+ISSUER_REM=""
+ISSUER_EXP=""
+PSE_CAP=""
+PAYAPP_CAP=""
+GEN_KEYS=false
+VERBOSE=false
+
+# GP.jar location
+GP_JAR="${SCRIPT_DIR}/gp.jar"
+
+show_help() {
+    cat << EOF
+${BOLD}EMV Card Personalization Tool${NC}
+
+${BOLD}USAGE:${NC}
+    $0 [OPTIONS]
+
+${BOLD}OPTIONS:${NC}
+    ${CYAN}Card Identity:${NC}
+    --rid <RID>              RID (Registered Application Provider ID)
+                             Default: ${DEFAULT_RID}
+    --aid <AID>              AID suffix (appended to RID)
+                             Default: ${DEFAULT_AID}
+
+    ${CYAN}Card Keys (optional):${NC}
+    --key-enc <KEY>          Encryption key (hex)
+    --key-mac <KEY>          MAC key (hex)
+    --key-dek <KEY>          DEK key (hex)
+                             If not provided, uses card default keys
+
+    ${CYAN}PAN Configuration:${NC}
+    --pan <PAN>              Primary Account Number (16 digits)
+                             Must pass Luhn check
+    --bin <BIN>              Bank Identification Number (8 digits)
+                             Default: ${DEFAULT_BIN}
+                             Used to generate PAN if --pan not specified
+                             Cannot conflict with --pan
+
+    ${CYAN}Certificate Paths:${NC}
+    --icc-cert <PATH>        ICC certificate file
+    --icc-rem <PATH>         ICC remainder file
+    --icc-exp <PATH>         ICC exponent file
+    --icc-privkey <PATH>     ICC private key file (PEM)
+    --issuer-cert <PATH>     Issuer certificate file
+    --issuer-rem <PATH>      Issuer remainder file
+    --issuer-exp <PATH>      Issuer exponent file
+                             If any --icc or --issuer provided, all must be provided
+                             If none provided, uses files from keys/ directory
+
+    ${CYAN}CAP Files:${NC}
+    --pse <PATH>             PSE CAP file path
+    --pay-app <PATH>         Payment App CAP file path
+                             If not provided, looks in build/card/
+                             If not found, offers to run build
+
+    ${CYAN}Other Options:${NC}
+    --gen-keys               Auto-generate keys without prompting
+    --label <NAME>           Application label (default: ${DEFAULT_APP_LABEL})
+    --expiry <YYMMDD>        Card expiry date (default: ${DEFAULT_EXPIRY})
+    -v, --verbose            Verbose output
+    -h, --help               Show this help message
+
+${BOLD}EXAMPLES:${NC}
+    # Basic personalization with defaults
+    $0
+
+    # Custom RID/AID with specific PAN
+    $0 --rid A000000951 --aid 0001 --pan 6690750012345678
+
+    # With custom keys
+    $0 --key-enc 404142... --key-mac 404142... --key-dek 404142...
+
+    # Generate fresh keys
+    $0 --gen-keys
+
+    # Specify CAP files
+    $0 --pse /path/to/pse.cap --pay-app /path/to/paymentapp.cap
+
+EOF
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --rid)
+                RID="$2"
+                shift 2
+                ;;
+            --aid)
+                AID="$2"
+                shift 2
+                ;;
+            --key-enc)
+                KEY_ENC="$2"
+                shift 2
+                ;;
+            --key-mac)
+                KEY_MAC="$2"
+                shift 2
+                ;;
+            --key-dek)
+                KEY_DEK="$2"
+                shift 2
+                ;;
+            --pan)
+                PAN="$2"
+                shift 2
+                ;;
+            --bin)
+                BIN="$2"
+                shift 2
+                ;;
+            --icc-cert)
+                ICC_CERT="$2"
+                shift 2
+                ;;
+            --icc-rem)
+                ICC_REM="$2"
+                shift 2
+                ;;
+            --icc-exp)
+                ICC_EXP="$2"
+                shift 2
+                ;;
+            --icc-privkey)
+                ICC_PRIVKEY="$2"
+                shift 2
+                ;;
+            --issuer-cert)
+                ISSUER_CERT="$2"
+                shift 2
+                ;;
+            --issuer-rem)
+                ISSUER_REM="$2"
+                shift 2
+                ;;
+            --issuer-exp)
+                ISSUER_EXP="$2"
+                shift 2
+                ;;
+            --pse)
+                PSE_CAP="$2"
+                shift 2
+                ;;
+            --pay-app)
+                PAYAPP_CAP="$2"
+                shift 2
+                ;;
+            --gen-keys)
+                GEN_KEYS=true
+                shift
+                ;;
+            --label)
+                DEFAULT_APP_LABEL="$2"
+                shift 2
+                ;;
+            --expiry)
+                DEFAULT_EXPIRY="$2"
+                shift 2
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Apply defaults
+apply_defaults() {
+    [[ -z "$RID" ]] && RID="$DEFAULT_RID"
+    [[ -z "$AID" ]] && AID="$DEFAULT_AID"
+    [[ -z "$BIN" ]] && BIN="$DEFAULT_BIN"
+}
+
+# Validate PAN/BIN
+validate_pan_bin() {
+    log_step "Validating PAN/BIN configuration..."
+
+    # If PAN is provided, validate it
+    if [[ -n "$PAN" ]]; then
+        # Check Luhn
+        if ! luhn_validate "$PAN"; then
+            log_error "PAN $PAN fails Luhn check"
+            exit 1
+        fi
+        log_info "PAN passes Luhn check"
+
+        # If BIN is also provided, check for conflict
+        if [[ -n "$BIN" ]]; then
+            if ! validate_bin_pan "$BIN" "$PAN"; then
+                log_error "PAN $PAN does not start with BIN $BIN - conflict!"
+                exit 1
+            fi
+            log_info "PAN matches BIN"
+        fi
+    else
+        # Generate PAN from BIN
+        log_info "Generating PAN from BIN: $BIN"
+        PAN=$(generate_pan "$BIN" 16)
+        log_info "Generated PAN: $PAN"
+
+        # Verify it passes Luhn
+        if ! luhn_validate "$PAN"; then
+            log_error "Generated PAN fails Luhn check - this should not happen"
+            exit 1
+        fi
+    fi
+
+    log_success "PAN validation complete: $PAN"
+}
+
+# Check and locate CAP files
+locate_cap_files() {
+    log_step "Locating CAP files..."
+
+    # PSE CAP
+    if [[ -z "$PSE_CAP" ]]; then
+        if [[ -f "${BUILD_DIR}/card/pse.cap" ]]; then
+            PSE_CAP="${BUILD_DIR}/card/pse.cap"
+            log_info "Found PSE CAP: $PSE_CAP"
+        fi
+    fi
+
+    # Payment App CAP
+    if [[ -z "$PAYAPP_CAP" ]]; then
+        if [[ -f "${BUILD_DIR}/card/paymentapp.cap" ]]; then
+            PAYAPP_CAP="${BUILD_DIR}/card/paymentapp.cap"
+            log_info "Found Payment App CAP: $PAYAPP_CAP"
+        fi
+    fi
+
+    # If either is missing, offer to build
+    if [[ -z "$PSE_CAP" || -z "$PAYAPP_CAP" ]]; then
+        log_warn "CAP files not found in build/card/"
+
+        read -p "Would you like to build the CAP files? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            log_step "Building CAP files..."
+            cd "$SCRIPT_DIR"
+
+            # Detect Java version and use appropriate JDK
+            if command -v /Library/Java/JavaVirtualMachines/jdk1.8.0_251.jdk/Contents/Home/bin/javac &> /dev/null; then
+                JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk1.8.0_251.jdk/Contents/Home \
+                gradle cap -Pjc_version=2.2.2 \
+                    -Pcompile_javac_path=/Library/Java/JavaVirtualMachines/jdk1.8.0_251.jdk/Contents/Home/bin/javac \
+                    -x checkstyleMain -x checkstyleTest -x test
+            else
+                gradle cap -x checkstyleMain -x checkstyleTest -x test
+            fi
+
+            # Verify files were created
+            if [[ -f "${BUILD_DIR}/card/pse.cap" ]]; then
+                PSE_CAP="${BUILD_DIR}/card/pse.cap"
+            fi
+            if [[ -f "${BUILD_DIR}/card/paymentapp.cap" ]]; then
+                PAYAPP_CAP="${BUILD_DIR}/card/paymentapp.cap"
+            fi
+        fi
+    fi
+
+    # Final check
+    if [[ -z "$PSE_CAP" || ! -f "$PSE_CAP" ]]; then
+        log_error "PSE CAP file not found"
+        exit 1
+    fi
+    if [[ -z "$PAYAPP_CAP" || ! -f "$PAYAPP_CAP" ]]; then
+        log_error "Payment App CAP file not found"
+        exit 1
+    fi
+
+    log_success "CAP files located"
+}
+
+# Check and locate certificate files
+locate_cert_files() {
+    log_step "Locating certificate files..."
+
+    # Check if any ICC or Issuer cert options were provided
+    local icc_provided=false
+    local issuer_provided=false
+
+    [[ -n "$ICC_CERT" || -n "$ICC_REM" || -n "$ICC_EXP" || -n "$ICC_PRIVKEY" ]] && icc_provided=true
+    [[ -n "$ISSUER_CERT" || -n "$ISSUER_REM" || -n "$ISSUER_EXP" ]] && issuer_provided=true
+
+    # If any cert option provided, all must be provided
+    if $icc_provided; then
+        if [[ -z "$ICC_CERT" || -z "$ICC_REM" || -z "$ICC_EXP" || -z "$ICC_PRIVKEY" ]]; then
+            log_error "If any --icc-* option is provided, all must be provided:"
+            log_error "  --icc-cert, --icc-rem, --icc-exp, --icc-privkey"
+            exit 1
+        fi
+    fi
+
+    if $issuer_provided; then
+        if [[ -z "$ISSUER_CERT" || -z "$ISSUER_REM" || -z "$ISSUER_EXP" ]]; then
+            log_error "If any --issuer-* option is provided, all must be provided:"
+            log_error "  --issuer-cert, --issuer-rem, --issuer-exp"
+            exit 1
+        fi
+    fi
+
+    # If neither provided, use default locations
+    if ! $icc_provided && ! $issuer_provided; then
+        ICC_CERT="${KEYS_DIR}/icc/icc_certificate.bin"
+        ICC_REM="${KEYS_DIR}/icc/icc_remainder.bin"
+        ICC_EXP="${KEYS_DIR}/icc/icc_exponent.bin"
+        ICC_PRIVKEY="${KEYS_DIR}/icc/icc_private.pem"
+        ICC_MODULUS="${KEYS_DIR}/icc/icc_modulus.bin"
+        ISSUER_CERT="${KEYS_DIR}/issuer/issuer_certificate.bin"
+        ISSUER_REM="${KEYS_DIR}/issuer/issuer_remainder.bin"
+        ISSUER_EXP="${KEYS_DIR}/issuer/issuer_exponent.bin"
+
+        # Check if default files exist
+        local all_exist=true
+        for f in "$ICC_CERT" "$ICC_REM" "$ICC_EXP" "$ICC_PRIVKEY" "$ISSUER_CERT" "$ISSUER_REM" "$ISSUER_EXP"; do
+            if [[ ! -f "$f" ]]; then
+                all_exist=false
+                break
+            fi
+        done
+
+        if ! $all_exist; then
+            log_warn "Certificate files not found in keys/ directory"
+
+            if $GEN_KEYS; then
+                log_info "Auto-generating keys (--gen-keys specified)"
+                generate_keys
+            else
+                read -p "Would you like to generate new keys? (y/n) " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    generate_keys
+                else
+                    log_error "Certificate files required but not found"
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+
+    # Set ICC modulus if using default path
+    [[ -z "$ICC_MODULUS" ]] && ICC_MODULUS="${KEYS_DIR}/icc/icc_modulus.bin"
+
+    # Verify all files exist
+    for f in "$ICC_CERT" "$ICC_REM" "$ICC_EXP" "$ICC_PRIVKEY" "$ISSUER_CERT" "$ISSUER_REM" "$ISSUER_EXP"; do
+        if [[ ! -f "$f" ]]; then
+            log_error "Certificate file not found: $f"
+            exit 1
+        fi
+    done
+
+    log_success "Certificate files located"
+}
+
+# Generate keys
+generate_keys() {
+    log_step "Generating certificate hierarchy..."
+
+    source "${SCRIPTS_DIR}/generate_keys.sh"
+    generate_all "$PAN" "$DEFAULT_EXPIRY"
+
+    log_success "Key generation complete"
+}
+
+# Build GP command
+build_gp_cmd() {
+    local cmd="java -jar ${GP_JAR}"
+
+    if [[ -n "$KEY_ENC" && -n "$KEY_MAC" && -n "$KEY_DEK" ]]; then
+        cmd+=" --key-enc $KEY_ENC --key-mac $KEY_MAC --key-dek $KEY_DEK"
+    fi
+
+    echo "$cmd"
+}
+
+# Query card for apps
+query_card() {
+    log_step "Querying card for installed applications..."
+    local gp_cmd=$(build_gp_cmd)
+
+    $gp_cmd -l 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:" || true
+}
+
+# Remove all apps
+remove_all_apps() {
+    log_step "Removing all applications from card..."
+    local gp_cmd=$(build_gp_cmd)
+
+    # Get list of packages (excluding system packages)
+    local packages=$($gp_cmd -l 2>&1 | grep "^PKG:" | awk '{print $2}' | grep -v "^A000000151" || true)
+
+    if [[ -z "$packages" ]]; then
+        log_info "No removable packages found"
+        return 0
+    fi
+
+    for pkg in $packages; do
+        log_info "Removing package: $pkg"
+        $gp_cmd --delete "$pkg" --force 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:" || true
+    done
+
+    log_success "Removal complete"
+}
+
+# Load CAP files
+load_cap_files() {
+    log_step "Loading CAP files to card..."
+    local gp_cmd=$(build_gp_cmd)
+
+    log_info "Loading PSE: $PSE_CAP"
+    $gp_cmd --force --install "$PSE_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_info "Loading Payment App: $PAYAPP_CAP"
+    $gp_cmd --force --install "$PAYAPP_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "CAP files loaded"
+}
+
+# Personalize the card
+personalize_card() {
+    log_step "Personalizing card..."
+
+    local full_aid="${RID}${AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    # Build all APDUs
+    local pse_aid="315041592E5359532E4444463031"
+
+    # Convert values to hex
+    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
+    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+    local cardholder_name="${DEFAULT_APP_LABEL}/CARDHOLDER "
+    local cardholder_hex=$(echo -n "$cardholder_name" | xxd -p | tr -d '\n')
+    local cardholder_len=$(printf '%02X' ${#cardholder_name})
+
+    # PAN formatting
+    local pan_hex="$PAN"
+    if (( ${#PAN} % 2 == 1 )); then
+        pan_hex="${PAN}F"
+    fi
+    local pan_bytes=$((${#pan_hex} / 2))
+    local pan_len_hex=$(printf '%02X' $pan_bytes)
+
+    # Track 2
+    local track2="${pan_hex}D${DEFAULT_EXPIRY:0:4}2201000000000000F"
+    track2="${track2:0:38}"
+    local track2_len=$(printf '%02X' $((${#track2} / 2)))
+
+    # Directory entry for PSE
+    local full_aid_len=$(printf '%02X' $((${#full_aid} / 2)))
+    local dir_entry="4F${full_aid_len}${full_aid}50${app_label_len}${app_label_hex}870101"
+    local dir_entry_len=$(printf '%02X' $((${#dir_entry} / 2)))
+    local full_dir_entry="61${dir_entry_len}${dir_entry}"
+    local full_dir_entry_len=$(printf '%02X' $((${#full_dir_entry} / 2)))
+
+    # Certificate data
+    local icc_cert_hex=$(xxd -p "$ICC_CERT" | tr -d '\n')
+    local icc_cert_len=$(printf '%02X' $(wc -c < "$ICC_CERT" | tr -d ' '))
+
+    local icc_rem_hex=$(xxd -p "$ICC_REM" | tr -d '\n')
+    local icc_rem_size=$(wc -c < "$ICC_REM" | tr -d ' ')
+    local icc_rem_len=$(printf '%02X' $icc_rem_size)
+
+    local icc_mod_hex=$(xxd -p "$ICC_MODULUS" | tr -d '\n')
+    local icc_mod_len=$(printf '%02X' $(wc -c < "$ICC_MODULUS" | tr -d ' '))
+
+    # Extract ICC private exponent (only the privateExponent field, not prime1, prime2, etc.)
+    local icc_priv_exp=$(openssl rsa -in "$ICC_PRIVKEY" -noout -text 2>/dev/null | awk '/^privateExponent:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag' | tr -d ' :\n' | sed 's/^0*//')
+    # Ensure even number of hex characters (pad with leading zero if odd)
+    if (( ${#icc_priv_exp} % 2 == 1 )); then
+        icc_priv_exp="0${icc_priv_exp}"
+    fi
+    local mod_size=$(( $(wc -c < "$ICC_MODULUS" | tr -d ' ') * 2 ))
+    while (( ${#icc_priv_exp} < mod_size )); do
+        icc_priv_exp="0${icc_priv_exp}"
+    done
+    local icc_priv_len=$(printf '%02X' $((${#icc_priv_exp} / 2)))
+
+    local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
+    local issuer_cert_len=$(printf '%02X' $(wc -c < "$ISSUER_CERT" | tr -d ' '))
+
+    local issuer_rem_hex=$(xxd -p "$ISSUER_REM" | tr -d '\n')
+    local issuer_rem_size=$(wc -c < "$ISSUER_REM" | tr -d ' ')
+    local issuer_rem_len=$(printf '%02X' $issuer_rem_size)
+
+    # Build APDU list
+    gp_cmd+=" -a 00A404000E${pse_aid}"
+    gp_cmd+=" -a 8005000000"
+    gp_cmd+=" -a 8001008E0E${pse_aid}"
+    gp_cmd+=" -a 800100840E${pse_aid}"
+    gp_cmd+=" -a 800100880101"
+    gp_cmd+=" -a 80015F2D02656E"
+    gp_cmd+=" -a 8002000502008800"
+    gp_cmd+=" -a 8002000404008400A5"
+    gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
+    gp_cmd+=" -a 8003010C${full_dir_entry_len}${full_dir_entry}"
+
+    # Payment app selection and base personalization
+    gp_cmd+=" -a 00A4040007${full_aid}"
+    gp_cmd+=" -a 8005000000"
+    gp_cmd+=" -a 80040003020001"
+    gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
+    gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+    gp_cmd+=" -a 8001008F0192"
+    gp_cmd+=" -a 80019F320103"
+    gp_cmd+=" -a 80010090${issuer_cert_len}${issuer_cert_hex}"
+    gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
+    gp_cmd+=" -a 80019F470103"
+    gp_cmd+=" -a 80019F46${icc_cert_len}${icc_cert_hex}"
+    gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
+    gp_cmd+=" -a 8004000102123400"
+    gp_cmd+=" -a 8004000202007700"
+    gp_cmd+=" -a 800200010400820094"
+    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 800200050400500087"
+    gp_cmd+=" -a 8002000404008400A5"
+    gp_cmd+=" -a 8003020C0400575F20"
+    gp_cmd+=" -a 8003011406008F9F329F4A"
+    gp_cmd+=" -a 80030214020090"
+    gp_cmd+=" -a 80030314020092"
+    gp_cmd+=" -a 80030414029F46"
+    gp_cmd+=" -a 80030514049F479F48"
+    gp_cmd+=" -a 8003011C14005A5F245F255F285F349F079F0D9F0E9F0F9F08"
+    gp_cmd+=" -a 8003021C06008C008D008E"
+    gp_cmd+=" -a 8003031C049F369F10"
+    gp_cmd+=" -a 80019F36020001"
+    gp_cmd+=" -a 8001008407${full_aid}"
+    gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
+    gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
+    gp_cmd+=" -a 80015F340101"
+    gp_cmd+=" -a 80010057${track2_len}${track2}"
+    gp_cmd+=" -a 80010050${app_label_len}${app_label_hex}"
+    gp_cmd+=" -a 800100870101"
+    gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
+    gp_cmd+=" -a 80019F08020001"
+    gp_cmd+=" -a 80015F2503240101"
+    gp_cmd+=" -a 80015F28020840"
+    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80010082023D01"
+    gp_cmd+=" -a 800100940C080202001001050118010300"
+    gp_cmd+=" -a 80019F4A0182"
+    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008E0A00000000000000001F00"
+    gp_cmd+=" -a 80019F0D05FC688C9800"
+    gp_cmd+=" -a 80019F0E050010000000"
+    gp_cmd+=" -a 80019F0F05FC688CF800"
+    gp_cmd+=" -a 80019F100706010A03A4A002"
+
+    log_info "Sending personalization APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "Personalization complete"
+}
+
+# Validate certificates
+validate_certificates() {
+    log_step "Validating certificate chain..."
+
+    source "${SCRIPTS_DIR}/validate_certs.sh"
+
+    if validate_chain; then
+        log_success "Certificate chain validation passed"
+    else
+        log_error "Certificate chain validation failed"
+        exit 1
+    fi
+}
+
+# Generate config files
+generate_configs() {
+    log_step "Generating terminal configuration files..."
+
+    source "${SCRIPTS_DIR}/gen_config.sh"
+
+    gen_verifone_all "${BUILD_DIR}/config/verifone" "$RID" "$AID" "$DEFAULT_APP_LABEL"
+    gen_emvpt_all "${BUILD_DIR}/config/emvpt" "$RID" "$DEFAULT_APP_LABEL"
+
+    log_success "Configuration files generated"
+    log_info "  Verifone: ${BUILD_DIR}/config/verifone/"
+    log_info "  emvpt:    ${BUILD_DIR}/config/emvpt/"
+}
+
+# Print summary
+print_summary() {
+    echo ""
+    echo -e "${BOLD}========================================${NC}"
+    echo -e "${BOLD}       Personalization Summary          ${NC}"
+    echo -e "${BOLD}========================================${NC}"
+    echo ""
+    echo -e "  ${CYAN}RID:${NC}        $RID"
+    echo -e "  ${CYAN}AID:${NC}        ${RID}${AID}"
+    echo -e "  ${CYAN}PAN:${NC}        $PAN"
+    echo -e "  ${CYAN}Expiry:${NC}     ${DEFAULT_EXPIRY:0:2}/${DEFAULT_EXPIRY:2:2}/${DEFAULT_EXPIRY:4:2}"
+    echo -e "  ${CYAN}Label:${NC}      $DEFAULT_APP_LABEL"
+    echo ""
+    echo -e "  ${CYAN}Config files:${NC}"
+    echo -e "    Verifone: ${BUILD_DIR}/config/verifone/"
+    echo -e "    emvpt:    ${BUILD_DIR}/config/emvpt/"
+    echo ""
+    echo -e "${GREEN}Card personalization complete!${NC}"
+    echo ""
+}
+
+# Main execution
+main() {
+    echo ""
+    echo -e "${BOLD}EMV Card Personalization Tool${NC}"
+    echo -e "${BOLD}==============================${NC}"
+    echo ""
+
+    parse_args "$@"
+    apply_defaults
+
+    # Validate PAN/BIN
+    validate_pan_bin
+
+    # Locate CAP files
+    locate_cap_files
+
+    # Locate certificate files
+    locate_cert_files
+
+    # Validate certificates
+    validate_certificates
+
+    # Query card
+    query_card
+
+    # Remove existing apps
+    remove_all_apps
+
+    # Load CAP files
+    load_cap_files
+
+    # Personalize card
+    personalize_card
+
+    # Generate config files
+    generate_configs
+
+    # Print summary
+    print_summary
+}
+
+# Run main
+main "$@"
