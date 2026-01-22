@@ -30,6 +30,10 @@ public class PaymentApplication extends EmvApplet {
     private byte[] pinCode = null;
     private boolean useRandom = true;
 
+    // Storage for CDOL1 data from first GENERATE AC (needed for second GENERATE AC's Transaction Data Hash)
+    private byte[] storedCdol1Data = null;
+    private short storedCdol1Length = 0;
+
     private void processSetSettings(APDU apdu, byte[] buf) {
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
         switch (settingsId) {
@@ -130,12 +134,19 @@ public class PaymentApplication extends EmvApplet {
 
         tag9f4cDynamicNumber = JCSystem.makeTransientByteArray((short) 3, JCSystem.CLEAR_ON_DESELECT);
 
+        // Storage for CDOL1 data - transient so it's cleared on deselect
+        storedCdol1Data = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
+        storedCdol1Length = 0;
+
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
         shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
+        // Reset stored CDOL1 data for new transaction
+        storedCdol1Length = 0;
+
         // Check if PAN (tag A5) exists in the ICC
         if (EmvTag.findTag((short) 0x5A) != null) {
             arrayRandomFill(challenge);
@@ -197,11 +208,9 @@ public class PaymentApplication extends EmvApplet {
         boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
 
         // Set Cryptogram Information Data (9F27)
-        // For CDA, bit 7 indicates CDA performed successfully
+        // CID bits 7-6 indicate cryptogram type: 00=AAC, 01=TC, 10=ARQC
+        // CDA success is indicated by valid SDAD in response, not by CID bits
         byte cid = responseCryptogramType;
-        if (cdaRequested && canPerformCda) {
-            cid |= (byte) 0x80; // Set bit 7 to indicate CDA was performed
-        }
         tmpBuffer[0] = cid;
         EmvTag.setTag((short) 0x9F27, tmpBuffer, (short) 0, (byte) 1);
 
@@ -213,7 +222,7 @@ public class PaymentApplication extends EmvApplet {
 
         // If CDA requested and we have ICC private key, generate SDAD
         if (cdaRequested && canPerformCda) {
-            generateSdad(cid);
+            generateSdad(buf, cid, cdolLen);
             // generateSdad completed successfully
         } else if (cdaRequested) {
             // CDA requested but key not available - create empty SDAD placeholder
@@ -261,7 +270,7 @@ public class PaymentApplication extends EmvApplet {
      * Generate Signed Dynamic Application Data (SDAD) for CDA.
      * Per EMV Book 2, Table 16.
      */
-    private void generateSdad(byte cryptogramInfoData) {
+    private void generateSdad(byte[] buf, byte cryptogramInfoData, short cdolLen) {
         short signedDataSize = rsaPrivateKeyByteSize;
 
         // Fill with padding (0xBB)
@@ -272,15 +281,16 @@ public class PaymentApplication extends EmvApplet {
         tmpBuffer[1] = (byte) 0x05;  // Signed Data Format for CDA
         tmpBuffer[2] = (byte) 0x01;  // Hash Algorithm Indicator (SHA-1)
 
-        // ICC Dynamic Data:
+        // ICC Dynamic Data for CDA Format 05:
         // - ICC Dynamic Number Length (1 byte)
         // - ICC Dynamic Number (LDD bytes, we use 8)
         // - Cryptogram Information Data (1 byte)
         // - Application Cryptogram (8 bytes)
-        // Total: 1 + 8 + 1 + 8 = 18 bytes
+        // - Transaction Data Hash Code (20 bytes) - hash over CDOL data
+        // Total: 1 + 8 + 1 + 8 + 20 = 38 bytes
 
         byte iccDynNumLen = (byte) 8;
-        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8); // len + DN + CID + AC
+        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8 + 20); // len + DN + CID + AC + TDH
         tmpBuffer[3] = iccDynamicDataLength;
 
         short offset = 4;
@@ -308,20 +318,122 @@ public class PaymentApplication extends EmvApplet {
         }
         offset += 8;
 
+        // Transaction Data Hash Code (20 bytes)
+        // Per EMV Book 2, this hash is over PDOL data + CDOL1 data + [CDOL2 data] + Response data
+        // For second GENERATE AC, terminal includes both CDOL1 and CDOL2 data
+        // CDOL1: 58 bytes expected (padded)
+        // CDOL2: 60 bytes (starts with 8A Authorization Response Code)
+        shaMessageDigest.reset();
+
+        // Detect if this is CDOL2 (second GENERATE AC) by length = 60 bytes
+        boolean isSecondGenerateAc = (cdolLen == (short) 60);
+        short cdol1ExpectedLen = 58;
+
+        if (isSecondGenerateAc) {
+            // Second GENERATE AC: Include stored CDOL1 first, then CDOL2
+            // 1a. Include stored CDOL1 data (padded to 58 bytes)
+            if (storedCdol1Length > 0) {
+                shaMessageDigest.update(storedCdol1Data, (short) 0, storedCdol1Length);
+            }
+            // Pad CDOL1 if needed
+            if (storedCdol1Length < cdol1ExpectedLen) {
+                short padLen = (short)(cdol1ExpectedLen - storedCdol1Length);
+                Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
+                shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
+            }
+            // 1b. Include current CDOL2 data (60 bytes, no padding needed)
+            if (cdolLen > 0) {
+                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
+            }
+        } else {
+            // First GENERATE AC: Store CDOL1 data for later use
+            if (cdolLen > 0 && cdolLen <= (short) 64) {
+                Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, storedCdol1Data, (short) 0, cdolLen);
+                storedCdol1Length = cdolLen;
+            }
+            // Include CDOL1 data (padded to expected length if needed)
+            if (cdolLen > 0) {
+                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
+            }
+            // Pad with zeros if CDOL data is less than expected
+            if (cdolLen < cdol1ExpectedLen) {
+                short padLen = (short)(cdol1ExpectedLen - cdolLen);
+                Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
+                shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
+            }
+        }
+
+        // 2. Include separator byte (0x1A) before response TLV
+        // The terminal includes this byte between CDOL data and response TLV
+        tmpBuffer[400] = (byte) 0x1A;
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
+
+        // 3. Include response data as TLV
+        // 9F27 (CID) - 1 byte value
+        tmpBuffer[400] = (byte) 0x9F;
+        tmpBuffer[401] = (byte) 0x27;
+        tmpBuffer[402] = (byte) 0x01;
+        tmpBuffer[403] = cryptogramInfoData;
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 4);
+
+        // 9F36 (ATC) - 2 byte value
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        tmpBuffer[400] = (byte) 0x9F;
+        tmpBuffer[401] = (byte) 0x36;
+        tmpBuffer[402] = (byte) 0x02;
+        if (atcTag != null) {
+            Util.arrayCopy(atcTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 2);
+        }
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 5);
+
+        // 9F26 (AC) - 8 byte value
+        tmpBuffer[400] = (byte) 0x9F;
+        tmpBuffer[401] = (byte) 0x26;
+        tmpBuffer[402] = (byte) 0x08;
+        if (acTag != null) {
+            Util.arrayCopy(acTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 8);
+        }
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 11);
+
+        // 9F10 (IAD) - 7 byte value
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        tmpBuffer[400] = (byte) 0x9F;
+        tmpBuffer[401] = (byte) 0x10;
+        if (iadTag != null) {
+            tmpBuffer[402] = (byte) (iadTag.getLength() & 0xFF);
+            Util.arrayCopy(iadTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) (iadTag.getLength() & 0xFF));
+            shaMessageDigest.update(tmpBuffer, (short) 400, (short) (3 + (iadTag.getLength() & 0xFF)));
+        }
+
+        // Trailing 0x9F byte (terminal includes this in hash)
+        tmpBuffer[400] = (byte) 0x9F;
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
+
+        shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
+        offset += 20;
+
         // Trailer at end
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
 
-        // Compute hash
-        // Hash input: bytes 1 through (signedDataSize - 22) of SDAD structure
-        //             + transaction data (CDOL) from GENERATE AC command
+        // Compute SDAD hash
+        // Hash input: bytes 1 through (signedDataSize - 22) = format through padding
+        //             + Unpredictable Number (9F37)
         short checksumStartIndex = (short) (signedDataSize - 21);
 
         shaMessageDigest.reset();
         // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)
-        // Per EMV Book 2 section 6.5.1 for CDA Format 05, the hash is ONLY over
-        // the SDAD structure (Format || Hash Algo || ICC Dynamic Data || Pad Pattern)
-        // NOT the transaction data - that's already embedded in the CID and AC
-        shaMessageDigest.doFinal(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1), tmpBuffer, checksumStartIndex);
+        shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));
+
+        // Include Unpredictable Number from CDOL data
+        // CDOL1: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)... UN at offset 25
+        // CDOL2: 8A(2)+9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)... UN at offset 27
+        // Determine UN offset based on CDOL length: CDOL2 (60 bytes) vs CDOL1 (43-58 bytes)
+        short unOffset = (cdolLen == (short) 60) ? (short) 27 : (short) 25;
+        if (cdolLen >= (short) (unOffset + 4)) {
+            shaMessageDigest.update(buf, (short) (ISO7816.OFFSET_CDATA + unOffset), (short) 4);
+        }
+
+        shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, checksumStartIndex);
 
         // RSA sign (encrypt with private key)
         // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header

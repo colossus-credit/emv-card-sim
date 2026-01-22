@@ -73,7 +73,7 @@ echo "  OK"
 # Load ICC RSA private key modulus (setting 0x0004)
 echo "Step 2: Loading ICC RSA modulus ($icc_modulus_len bytes)..."
 # For 248-byte modulus (RSA-1984), use FF length
-apdu="80 00 00 04 F8 $icc_modulus_hex"
+apdu="80 04 00 04 F8 $icc_modulus_hex"
 result=$(opensc-tool -r 0 -s "$apdu" 2>&1)
 if ! echo "$result" | grep -q "SW1=0x90"; then
     echo "ERROR: Failed to load ICC modulus"
@@ -94,7 +94,7 @@ while [ ${#icc_priv_exp} -lt 496 ]; do
 done
 icc_priv_exp_spaced=$(echo -n "$icc_priv_exp" | sed 's/../& /g' | sed 's/ $//')
 
-apdu="80 00 00 05 F8 $icc_priv_exp_spaced"
+apdu="80 04 00 05 F8 $icc_priv_exp_spaced"
 result=$(opensc-tool -r 0 -s "$apdu" 2>&1)
 if ! echo "$result" | grep -q "SW1=0x90"; then
     echo "ERROR: Failed to load ICC private exponent"
