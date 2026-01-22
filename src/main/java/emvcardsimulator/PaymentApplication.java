@@ -505,15 +505,29 @@ public class PaymentApplication extends EmvApplet {
         if (Util.getShort(buf, ISO7816.OFFSET_P1) != (short) 0x00) {
             EmvApplet.logAndThrow(ISO7816.SW_INCORRECT_P1P2);
         }
-        if (buf[ISO7816.OFFSET_LC] != (byte) 0x02) {
+
+        short lc = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+
+        // Must have at least tag 83 + length byte
+        if (lc < (short) 2) {
             EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
         }
+
+        // Command template must be tag 83
         if (buf[ISO7816.OFFSET_CDATA] != (byte) 0x83) {
             EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
         }
-        if (buf[ISO7816.OFFSET_CDATA + 1] != (byte) 0x00) {
-            EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
+
+        // Get PDOL data length
+        short pdolLen = (short) (buf[ISO7816.OFFSET_CDATA + 1] & 0x00FF);
+
+        // Validate LC matches: tag(1) + len(1) + pdolLen
+        if (lc != (short) (2 + pdolLen)) {
+            EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);
         }
+
+        // PDOL data is at ISO7816.OFFSET_CDATA + 2, length pdolLen
+        // Can be used for transaction processing if needed
 
         sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
     }
