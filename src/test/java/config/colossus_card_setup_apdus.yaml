@@ -93,8 +93,8 @@
 
 # Template 5: FCI Proprietary Template (tag A5) Contents
 # Function: Defines which application metadata tags to include in FCI
-# Behavior: Returns label, language, priority, preferred name, code table index
-- req: '80 02 00 05 0A 00 50 5F 2D 00 87 9F 12 9F 11'
+# Behavior: Returns label, language, priority, preferred name, code table index, PDOL
+- req: '80 02 00 05 0C 00 50 5F 2D 00 87 9F 12 9F 11 9F 38'
   res: '90 00'
 
 # ═══════════════════════════════════════════════════════════════════
@@ -175,6 +175,13 @@
 # Function: Defines character set for text fields
 # Behavior: ISO 8859-1 (Latin-1) encoding for cardholder name and labels
 - req: '80 01 9F 11 01 01'
+  res: '90 00'
+
+# PDOL (Processing Data Object List) - Data requested in GPO
+# Function: Specifies what data terminal must provide in GET PROCESSING OPTIONS
+# Behavior: Requests TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
+#           Total PDOL data: 33 bytes
+- req: '80 01 9F 38 18 9F 66 04 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04'
   res: '90 00'
 
 # ═══════════════════════════════════════════════════════════════════
@@ -396,9 +403,9 @@
 
 # FCI Proprietary Template (tag A5) - Complete application metadata
 # Function: Composite tag containing all application selection information
-# Behavior: Contains label (COLOSSUS), language (en), priority (1), preferred name (COLOSSUS CREDIT), code table (1)
+# Behavior: Contains label (COLOSSUS), language (en), priority (1), preferred name (COLOSSUS CREDIT), code table (1), PDOL
 #           Returned during SELECT, terminals display this info to cardholder
-- req: '80 01 00 A5 2E 50 08 43 4F 4C 4F 53 53 55 53 5F 2D 02 65 6E 87 01 01 9F 12 0F 43 4F 4C 4F 53 53 55 53 20 43 52 45 44 49 54 20 20 9F 11 01 01'
+- req: '80 01 00 A5 49 50 08 43 4F 4C 4F 53 53 55 53 5F 2D 02 65 6E 87 01 01 9F 12 0F 43 4F 4C 4F 53 53 55 53 20 43 52 45 44 49 54 20 20 9F 11 01 01 9F 38 18 9F 66 04 9F 02 06 9F 03 06 9F 1A 02 95 05 5F 2A 02 9A 03 9C 01 9F 37 04'
   res: '90 00'
 
 # ═══════════════════════════════════════════════════════════════════
