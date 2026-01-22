@@ -1,4 +1,7 @@
 #!/bin/bash
+# PSE (Payment System Environment) Personalization Script
+# This configures 1PAY.SYS.DDF01 to list the Colossus payment application
+
 java -jar gp.jar -d --key-enc 90379A3E7116D455E55F9398736A01CA --key-mac 473F36161A7F7F60CC3A766EA4BE5247 --key-dek D3749ED4FF42FD58B39EEB562B017CD9 \
 -a 00A404000E315041592E5359532E4444463031 \
 -a 8005000000 \

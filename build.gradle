@@ -43,8 +43,8 @@ if (!project.hasProperty("paymentapp_applet_aid")) {
     ext.java_version_compatible = 1.8
     ext.jc_sdk = "jc303_kit"
 } else if (jc_version == "2.2.2") {
-    // class major version 49 - using 1.8 for modern Java compiler compatibility
-    ext.java_version_compatible = 1.8
+    // class major version 49 (Java 1.5) required for JavaCard 2.2.2
+    ext.java_version_compatible = 1.5
     ext.jc_sdk = "jc222_kit"
 } else if (jc_version == "2.2.1") {
     // class major version 46 - using 1.8 for modern Java compiler compatibility
@@ -162,10 +162,12 @@ compileJava {
 
     // Use --release for proper cross-compilation with modern JDK
     // This ensures both API and bytecode compatibility
-    if (JavaVersion.current().isJava9Compatible()) {
-        def releaseVersion = java_version_compatible.toString().replace("1.", "").toInteger()
-        options.release = releaseVersion
+    // Note: --release doesn't support versions below 6, so use source/target for JC 2.2.x
+    def targetVersion = java_version_compatible.toString().replace("1.", "").toInteger()
+    if (JavaVersion.current().isJava9Compatible() && targetVersion >= 6) {
+        options.release = targetVersion
     } else {
+        // For Java 1.5 targeting (JC 2.2.2), use source/target with forked javac
         sourceCompatibility = java_version_compatible
         targetCompatibility = java_version_compatible
     }
