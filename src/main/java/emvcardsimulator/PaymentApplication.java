@@ -252,6 +252,18 @@ public class PaymentApplication extends EmvApplet {
         // Check if CDA can be performed
         boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
 
+        // Check if CDA is supported in AIP (byte 2 bit 0x80)
+        // Some kernels expect CDA based on AIP, not explicit P1 request
+        boolean cdaSupportedInAip = false;
+        EmvTag aipTag = EmvTag.findTag((short) 0x0082);
+        if (aipTag != null && aipTag.getLength() >= 2) {
+            byte aipByte2 = aipTag.getData()[1];
+            cdaSupportedInAip = ((aipByte2 & (byte) 0x80) != 0);
+        }
+
+        // Perform CDA if: explicitly requested OR (supported in AIP AND we can do it)
+        boolean shouldPerformCda = cdaRequested || (cdaSupportedInAip && canPerformCda);
+
         // Set Cryptogram Information Data (9F27)
         // CID bits 7-6 indicate cryptogram type: 00=AAC, 01=TC, 10=ARQC
         // CDA success is indicated by valid SDAD in response, not by CID bits
@@ -265,17 +277,77 @@ public class PaymentApplication extends EmvApplet {
         short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
-        // If CDA requested and we have ICC private key, generate SDAD
-        if (cdaRequested && canPerformCda) {
+        // If CDA should be performed (requested OR AIP advertises it) and we have ICC private key
+        if (shouldPerformCda && canPerformCda) {
             generateSdad(buf, cid, cdolLen);
-        } else if (cdaRequested) {
-            // CDA requested but key not available - create empty SDAD placeholder
-            // to avoid SW_DATA_INVALID when template expansion looks for 9F4B
+            // CDA performed - use full template with 9F4B
+            sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+        } else if (cdaRequested && !canPerformCda) {
+            // CDA explicitly requested but key not available
             // Return 6985 (Conditions of use not satisfied) for CDA failure
             EmvApplet.logAndThrow((short) 0x6985);
+        } else {
+            // CDA not applicable - build response without 9F4B
+            // Response contains: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (IAD)
+            sendGenerateAcResponseNoCda(apdu, buf);
+        }
+    }
+
+    /**
+     * Send GENERATE AC response without CDA (no 9F4B).
+     * Response contains: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (IAD) in tag 77 template.
+     */
+    private void sendGenerateAcResponseNoCda(APDU apdu, byte[] buf) {
+        short offset = (short) 0;
+
+        // Build response content in tmpBuffer
+        // 9F27 (CID) - 1 byte
+        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
+        if (cidTag != null) {
+            offset = cidTag.copyToArray(tmpBuffer, offset);
         }
 
-        sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+        // 9F36 (ATC) - 2 bytes
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) {
+            offset = atcTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F26 (AC) - 8 bytes
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        if (acTag != null) {
+            offset = acTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F10 (IAD) - variable length
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        if (iadTag != null) {
+            offset = iadTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // Build tag 77 template wrapper
+        short contentLen = offset;
+        short responseOffset = (short) 0;
+
+        // Response goes in buf starting at OFFSET_CDATA
+        buf[ISO7816.OFFSET_CDATA] = (byte) 0x77;
+        responseOffset = (short) (ISO7816.OFFSET_CDATA + 1);
+
+        // Length encoding
+        if (contentLen > (short) 127) {
+            buf[responseOffset++] = (byte) 0x81;
+            buf[responseOffset++] = (byte) (contentLen & 0xFF);
+        } else {
+            buf[responseOffset++] = (byte) contentLen;
+        }
+
+        // Copy content
+        Util.arrayCopy(tmpBuffer, (short) 0, buf, responseOffset, contentLen);
+        responseOffset += contentLen;
+
+        short totalLen = (short) (responseOffset - ISO7816.OFFSET_CDATA);
+        ApduLog.addLogEntry(buf, ISO7816.OFFSET_CDATA, (byte) (totalLen & 0xFF));
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, totalLen);
     }
 
     /**
