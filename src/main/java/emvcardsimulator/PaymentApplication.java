@@ -252,13 +252,13 @@ public class PaymentApplication extends EmvApplet {
         // Check if CDA can be performed
         boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
 
-        // Check if CDA is supported in AIP (byte 2 bit 0x80)
+        // Check if CDA is supported in AIP (byte 1 bit 0 = 0x01)
         // Some kernels expect CDA based on AIP, not explicit P1 request
         boolean cdaSupportedInAip = false;
         EmvTag aipTag = EmvTag.findTag((short) 0x0082);
-        if (aipTag != null && aipTag.getLength() >= 2) {
-            byte aipByte2 = aipTag.getData()[1];
-            cdaSupportedInAip = ((aipByte2 & (byte) 0x80) != 0);
+        if (aipTag != null && aipTag.getLength() >= 1) {
+            byte aipByte1 = aipTag.getData()[0];
+            cdaSupportedInAip = ((aipByte1 & (byte) 0x01) != 0);
         }
 
         // Perform CDA if: explicitly requested OR (supported in AIP AND we can do it)
