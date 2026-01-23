@@ -272,13 +272,11 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         }
 
         // For responses <= 255 bytes, use original EmvTag-based approach
-        // For larger responses (CDA), build in tmpBuffer and use sendBytesLong
         if (templateTagLength <= (short) 255) {
             EmvTag.setTag(responseTemplateTag, tmpBuffer, (short) 0, (byte) templateTagLength);
             sendResponse(apdu, buf, responseTemplateTag);
         } else {
-            // For large responses, build TLV header at start of a separate area
-            // Shift content in tmpBuffer to make room for header
+            // For large responses (CDA with SDAD), build TLV header at start
             short headerSize = (short) 4; // tag(1) + 82(1) + len(2)
 
             // Move content to make room for header (work backwards to avoid overlap issues)
@@ -294,22 +292,19 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
             short totalLength = (short) (headerSize + templateTagLength);
 
-            // Send first 256 bytes, then use SW=61xx for GET RESPONSE chaining
+            // Send first chunk (up to 256 bytes) and store rest for GET RESPONSE
             short firstChunk = (totalLength > (short) 256) ? (short) 256 : totalLength;
+
             apdu.setOutgoing();
             apdu.setOutgoingLength(firstChunk);
             apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
 
-            // If more data remaining, store for GET RESPONSE and return 61xx
-            if (totalLength > (short) 256) {
+            // Store remaining data for GET RESPONSE
+            if (totalLength > firstChunk) {
                 pendingResponseOffset = firstChunk;
                 pendingResponseLength = (short) (totalLength - firstChunk);
-                short remaining = pendingResponseLength;
-                if (remaining > (short) 255) {
-                    remaining = (short) 255;
-                }
-                ISOException.throwIt((short) (0x6100 | remaining));
             }
+            // Return 9000 - terminal should call GET RESPONSE if it needs more
         }
     }
 
