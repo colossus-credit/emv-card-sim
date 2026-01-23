@@ -624,18 +624,35 @@ personalize_card() {
     gp_cmd+=" -a 800200010400820094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    gp_cmd+=" -a 8002000506005000879F38"
+    # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
+    gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
-    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
-    gp_cmd+=" -a 8003020C0400575F20"
-    gp_cmd+=" -a 8003011406008F9F329F4A"
+    # PDOL removed from FCI - card accepts empty GPO (83 00)
+    # gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
+    # SFI1/REC2: 57, 5F20, 9F1F (len=06: 00 + 1+2+2)
+    gp_cmd+=" -a 8003020C0600575F209F1F"
+    # SFI2/REC1: 8F, 92, 9F32, 9F47 (len=08: 008F + 0092 + 9F32 + 9F47)
+    gp_cmd+=" -a 8003011408008F00929F329F47"
+    # SFI2/REC2: 90 only (len=02: 00 + 1)
     gp_cmd+=" -a 80030214020090"
-    gp_cmd+=" -a 80030314020092"
-    gp_cmd+=" -a 80030414029F46"
-    gp_cmd+=" -a 80030514049F479F48"
-    gp_cmd+=" -a 8003011C14005A5F245F255F285F349F079F0D9F0E9F0F9F08"
-    gp_cmd+=" -a 8003021C06008C008D008E"
-    gp_cmd+=" -a 8003031C049F369F10"
+    # SFI2/REC3-5 removed (Visa uses only 2 records on SFI2)
+    # SFI3/REC1: 5A,5F24,5F25,5F28,5F34,9F07,9F0D,9F0E,9F0F,9F4A,8C,8D (len=18: 005A + 9x2byte + 008C + 008D)
+    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
+    # SFI3/REC2: 8E only (len=02: 00 + 1)
+    gp_cmd+=" -a 8003021C02008E"
+    # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49 (all 2-byte tags, len=0A)
+    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
+    # SFI3/REC4: 9F46 (2-byte tag, len=02)
+    gp_cmd+=" -a 8003041C029F46"
+
+    log_info "Sending personalization APDUs (batch 1: PSE + certificates + templates)..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    # Second batch: remaining tags (need to re-select the payment app)
+    gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+    gp_cmd+=" -a 00A4040007${full_aid}"
+
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_aid}"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
@@ -649,20 +666,32 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
-    gp_cmd+=" -a 80010082023D01"
-    # AFL: SFI 1 rec 2-2 (0 ODA), SFI 3 rec 1-3 (0 ODA) [static data], SFI 2 rec 1-5 (3 ODA) [ODA records last]
-    gp_cmd+=" -a 800100940C080202001801030010010503"
-    # 9F4A = Static Data Auth Tag List: 5A (PAN) + 5F24 (Expiry) + 5F25 (Effective)
-    gp_cmd+=" -a 80019F4A055A5F245F25"
+    # AIP: 3800 (Visa-like: SDA supported, no CDA)
+    gp_cmd+=" -a 80010082023800"
+    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
+    gp_cmd+=" -a 800100940C080202001001020018010401"
+    # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
+    gp_cmd+=" -a 80019F4A0182"
+    # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
+    gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
+    # 5F30 = Service Code
+    gp_cmd+=" -a 80015F30020201"
+    # 9F42 = Application Currency Code (USD = 0840)
+    gp_cmd+=" -a 80019F42020840"
+    # 9F44 = Application Currency Exponent
+    gp_cmd+=" -a 80019F440102"
+    # 9F49 = DDOL (9F37 04 = Unpredictable Number)
+    gp_cmd+=" -a 80019F49039F3704"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E0A00000000000000001F00"
+    # CVM List (20 bytes - Visa format)
+    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050010000000"
-    gp_cmd+=" -a 80019F0F05FC688CF800"
+    gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
 
-    log_info "Sending personalization APDUs..."
+    log_info "Sending personalization APDUs (batch 2: remaining tags)..."
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
     log_success "Personalization complete"

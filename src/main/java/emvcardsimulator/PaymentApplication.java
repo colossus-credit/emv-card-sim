@@ -627,11 +627,23 @@ public class PaymentApplication extends EmvApplet {
     }
 
     private void processGetData(APDU apdu, byte[] buf) {
-        if (buf[ISO7816.OFFSET_LC] != (byte) 0x05) {
-            EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
-        }
+        // Standard EMV GET DATA: P1P2 = tag ID, no command data required
+        short tagId = Util.getShort(buf, ISO7816.OFFSET_P1);
+        sendResponse(apdu, buf, tagId);
+    }
 
-        sendResponse(apdu, buf, Util.getShort(buf, ISO7816.OFFSET_P1));
+    private void listStoredTags(APDU apdu, byte[] buf) {
+        // Debug command: returns list of all stored tag IDs (2 bytes each)
+        short offset = (short) 0;
+        for (EmvTag iter = EmvTag.getHead(); iter != null; iter = iter.getNext()) {
+            byte[] tagBytes = iter.getTag();
+            tmpBuffer[offset] = tagBytes[0];
+            tmpBuffer[(short)(offset + 1)] = tagBytes[1];
+            offset += (short) 2;
+            if (offset >= (short) 250) break; // Prevent buffer overflow
+        }
+        Util.arrayCopy(tmpBuffer, (short) 0, buf, ISO7816.OFFSET_CDATA, offset);
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, offset);
     }
 
     private void processGetProcessingOptions(APDU apdu, byte[] buf) {
@@ -842,6 +854,9 @@ public class PaymentApplication extends EmvApplet {
                 return;
             case CMD_LOG_CONSUME:
                 consumeLogs(apdu, buf);
+                return;
+            case CMD_LIST_TAGS:
+                listStoredTags(apdu, buf);
                 return;
             default:
                 break;
