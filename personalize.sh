@@ -420,10 +420,29 @@ locate_cert_files() {
 generate_keys() {
     log_step "Generating certificate hierarchy..."
 
+    # Save expiry before sourcing generate_keys.sh (it has its own DEFAULT_EXPIRY)
+    local saved_expiry="$DEFAULT_EXPIRY"
     source "${SCRIPTS_DIR}/generate_keys.sh"
-    generate_all "$PAN" "$DEFAULT_EXPIRY"
+    generate_all "$PAN" "$saved_expiry"
+    # Restore expiry
+    DEFAULT_EXPIRY="$saved_expiry"
 
     log_success "Key generation complete"
+}
+
+# Regenerate just the ICC certificate with the current PAN
+# This is needed because the ICC cert contains the PAN and must match
+regenerate_icc_cert() {
+    log_step "Regenerating ICC certificate for PAN: $PAN..."
+
+    # Save expiry before sourcing generate_keys.sh (it has its own DEFAULT_EXPIRY)
+    local saved_expiry="$DEFAULT_EXPIRY"
+    source "${SCRIPTS_DIR}/generate_keys.sh"
+    generate_icc "$PAN" "$saved_expiry"
+    # Restore expiry
+    DEFAULT_EXPIRY="$saved_expiry"
+
+    log_success "ICC certificate regenerated"
 }
 
 # Build GP command
@@ -518,16 +537,30 @@ personalize_card() {
     local full_dir_entry="61${dir_entry_len}${dir_entry}"
     local full_dir_entry_len=$(printf '%02X' $((${#full_dir_entry} / 2)))
 
-    # Certificate data
+    # Certificate data - with extended TLV length encoding for RSA-2048
     local icc_cert_hex=$(xxd -p "$ICC_CERT" | tr -d '\n')
-    local icc_cert_len=$(printf '%02X' $(wc -c < "$ICC_CERT" | tr -d ' '))
+    local icc_cert_size=$(wc -c < "$ICC_CERT" | tr -d ' ')
+    # APDU LC for raw certificate (no TLV encoding - card adds TLV when returning)
+    local icc_cert_lc
+    if (( icc_cert_size > 255 )); then
+        icc_cert_lc=$(printf '00%04X' $icc_cert_size)
+    else
+        icc_cert_lc=$(printf '%02X' $icc_cert_size)
+    fi
 
     local icc_rem_hex=$(xxd -p "$ICC_REM" | tr -d '\n')
     local icc_rem_size=$(wc -c < "$ICC_REM" | tr -d ' ')
     local icc_rem_len=$(printf '%02X' $icc_rem_size)
 
     local icc_mod_hex=$(xxd -p "$ICC_MODULUS" | tr -d '\n')
-    local icc_mod_len=$(printf '%02X' $(wc -c < "$ICC_MODULUS" | tr -d ' '))
+    local icc_mod_size=$(wc -c < "$ICC_MODULUS" | tr -d ' ')
+    # For APDU LC: use extended length format (00 HH LL) for 256+ bytes
+    local icc_mod_len
+    if (( icc_mod_size >= 256 )); then
+        icc_mod_len=$(printf '00%04X' $icc_mod_size)
+    else
+        icc_mod_len=$(printf '%02X' $icc_mod_size)
+    fi
 
     # Extract ICC private exponent (only the privateExponent field, not prime1, prime2, etc.)
     local icc_priv_exp=$(openssl rsa -in "$ICC_PRIVKEY" -noout -text 2>/dev/null | awk '/^privateExponent:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag' | tr -d ' :\n' | sed 's/^0*//')
@@ -535,14 +568,27 @@ personalize_card() {
     if (( ${#icc_priv_exp} % 2 == 1 )); then
         icc_priv_exp="0${icc_priv_exp}"
     fi
-    local mod_size=$(( $(wc -c < "$ICC_MODULUS" | tr -d ' ') * 2 ))
-    while (( ${#icc_priv_exp} < mod_size )); do
+    local mod_size_hex=$(( icc_mod_size * 2 ))
+    while (( ${#icc_priv_exp} < mod_size_hex )); do
         icc_priv_exp="0${icc_priv_exp}"
     done
-    local icc_priv_len=$(printf '%02X' $((${#icc_priv_exp} / 2)))
+    local icc_priv_size=$((${#icc_priv_exp} / 2))
+    local icc_priv_len
+    if (( icc_priv_size >= 256 )); then
+        icc_priv_len=$(printf '00%04X' $icc_priv_size)
+    else
+        icc_priv_len=$(printf '%02X' $icc_priv_size)
+    fi
 
     local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
-    local issuer_cert_len=$(printf '%02X' $(wc -c < "$ISSUER_CERT" | tr -d ' '))
+    local issuer_cert_size=$(wc -c < "$ISSUER_CERT" | tr -d ' ')
+    # APDU LC for raw certificate (no TLV encoding - card adds TLV when returning)
+    local issuer_cert_lc
+    if (( issuer_cert_size > 255 )); then
+        issuer_cert_lc=$(printf '00%04X' $issuer_cert_size)
+    else
+        issuer_cert_lc=$(printf '%02X' $issuer_cert_size)
+    fi
 
     local issuer_rem_hex=$(xxd -p "$ISSUER_REM" | tr -d '\n')
     local issuer_rem_size=$(wc -c < "$ISSUER_REM" | tr -d ' ')
@@ -568,10 +614,10 @@ personalize_card() {
     gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
     gp_cmd+=" -a 8001008F0192"
     gp_cmd+=" -a 80019F320103"
-    gp_cmd+=" -a 80010090${issuer_cert_len}${issuer_cert_hex}"
+    gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
     gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
     gp_cmd+=" -a 80019F470103"
-    gp_cmd+=" -a 80019F46${icc_cert_len}${icc_cert_hex}"
+    gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
     gp_cmd+=" -a 8004000202007700"
@@ -604,7 +650,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
     gp_cmd+=" -a 80010082023D01"
-    gp_cmd+=" -a 800100940C080202001001050118010300"
+    # AFL: SFI 1 rec 2-2 (0 ODA), SFI 2 rec 1-5 (3 ODA for issuer certs), SFI 3 rec 1-3 (0 ODA)
+    gp_cmd+=" -a 800100940C080202001001050318010300"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
@@ -687,6 +734,10 @@ main() {
 
     # Locate certificate files
     locate_cert_files
+
+    # Regenerate ICC certificate to match the current PAN
+    # (ICC cert contains PAN and must be regenerated each time)
+    regenerate_icc_cert
 
     # Validate certificates
     validate_certificates

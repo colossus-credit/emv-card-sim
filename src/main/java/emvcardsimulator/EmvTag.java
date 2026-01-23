@@ -12,16 +12,16 @@ public class EmvTag {
 
     private byte[] tag;
     private byte[] data;
-    private byte   length;
+    private short  length;
 
     public byte fuzzOffset      = (byte) 0x00;
     public byte fuzzLength      = (byte) 0x00;
     public byte fuzzFlags       = (byte) 0x00;
     public byte fuzzOccurrence  = (byte) 0x00;
 
-    protected EmvTag(short tagId, byte[] src, short srcOffset, byte length) {
+    protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];
-        data = new byte[255];
+        data = new byte[300];  // Increased for RSA-2048 certificates (256 bytes)
         this.length = length;
 
         Util.setShort(tag, (short) 0, tagId);
@@ -44,7 +44,7 @@ public class EmvTag {
     /**
      * Add or update BER-TLV EMV tag to memory.
      */
-    public static EmvTag setTag(short tagId, byte[] src, short srcOffset, byte length) {
+    public static EmvTag setTag(short tagId, byte[] src, short srcOffset, short length) {
         EmvTag tag = EmvTag.findTag(tagId);
         if (tag == null) {
             tag = new EmvTag(tagId, src, srcOffset, length);
@@ -140,11 +140,10 @@ public class EmvTag {
      * Set the data/value and length of the tag.
      * Uses byte-by-byte copy for T=0 compatibility.
      */
-    public void setData(byte[] src, short srcOffset, byte length) {
+    public void setData(byte[] src, short srcOffset, short length) {
         this.length = length;
         // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        short shortLength = (short) (this.length & 0x00FF);
-        for (short i = 0; i < shortLength; i++) {
+        for (short i = 0; i < this.length; i++) {
             data[i] = src[(short)(srcOffset + i)];
         }
     }
@@ -180,7 +179,7 @@ public class EmvTag {
     /**
      * Get data length.
      */
-    public byte getLength() {
+    public short getLength() {
         return length;
     }
 
@@ -202,25 +201,27 @@ public class EmvTag {
             copyOffset += (short) 2;
         }
 
-        short shortLength = (short) (length & 0x00FF);
-        if (shortLength >= 128) {
+        // TLV length encoding
+        if (length > 255) {
+            // 82 XX XX format for lengths > 255
+            dst[copyOffset] = (byte) 0x82;
+            dst[(short)(copyOffset + 1)] = (byte) ((length >> 8) & 0xFF);
+            dst[(short)(copyOffset + 2)] = (byte) (length & 0xFF);
+            copyOffset += (short) 3;
+        } else if (length >= 128) {
+            // 81 XX format for lengths 128-255
             dst[copyOffset] = (byte) 0x81;
+            dst[(short)(copyOffset + 1)] = (byte) (length & 0xFF);
+            copyOffset += (short) 2;
+        } else {
+            // Single byte for lengths < 128
+            dst[copyOffset] = (byte) (length & 0xFF);
             copyOffset += (short) 1;
         }
-
-        short lengthOffset = copyOffset;
-        copyOffset += (short) 1;
         copyOffset = copyDataToArray(dst, copyOffset);
 
-        dst[lengthOffset] = length;
-
-        // re-write tag length with fuzz overflow?
-        if (fuzzLength > 0x00 && (fuzzFlags & (1 << 0)) == 1) {
-            // TODO: How to handle the case that tag length would need to be represented as two bytes instead of one?
-            dst[lengthOffset] = (byte) (copyOffset - lengthOffset - 1);
-        }
-
-
+        // Note: Fuzz length override not implemented for extended length encoding
+        // TODO: Implement fuzz length handling for TLV length > 127
 
         return copyOffset;
     }
@@ -230,13 +231,12 @@ public class EmvTag {
      * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyDataToArray(byte[] dst, short dstOffset) {
-        short shortLength = (short) (length & 0x00FF);
-
         // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        for (short i = 0; i < shortLength; i++) {
+        for (short i = 0; i < length; i++) {
             dst[(short)(dstOffset + i)] = data[i];
         }
 
+        short copyLength = length;
         if (fuzzLength > (byte) 0x00) {
             byte doFuzzing = (byte) 0x00;
 
@@ -248,12 +248,12 @@ public class EmvTag {
             if (doFuzzing == (byte) 0x00) {
                 EmvApplet.randomData.generateData(dst, (short) (dstOffset + (fuzzOffset & 0x00FF)), (short) (fuzzLength & 0x00FF));
 
-                if (fuzzLength + fuzzOffset > shortLength) {
-                    shortLength = (short) ((fuzzLength & 0x00FF) + (fuzzOffset & 0x00FF));
+                if ((short)((fuzzLength & 0xFF) + (fuzzOffset & 0xFF)) > copyLength) {
+                    copyLength = (short) ((fuzzLength & 0x00FF) + (fuzzOffset & 0x00FF));
                 }
             }
         }
 
-        return (short) (dstOffset + shortLength);
+        return (short) (dstOffset + copyLength);
     }
 }

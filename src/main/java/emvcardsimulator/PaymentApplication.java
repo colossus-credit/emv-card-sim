@@ -34,6 +34,15 @@ public class PaymentApplication extends EmvApplet {
     private byte[] storedCdol1Data = null;
     private short storedCdol1Length = 0;
 
+    // Storage for PDOL data from GPO (needed for CDA Transaction Data Hash)
+    private byte[] storedPdolData = null;
+    private short storedPdolLength = 0;
+
+    // DEBUG: Storage for Transaction Data Hash input and output
+    private byte[] debugHashInput = null;
+    private short debugHashInputLength = 0;
+    private byte[] debugHashOutput = null;
+
     private void processSetSettings(APDU apdu, byte[] buf) {
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
         switch (settingsId) {
@@ -52,7 +61,14 @@ public class PaymentApplication extends EmvApplet {
                 break;
             // ICC RSA KEY MODULUS
             case 0x0004:
-                rsaPrivateKeyByteSize = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+                // Get actual data length (works for both short and extended APDUs)
+                short modulusLen = apdu.getIncomingLength();
+                // Fallback: if getIncomingLength returns 0, try LC byte (0 means 256 for short APDU)
+                if (modulusLen == 0) {
+                    short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+                    modulusLen = (lcByte == 0) ? (short) 256 : lcByte;
+                }
+                rsaPrivateKeyByteSize = modulusLen;
                 short keyLength = (short) (rsaPrivateKeyByteSize * 8);
                 switch (keyLength) {
                     case (short) 1024:
@@ -80,7 +96,9 @@ public class PaymentApplication extends EmvApplet {
                     // Use false for transient (RAM) storage - some cards don't support persistent RSA-1984
                     rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
                     rsaPrivateKey.clearKey();
-                    rsaPrivateKey.setModulus(buf, (short) ISO7816.OFFSET_CDATA, rsaPrivateKeyByteSize);
+                    // Get the actual data offset (may differ for extended APDU)
+                    short dataOffset = apdu.getOffsetCdata();
+                    rsaPrivateKey.setModulus(buf, dataOffset, rsaPrivateKeyByteSize);
                 } catch (CryptoException e) {
                     rsaPrivateKey = null;
                     rsaPrivateKeyByteSize = 0;
@@ -95,7 +113,14 @@ public class PaymentApplication extends EmvApplet {
                     ISOException.throwIt((short) 0x6985); // Conditions not satisfied
                 }
                 try {
-                    rsaPrivateKey.setExponent(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF));
+                    // Get actual data length (works for both short and extended APDUs)
+                    short expLen = apdu.getIncomingLength();
+                    if (expLen == 0) {
+                        short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+                        expLen = (lcByte == 0) ? (short) 256 : lcByte;
+                    }
+                    short dataOffset = apdu.getOffsetCdata();
+                    rsaPrivateKey.setExponent(buf, dataOffset, expLen);
                 } catch (CryptoException e) {
                     rsaPrivateKey = null;
                     rsaPrivateKeyByteSize = 0;
@@ -118,6 +143,16 @@ public class PaymentApplication extends EmvApplet {
                 buf[3] = (rsaPrivateKey != null && rsaPrivateKey.isInitialized()) ? (byte) 0x01 : (byte) 0x00;
                 apdu.setOutgoingAndSend((short) 0, (short) 4);
                 return;
+            // DIAGNOSTIC: Get Transaction Data Hash input and output
+            case 0x0008:
+                // Return: [hash_input_len_hi, hash_input_len_lo, hash_output(20), hash_input(up to 200)]
+                buf[0] = (byte) ((debugHashInputLength >> 8) & 0xFF);
+                buf[1] = (byte) (debugHashInputLength & 0xFF);
+                Util.arrayCopy(debugHashOutput, (short) 0, buf, (short) 2, (short) 20);
+                short copyLen = (debugHashInputLength > (short) 200) ? (short) 200 : debugHashInputLength;
+                Util.arrayCopy(debugHashInput, (short) 0, buf, (short) 22, copyLen);
+                apdu.setOutgoingAndSend((short) 0, (short) (22 + copyLen));
+                return;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
@@ -138,14 +173,24 @@ public class PaymentApplication extends EmvApplet {
         storedCdol1Data = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
         storedCdol1Length = 0;
 
+        // Storage for PDOL data - transient so it's cleared on deselect
+        storedPdolData = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
+        storedPdolLength = 0;
+
+        // DEBUG: Storage for hash input (256 bytes should be enough) and output (20 bytes for SHA-1)
+        debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
+        debugHashInputLength = 0;
+        debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
+
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
         shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
-        // Reset stored CDOL1 data for new transaction
+        // Reset stored data for new transaction
         storedCdol1Length = 0;
+        storedPdolLength = 0;
 
         // Check if PAN (tag A5) exists in the ICC
         if (EmvTag.findTag((short) 0x5A) != null) {
@@ -223,7 +268,6 @@ public class PaymentApplication extends EmvApplet {
         // If CDA requested and we have ICC private key, generate SDAD
         if (cdaRequested && canPerformCda) {
             generateSdad(buf, cid, cdolLen);
-            // generateSdad completed successfully
         } else if (cdaRequested) {
             // CDA requested but key not available - create empty SDAD placeholder
             // to avoid SW_DATA_INVALID when template expansion looks for 9F4B
@@ -319,11 +363,26 @@ public class PaymentApplication extends EmvApplet {
         offset += 8;
 
         // Transaction Data Hash Code (20 bytes)
-        // Per EMV Book 2, this hash is over PDOL data + CDOL1 data + [CDOL2 data] + Response data
-        // For second GENERATE AC, terminal includes both CDOL1 and CDOL2 data
-        // CDOL1: 58 bytes expected (padded)
-        // CDOL2: 60 bytes (starts with 8A Authorization Response Code)
+        // Per EMV Book 2, this hash is over:
+        // PDOL data + CDOL1 data + [CDOL2 data] + separator byte + TLV of response tags
         shaMessageDigest.reset();
+
+        // DEBUG: Clear and prepare to record hash input
+        debugHashInputLength = 0;
+
+        // 1. Include PDOL data first (stored from GPO)
+        // Use the defined PDOL length (33 bytes for this card config), not the received length
+        // PDOL: 9F66(4)+9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4) = 33
+        short pdolDefinedLength = 33;
+        if (storedPdolLength > 0) {
+            short pdolHashLen = (storedPdolLength < pdolDefinedLength) ? storedPdolLength : pdolDefinedLength;
+            shaMessageDigest.update(storedPdolData, (short) 0, pdolHashLen);
+            // DEBUG: Record PDOL data
+            if ((short)(debugHashInputLength + pdolHashLen) <= (short) 256) {
+                Util.arrayCopy(storedPdolData, (short) 0, debugHashInput, debugHashInputLength, pdolHashLen);
+                debugHashInputLength = (short)(debugHashInputLength + pdolHashLen);
+            }
+        }
 
         // Detect if this is CDOL2 (second GENERATE AC) by length = 60 bytes
         boolean isSecondGenerateAc = (cdolLen == (short) 60);
@@ -331,19 +390,34 @@ public class PaymentApplication extends EmvApplet {
 
         if (isSecondGenerateAc) {
             // Second GENERATE AC: Include stored CDOL1 first, then CDOL2
-            // 1a. Include stored CDOL1 data (padded to 58 bytes)
+            // 2a. Include stored CDOL1 data (padded to 58 bytes)
             if (storedCdol1Length > 0) {
                 shaMessageDigest.update(storedCdol1Data, (short) 0, storedCdol1Length);
+                // DEBUG
+                if ((short)(debugHashInputLength + storedCdol1Length) <= (short) 256) {
+                    Util.arrayCopy(storedCdol1Data, (short) 0, debugHashInput, debugHashInputLength, storedCdol1Length);
+                    debugHashInputLength = (short)(debugHashInputLength + storedCdol1Length);
+                }
             }
             // Pad CDOL1 if needed
             if (storedCdol1Length < cdol1ExpectedLen) {
                 short padLen = (short)(cdol1ExpectedLen - storedCdol1Length);
                 Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
                 shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
+                // DEBUG
+                if ((short)(debugHashInputLength + padLen) <= (short) 256) {
+                    Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
+                    debugHashInputLength = (short)(debugHashInputLength + padLen);
+                }
             }
-            // 1b. Include current CDOL2 data (60 bytes, no padding needed)
+            // 2b. Include current CDOL2 data (60 bytes, no padding needed)
             if (cdolLen > 0) {
                 shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
+                // DEBUG
+                if ((short)(debugHashInputLength + cdolLen) <= (short) 256) {
+                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolLen);
+                    debugHashInputLength = (short)(debugHashInputLength + cdolLen);
+                }
             }
         } else {
             // First GENERATE AC: Store CDOL1 data for later use
@@ -351,30 +425,62 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, storedCdol1Data, (short) 0, cdolLen);
                 storedCdol1Length = cdolLen;
             }
-            // Include CDOL1 data (padded to expected length if needed)
+            // 2. Include CDOL1 data (capped to expected length, similar to PDOL)
+            // Terminal may send more bytes than expected (e.g., 61 vs 58), use min
             if (cdolLen > 0) {
-                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
+                short cdolHashLen = (cdolLen < cdol1ExpectedLen) ? cdolLen : cdol1ExpectedLen;
+                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolHashLen);
+                // DEBUG
+                if ((short)(debugHashInputLength + cdolHashLen) <= (short) 256) {
+                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolHashLen);
+                    debugHashInputLength = (short)(debugHashInputLength + cdolHashLen);
+                }
             }
             // Pad with zeros if CDOL data is less than expected
             if (cdolLen < cdol1ExpectedLen) {
                 short padLen = (short)(cdol1ExpectedLen - cdolLen);
                 Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
                 shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
+                // DEBUG
+                if ((short)(debugHashInputLength + padLen) <= (short) 256) {
+                    Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
+                    debugHashInputLength = (short)(debugHashInputLength + padLen);
+                }
             }
         }
 
-        // 2. Include separator byte (0x1A) before response TLV
-        // The terminal includes this byte between CDOL data and response TLV
-        tmpBuffer[400] = (byte) 0x1A;
-        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
+        // 3. Include low byte of response template (77) length BEFORE TLV tags
+        // The terminal parses tag 77 with response_data[3..] which includes this byte
+        // when length >= 256 (encoded as 77 82 XX YY, [3..] gives YY followed by TLV data)
+        // Calculate total response content length:
+        // 9F27(4) + 9F36(5) + 9F26(11) + 9F10(3+iadLen) + 9F4B(2+lengthBytes+rsaKeySize)
+        EmvTag iadTagForLen = EmvTag.findTag((short) 0x9F10);
+        short iadLenForCalc = (iadTagForLen != null) ? (short) (iadTagForLen.getLength() & 0xFF) : 0;
+        short sdadLengthBytes = (rsaPrivateKeyByteSize >= (short) 256) ? (short) 3 : (short) 2;
+        short responseContentLen = (short) (4 + 5 + 11 + 3 + iadLenForCalc + 2 + sdadLengthBytes + rsaPrivateKeyByteSize);
+        // Only include low byte if length requires 82 XX YY encoding (>= 256)
+        if (responseContentLen >= (short) 256) {
+            tmpBuffer[400] = (byte) (responseContentLen & 0xFF);
+            shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
+            // DEBUG: Record length byte
+            if (debugHashInputLength < (short) 256) {
+                debugHashInput[debugHashInputLength] = (byte) (responseContentLen & 0xFF);
+                debugHashInputLength = (short)(debugHashInputLength + 1);
+            }
+        }
 
-        // 3. Include response data as TLV
+        // 4. Include response TLV tags (EMV Book 2 Section 6.5.1.4)
         // 9F27 (CID) - 1 byte value
         tmpBuffer[400] = (byte) 0x9F;
         tmpBuffer[401] = (byte) 0x27;
         tmpBuffer[402] = (byte) 0x01;
         tmpBuffer[403] = cryptogramInfoData;
         shaMessageDigest.update(tmpBuffer, (short) 400, (short) 4);
+        // DEBUG: Record 9F27
+        if ((short)(debugHashInputLength + 4) <= (short) 256) {
+            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 4);
+            debugHashInputLength = (short)(debugHashInputLength + 4);
+        }
 
         // 9F36 (ATC) - 2 byte value
         EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
@@ -385,6 +491,11 @@ public class PaymentApplication extends EmvApplet {
             Util.arrayCopy(atcTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 2);
         }
         shaMessageDigest.update(tmpBuffer, (short) 400, (short) 5);
+        // DEBUG: Record 9F36
+        if ((short)(debugHashInputLength + 5) <= (short) 256) {
+            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 5);
+            debugHashInputLength = (short)(debugHashInputLength + 5);
+        }
 
         // 9F26 (AC) - 8 byte value
         tmpBuffer[400] = (byte) 0x9F;
@@ -394,22 +505,44 @@ public class PaymentApplication extends EmvApplet {
             Util.arrayCopy(acTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 8);
         }
         shaMessageDigest.update(tmpBuffer, (short) 400, (short) 11);
+        // DEBUG: Record 9F26
+        if ((short)(debugHashInputLength + 11) <= (short) 256) {
+            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 11);
+            debugHashInputLength = (short)(debugHashInputLength + 11);
+        }
 
         // 9F10 (IAD) - 7 byte value
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         tmpBuffer[400] = (byte) 0x9F;
         tmpBuffer[401] = (byte) 0x10;
+        short iadLen = 0;
         if (iadTag != null) {
-            tmpBuffer[402] = (byte) (iadTag.getLength() & 0xFF);
-            Util.arrayCopy(iadTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) (iadTag.getLength() & 0xFF));
-            shaMessageDigest.update(tmpBuffer, (short) 400, (short) (3 + (iadTag.getLength() & 0xFF)));
+            iadLen = (short) (iadTag.getLength() & 0xFF);
+            tmpBuffer[402] = (byte) iadLen;
+            Util.arrayCopy(iadTag.getData(), (short) 0, tmpBuffer, (short) 403, iadLen);
+            shaMessageDigest.update(tmpBuffer, (short) 400, (short) (3 + iadLen));
+            // DEBUG: Record 9F10
+            if ((short)(debugHashInputLength + 3 + iadLen) <= (short) 256) {
+                Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) (3 + iadLen));
+                debugHashInputLength = (short)(debugHashInputLength + 3 + iadLen);
+            }
         }
 
-        // Trailing 0x9F byte (terminal includes this in hash)
+        // 5. Include 9F4B tag bytes (but not length or value)
+        // The terminal includes the 9F4B tag because it subtracts only 6 hex chars (3 bytes)
+        // for what it thinks is the header, but the actual header is 5 bytes (9F4B + 82 01 00)
         tmpBuffer[400] = (byte) 0x9F;
-        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
+        tmpBuffer[401] = (byte) 0x4B;
+        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 2);
+        // DEBUG: Record 9F4B tag
+        if ((short)(debugHashInputLength + 2) <= (short) 256) {
+            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 2);
+            debugHashInputLength = (short)(debugHashInputLength + 2);
+        }
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
+        // DEBUG: Store the Transaction Data Hash output
+        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
         offset += 20;
 
         // Trailer at end
@@ -437,11 +570,11 @@ public class PaymentApplication extends EmvApplet {
 
         // RSA sign (encrypt with private key)
         // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header
-        rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
+        rsaCipher.init(rsaPrivateKey, Cipher.MODE_DECRYPT);
         rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, tmpBuffer, (short) 256);
 
         // Store SDAD in tag 9F4B
-        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, (byte) signedDataSize);
+        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, signedDataSize);
     }
 
     private void externalAuthenticate(APDU apdu, byte[] buf) {
@@ -527,7 +660,13 @@ public class PaymentApplication extends EmvApplet {
         }
 
         // PDOL data is at ISO7816.OFFSET_CDATA + 2, length pdolLen
-        // Can be used for transaction processing if needed
+        // Store PDOL data for CDA Transaction Data Hash calculation
+        if (pdolLen > 0 && pdolLen <= (short) 64) {
+            Util.arrayCopy(buf, (short) (ISO7816.OFFSET_CDATA + 2), storedPdolData, (short) 0, pdolLen);
+            storedPdolLength = pdolLen;
+        } else {
+            storedPdolLength = 0;
+        }
 
         sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
     }
@@ -560,10 +699,10 @@ public class PaymentApplication extends EmvApplet {
 
         // Build Template
         // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header
-        rsaCipher.init(rsaPrivateKey, Cipher.MODE_ENCRYPT);
+        rsaCipher.init(rsaPrivateKey, Cipher.MODE_DECRYPT);
         rsaCipher.doFinal(tmpBuffer, (short) 0, signedDataSize, tmpBuffer, (short) 256);
 
-        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, (byte) signedDataSize);
+        EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, signedDataSize);
 
         sendResponseTemplate(apdu, buf, responseTemplateDda);
     }
@@ -652,9 +791,29 @@ public class PaymentApplication extends EmvApplet {
     public void process(APDU apdu) {
         byte[] buf = apdu.getBuffer();
 
+        // Receive incoming data (required for extended APDUs and to properly populate buffer)
+        short bytesReceived = 0;
+        short lc = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        // Check for extended APDU (LC byte is 0x00 followed by 2-byte length)
+        if (lc == 0 && buf.length > ISO7816.OFFSET_CDATA) {
+            // Extended APDU: LC is in bytes 5-6
+            lc = Util.getShort(buf, (short)(ISO7816.OFFSET_LC + 1));
+        }
+        if (lc > 0) {
+            bytesReceived = apdu.setIncomingAndReceive();
+            // For extended APDUs, may need to receive more data
+            while (bytesReceived < lc) {
+                short more = apdu.receiveBytes((short)(apdu.getOffsetCdata() + bytesReceived));
+                if (more <= 0) break;
+                bytesReceived += more;
+            }
+        }
+
         ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
 
-        short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
+        // Get CLA+INS as command, but mask out the chaining bit (0x10) from CLA
+        // This allows chained commands (CLA=0x90) to be recognized as regular commands (CLA=0x80)
+        short cmd = (short)(((buf[ISO7816.OFFSET_CLA] & 0xEF) << 8) | (buf[ISO7816.OFFSET_INS] & 0xFF));
 
         switch (cmd) {
             case CMD_SELECT:

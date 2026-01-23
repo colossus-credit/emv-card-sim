@@ -169,8 +169,19 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        // Get actual data length (works for both short and extended APDUs)
+        short dataLen = apdu.getIncomingLength();
+        // Fallback: if getIncomingLength returns 0, try LC byte (0 means 256 for short APDU)
+        if (dataLen == 0) {
+            short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataLen = (lcByte == 0) ? (short) 256 : lcByte;
+        }
+
+        // Get the correct data offset (may differ for extended APDU)
+        short dataOffset = apdu.getOffsetCdata();
+
         JCSystem.beginTransaction();
-        EmvTag tag = EmvTag.setTag(tagId, buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        EmvTag tag = EmvTag.setTag(tagId, buf, dataOffset, dataLen);
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
@@ -307,10 +318,30 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
         }
 
-        short dataOffset = tag.copyToArray(buf, (short) ISO7816.OFFSET_CDATA);
-        short dataLength = (short) (dataOffset - ISO7816.OFFSET_CDATA);
+        // Copy tag TLV to tmpBuffer for consistent handling
+        short dataLength = tag.copyToArray(tmpBuffer, (short) 0);
 
-        sendResponse(apdu, buf, buf, (short) 0, dataLength);
+        // For responses <= 256 bytes, use simple approach
+        if (dataLength <= (short) 256) {
+            Util.arrayCopy(tmpBuffer, (short) 0, buf, (short) ISO7816.OFFSET_CDATA, dataLength);
+            ApduLog.addLogEntry(buf, (short) ISO7816.OFFSET_CDATA, (byte) (dataLength & 0xFF));
+            apdu.setOutgoingAndSend((short) ISO7816.OFFSET_CDATA, dataLength);
+        } else {
+            // For large responses, use GET RESPONSE chaining
+            short firstChunk = (short) 256;
+            apdu.setOutgoing();
+            apdu.setOutgoingLength(firstChunk);
+            apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
+
+            // Store remaining data for GET RESPONSE
+            pendingResponseOffset = firstChunk;
+            pendingResponseLength = (short) (dataLength - firstChunk);
+            short remaining = pendingResponseLength;
+            if (remaining > (short) 255) {
+                remaining = (short) 255;
+            }
+            ISOException.throwIt((short) (0x6100 | remaining));
+        }
     }
 
     protected void sendResponse(APDU apdu, byte[] buf, byte[] data, short dataOffset, short length) {
@@ -340,7 +371,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
         short tag70Length = readRecord.expandTlvToArray(tmpBuffer, (short) 0);
 
-        EmvTag tag = EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, (byte) tag70Length);
+        EmvTag tag = EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, tag70Length);
 
         if (buf[ISO7816.OFFSET_LC] != (byte) 0x00 && buf[ISO7816.OFFSET_LC] != tag.getLength()) {
             EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);

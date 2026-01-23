@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 KEYS_DIR="${PROJECT_ROOT}/keys"
 
-# Key sizes (in bits) - RSA-1984 for EMV compatibility
-KEY_SIZE=1984
+# Key sizes (in bits) - RSA-2048 for EMV compatibility
+KEY_SIZE=2048
 KEY_SIZE_BYTES=$((KEY_SIZE / 8))
 
 # Default values
@@ -111,7 +111,8 @@ generate_issuer() {
     local serial="000001"
     local hash_algo="01"  # SHA-1
     local pk_algo="01"    # RSA
-    local pk_len=$(printf '%02X' $KEY_SIZE_BYTES)
+    # EMV spec: PK length mod 256 (so 256 bytes = 0x00)
+    local pk_len=$(printf '%02X' $((KEY_SIZE_BYTES % 256)))
     local pk_exp_len="01"
 
     # Calculate how much of the issuer public key fits in the certificate
@@ -230,7 +231,8 @@ generate_icc() {
     local serial="000001"
     local hash_algo="01"  # SHA-1
     local pk_algo="01"    # RSA
-    local pk_len=$(printf '%02X' $KEY_SIZE_BYTES)
+    # EMV spec: PK length mod 256 (so 256 bytes = 0x00)
+    local pk_len=$(printf '%02X' $((KEY_SIZE_BYTES % 256)))
     local pk_exp_len="01"
 
     # Calculate how much of ICC public key fits
@@ -260,9 +262,50 @@ generate_icc() {
     local exponent_hex="03"  # Standard EMV exponent
 
     # Static Data to be Authenticated (for CDA)
-    # Format: Data auth records + AIP (if listed in 9F4A)
-    # Default: 8F01929F3201039F4A0182 (CAPK Index + Issuer PK Exp + SDA Tag List) + 3D01 (AIP)
-    local static_data_auth="${STATIC_DATA_AUTH:-8F01929F3201039F4A01823D01}"
+    # This MUST include ALL offline data auth records from AFL:
+    #   - SFI 2 Record 1: 8F (CAPK Index), 9F32 (Issuer PK Exp), 9F4A (SDA Tag List)
+    #   - SFI 2 Record 2: 90 (Issuer Certificate)
+    #   - SFI 2 Record 3: 92 (Issuer PK Remainder)
+    #   - AIP value (because 9F4A=82 says to include tag 82)
+    local static_data_auth=""
+
+    if [[ -z "$STATIC_DATA_AUTH" ]]; then
+        # Build SDA from actual certificate files
+        # Record 1: 8F 01 92 9F32 01 03 9F4A 01 82
+        local record1="8F01929F3201039F4A0182"
+
+        # Record 2: Issuer Certificate with TLV encoding (90 82 01 00 + 256 bytes)
+        local issuer_cert_hex=$(xxd -p "${issuer_dir}/issuer_certificate.bin" | tr -d '\n')
+        local issuer_cert_size=$((${#issuer_cert_hex} / 2))
+        local record2=""
+        if (( issuer_cert_size > 255 )); then
+            # Length encoding: 82 XX XX for > 255 bytes
+            record2=$(printf '9082%04X' $issuer_cert_size)
+        elif (( issuer_cert_size >= 128 )); then
+            # Length encoding: 81 XX for 128-255 bytes
+            record2=$(printf '9081%02X' $issuer_cert_size)
+        else
+            record2=$(printf '90%02X' $issuer_cert_size)
+        fi
+        record2+="$issuer_cert_hex"
+
+        # Record 3: Issuer Remainder with TLV encoding (92 XX + remainder bytes)
+        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
+        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
+        local record3=""
+        if (( issuer_rem_size > 0 )); then
+            record3=$(printf '92%02X' $issuer_rem_size)
+            record3+="$issuer_rem_hex"
+        fi
+
+        # AIP value (tag 82 value)
+        local aip="3D01"
+
+        static_data_auth="${record1}${record2}${record3}${aip}"
+        log_info "Computed SDA data (${#static_data_auth} hex chars / $(( ${#static_data_auth} / 2 )) bytes)"
+    else
+        static_data_auth="$STATIC_DATA_AUTH"
+    fi
 
     # Build data to hash (EMV spec: Format || ... || PK Data || Remainder || Exponent || Static Data Auth)
     local data_in_cert="${format}${pan_cert}${cert_expiry}${serial}${hash_algo}${pk_algo}${pk_len}${pk_exp_len}${pk_in_cert}${padding}"
