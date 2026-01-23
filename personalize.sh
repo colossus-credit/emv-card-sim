@@ -666,8 +666,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
-    # AIP: 3800 (Visa-like: SDA supported, no CDA)
-    gp_cmd+=" -a 80010082023800"
+    # AIP: 4080 (DDA + CDA supported, terminal risk management OFF)
+    gp_cmd+=" -a 80010082024080"
     # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
     gp_cmd+=" -a 800100940C080202001001020018010401"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
