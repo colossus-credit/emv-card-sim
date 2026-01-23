@@ -153,6 +153,30 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(debugHashInput, (short) 0, buf, (short) 22, copyLen);
                 apdu.setOutgoingAndSend((short) 0, (short) (22 + copyLen));
                 return;
+            // DIAGNOSTIC: Get CDA decision variables
+            case 0x0009:
+                // Return: [canPerformCda, cdaSupportedInAip, aipTagFound, aipByte1, aipLen]
+                boolean diagCanCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
+                boolean diagCdaInAip = false;
+                boolean diagAipFound = false;
+                byte diagAipByte1 = 0;
+                byte diagAipLen = 0;
+                EmvTag diagAipTag = EmvTag.findTag((short) 0x0082);
+                if (diagAipTag != null) {
+                    diagAipFound = true;
+                    diagAipLen = (byte) diagAipTag.getLength();
+                    if (diagAipLen >= 1) {
+                        diagAipByte1 = diagAipTag.getData()[0];
+                        diagCdaInAip = ((diagAipByte1 & (byte) 0x01) != 0);
+                    }
+                }
+                buf[0] = diagCanCda ? (byte) 0x01 : (byte) 0x00;
+                buf[1] = diagCdaInAip ? (byte) 0x01 : (byte) 0x00;
+                buf[2] = diagAipFound ? (byte) 0x01 : (byte) 0x00;
+                buf[3] = diagAipByte1;
+                buf[4] = diagAipLen;
+                apdu.setOutgoingAndSend((short) 0, (short) 5);
+                return;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
