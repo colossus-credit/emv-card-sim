@@ -308,15 +308,33 @@ personalize_payapp_certs() {
 
     # Read certificate files and convert to hex
     local icc_cert_hex=$(xxd -p "$icc_cert" | tr -d '\n')
-    local icc_cert_len=$(printf '%02X' $(stat -f%z "$icc_cert" 2>/dev/null || stat -c%s "$icc_cert"))
+    local icc_cert_size=$(stat -f%z "$icc_cert" 2>/dev/null || stat -c%s "$icc_cert")
+    # For lengths >= 128, use 81XX encoding
+    local icc_cert_len
+    if (( icc_cert_size >= 128 )); then
+        icc_cert_len=$(printf '81%02X' $icc_cert_size)
+    else
+        icc_cert_len=$(printf '%02X' $icc_cert_size)
+    fi
+    log_info "ICC cert size: ${icc_cert_size} bytes, length encoding: ${icc_cert_len}"
 
     local icc_rem_hex=$(xxd -p "$icc_remainder" | tr -d '\n')
-    local icc_rem_len=$(printf '%02X' $(stat -f%z "$icc_remainder" 2>/dev/null || stat -c%s "$icc_remainder"))
+    local icc_rem_size=$(stat -f%z "$icc_remainder" 2>/dev/null || stat -c%s "$icc_remainder")
+    local icc_rem_len=$(printf '%02X' $icc_rem_size)
+    log_info "ICC remainder size: ${icc_rem_size} bytes"
 
     local icc_exp_hex=$(xxd -p "$icc_exponent" | tr -d '\n')
 
     local icc_mod_hex=$(xxd -p "$icc_modulus" | tr -d '\n')
-    local icc_mod_len=$(printf '%02X' $(stat -f%z "$icc_modulus" 2>/dev/null || stat -c%s "$icc_modulus"))
+    local icc_mod_size=$(stat -f%z "$icc_modulus" 2>/dev/null || stat -c%s "$icc_modulus")
+    # For extended APDU (256 bytes), use 00 01 00 format
+    local icc_mod_len
+    if (( icc_mod_size >= 256 )); then
+        icc_mod_len=$(printf '00%04X' $icc_mod_size)
+    else
+        icc_mod_len=$(printf '%02X' $icc_mod_size)
+    fi
+    log_info "ICC modulus size: ${icc_mod_size} bytes, length encoding: ${icc_mod_len}"
 
     # Extract ICC private exponent
     local icc_priv_exp=$(openssl rsa -in "$icc_privkey" -noout -text 2>/dev/null | grep -A 100 "privateExponent:" | head -50 | grep -v "privateExponent:" | tr -d ' :\n' | sed 's/^0*//')
@@ -325,13 +343,31 @@ personalize_payapp_certs() {
     while (( ${#icc_priv_exp} < mod_size )); do
         icc_priv_exp="0${icc_priv_exp}"
     done
-    local icc_priv_len=$(printf '%02X' $((${#icc_priv_exp} / 2)))
+    local icc_priv_size=$((${#icc_priv_exp} / 2))
+    # For extended APDU (256 bytes), use 00 01 00 format
+    local icc_priv_len
+    if (( icc_priv_size >= 256 )); then
+        icc_priv_len=$(printf '00%04X' $icc_priv_size)
+    else
+        icc_priv_len=$(printf '%02X' $icc_priv_size)
+    fi
+    log_info "ICC private exponent size: ${icc_priv_size} bytes, length encoding: ${icc_priv_len}"
 
     local issuer_cert_hex=$(xxd -p "$issuer_cert" | tr -d '\n')
-    local issuer_cert_len=$(printf '%02X' $(stat -f%z "$issuer_cert" 2>/dev/null || stat -c%s "$issuer_cert"))
+    local issuer_cert_size=$(stat -f%z "$issuer_cert" 2>/dev/null || stat -c%s "$issuer_cert")
+    # For lengths >= 128, use 81XX encoding
+    local issuer_cert_len
+    if (( issuer_cert_size >= 128 )); then
+        issuer_cert_len=$(printf '81%02X' $issuer_cert_size)
+    else
+        issuer_cert_len=$(printf '%02X' $issuer_cert_size)
+    fi
+    log_info "Issuer cert size: ${issuer_cert_size} bytes, length encoding: ${issuer_cert_len}"
 
     local issuer_rem_hex=$(xxd -p "$issuer_remainder" | tr -d '\n')
-    local issuer_rem_len=$(printf '%02X' $(stat -f%z "$issuer_remainder" 2>/dev/null || stat -c%s "$issuer_remainder"))
+    local issuer_rem_size=$(stat -f%z "$issuer_remainder" 2>/dev/null || stat -c%s "$issuer_remainder")
+    local issuer_rem_len=$(printf '%02X' $issuer_rem_size)
+    log_info "Issuer remainder size: ${issuer_rem_size} bytes"
 
     local issuer_exp_hex=$(xxd -p "$issuer_exponent" | tr -d '\n')
 
