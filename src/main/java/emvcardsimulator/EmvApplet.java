@@ -49,6 +49,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected static final short CMD_FACTORY_RESET             = (short) 0x8005;
     protected static final short CMD_LOG_CONSUME               = (short) 0x8006;
     protected static final short CMD_FUZZ_RESET                = (short) 0x8007;
+    protected static final short CMD_LIST_TAGS                 = (short) 0x8008;
     protected static final short CMD_SELECT = (short) 0x00A4;
     protected static final short CMD_READ_RECORD = (short) 0x00B2;
     protected static final short CMD_DDA = (short) 0x0088;
