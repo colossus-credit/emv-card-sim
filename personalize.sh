@@ -650,9 +650,10 @@ personalize_card() {
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
     gp_cmd+=" -a 80010082023D01"
-    # AFL: SFI 1 rec 2-2 (0 ODA), SFI 2 rec 1-5 (3 ODA for issuer certs), SFI 3 rec 1-3 (0 ODA)
-    gp_cmd+=" -a 800100940C080202001001050318010300"
-    gp_cmd+=" -a 80019F4A0182"
+    # AFL: SFI 1 rec 2-2 (0 ODA), SFI 3 rec 1-3 (0 ODA) [static data], SFI 2 rec 1-5 (3 ODA) [ODA records last]
+    gp_cmd+=" -a 800100940C080202001801030010010503"
+    # 9F4A = Static Data Auth Tag List: 5A (PAN) + 5F24 (Expiry) + 5F25 (Effective)
+    gp_cmd+=" -a 80019F4A055A5F245F25"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"

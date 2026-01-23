@@ -17,6 +17,27 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Compute CAPK checksum per EMV spec: SHA-1(RID + Index + Modulus + Exponent)
+compute_capk_checksum() {
+    local rid="$1"
+    local index="$2"
+    local modulus_file="$3"
+    local exponent="$4"
+
+    # Create temp file with concatenated data
+    local tmp_file=$(mktemp)
+    printf '%s' "$rid" | xxd -r -p >> "$tmp_file"
+    printf '%s' "$index" | xxd -r -p >> "$tmp_file"
+    cat "$modulus_file" >> "$tmp_file"
+    printf '%s' "$exponent" | xxd -r -p >> "$tmp_file"
+
+    # Compute SHA-1 and clean up
+    local checksum=$(openssl dgst -sha1 -binary "$tmp_file" | xxd -p | tr -d '\n' | tr '[:lower:]' '[:upper:]')
+    rm -f "$tmp_file"
+
+    echo "$checksum"
+}
+
 # Generate Verifone emvct.json
 gen_verifone_emvct() {
     local output_dir="$1"
@@ -25,6 +46,7 @@ gen_verifone_emvct() {
     local app_label="$4"
 
     local full_aid="${rid}${aid}"
+    local capk_checksum=$(compute_capk_checksum "$rid" "92" "${KEYS_DIR}/capk/capk_modulus.bin" "03")
 
     mkdir -p "$output_dir"
 
@@ -75,7 +97,7 @@ gen_verifone_emvct() {
       "index": "92",
       "exponent": "03",
       "modulus": "$(xxd -p "${KEYS_DIR}/capk/capk_modulus.bin" | tr -d '\n' | tr '[:lower:]' '[:upper:]')",
-      "checksum": "$(openssl dgst -sha1 -binary "${KEYS_DIR}/capk/capk_modulus.bin" | xxd -p | tr -d '\n' | tr '[:lower:]' '[:upper:]')"
+      "checksum": "${capk_checksum}"
     }
   ]
 }
@@ -92,6 +114,7 @@ gen_verifone_tlvemvct() {
     local app_label="$4"
 
     local full_aid="${rid}${aid}"
+    local capk_checksum=$(compute_capk_checksum "$rid" "92" "${KEYS_DIR}/capk/capk_modulus.bin" "03")
 
     mkdir -p "$output_dir"
 
@@ -147,7 +170,7 @@ gen_verifone_tlvemvct() {
         {"tag": "9F22", "value": "92", "name": "CA Public Key Index"},
         {"tag": "DF04", "value": "03", "name": "CA Public Key Exponent"},
         {"tag": "DF02", "value": "$(xxd -p "${KEYS_DIR}/capk/capk_modulus.bin" | tr -d '\n' | tr '[:lower:]' '[:upper:]')", "name": "CA Public Key Modulus"},
-        {"tag": "DF03", "value": "$(openssl dgst -sha1 -binary "${KEYS_DIR}/capk/capk_modulus.bin" | xxd -p | tr -d '\n' | tr '[:lower:]' '[:upper:]')", "name": "CA Public Key Checksum"}
+        {"tag": "DF03", "value": "${capk_checksum}", "name": "CA Public Key Checksum"}
       ]
     }
   ]
