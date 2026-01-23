@@ -309,10 +309,10 @@ personalize_payapp_certs() {
     # Read certificate files and convert to hex
     local icc_cert_hex=$(xxd -p "$icc_cert" | tr -d '\n')
     local icc_cert_size=$(stat -f%z "$icc_cert" 2>/dev/null || stat -c%s "$icc_cert")
-    # For lengths >= 128, use 81XX encoding
+    # APDU LC encoding: single byte for 1-255, extended APDU (00 XX XX) for >= 256
     local icc_cert_len
-    if (( icc_cert_size >= 128 )); then
-        icc_cert_len=$(printf '81%02X' $icc_cert_size)
+    if (( icc_cert_size >= 256 )); then
+        icc_cert_len=$(printf '00%04X' $icc_cert_size)
     else
         icc_cert_len=$(printf '%02X' $icc_cert_size)
     fi
@@ -355,10 +355,10 @@ personalize_payapp_certs() {
 
     local issuer_cert_hex=$(xxd -p "$issuer_cert" | tr -d '\n')
     local issuer_cert_size=$(stat -f%z "$issuer_cert" 2>/dev/null || stat -c%s "$issuer_cert")
-    # For lengths >= 128, use 81XX encoding
+    # APDU LC encoding: single byte for 1-255, extended APDU (00 XX XX) for >= 256
     local issuer_cert_len
-    if (( issuer_cert_size >= 128 )); then
-        issuer_cert_len=$(printf '81%02X' $issuer_cert_size)
+    if (( issuer_cert_size >= 256 )); then
+        issuer_cert_len=$(printf '00%04X' $issuer_cert_size)
     else
         issuer_cert_len=$(printf '%02X' $issuer_cert_size)
     fi
@@ -407,14 +407,14 @@ personalize_payapp_certs() {
         "800200050400500087"
         "8002000404008400A5"
         "8003020C0400575F20"
-        "8003011406008F9F329F4A"
-        "80030214020090"
-        "80030314020092"
-        "80030414029F46"
-        "80030514049F479F48"
-        "8003011C14005A5F245F255F285F349F079F0D9F0E9F0F9F08"
-        "8003021C06008C008D008E"
-        "8003031C049F369F10"
+        "8003011405008F9F329F4A"
+        "80030214010090"
+        "80030314010092"
+        "8003041402009F46"
+        "8003051404009F479F48"
+        "8003011C13005A5F245F255F285F349F079F0D9F0E9F0F9F08"
+        "8003021C03008C8D8E"
+        "8003031C04009F369F10"
     )
 
     card_apdu_batch "${apdus[@]}"
