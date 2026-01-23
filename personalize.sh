@@ -666,8 +666,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
-    # AIP: 4080 (DDA + CDA supported, terminal risk management OFF)
-    gp_cmd+=" -a 80010082024080"
+    # AIP: 3501 (DDA+CDA supported, cardholder verification, issuer auth, NO terminal risk management)
+    gp_cmd+=" -a 80010082023501"
     # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
     gp_cmd+=" -a 800100940C080202001001020018010401"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
@@ -686,8 +686,11 @@ personalize_card() {
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     # CVM List (20 bytes - Visa format)
     gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    # IAC-Default: conditions that default to online
     gp_cmd+=" -a 80019F0D05FC688C9800"
-    gp_cmd+=" -a 80019F0E050010000000"
+    # IAC-Denial: set to zeros so nothing triggers offline decline
+    gp_cmd+=" -a 80019F0E050000000000"
+    # IAC-Online: conditions that require online
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
 
