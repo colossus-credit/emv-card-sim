@@ -56,6 +56,7 @@ PSE_CAP=""
 PAYAPP_CAP=""
 GEN_KEYS=false
 VERBOSE=false
+T0_MODE=false
 
 # GP.jar location
 GP_JAR="${SCRIPT_DIR}/gp.jar"
@@ -109,6 +110,8 @@ ${BOLD}OPTIONS:${NC}
     --gen-keys               Auto-generate keys without prompting
     --label <NAME>           Application label (default: ${DEFAULT_APP_LABEL})
     --expiry <YYMMDD>        Card expiry date (default: ${DEFAULT_EXPIRY})
+    --t0                     T=0 protocol mode (prompts for card removal/reinsertion
+                             between each gp.jar call)
     -v, --verbose            Verbose output
     -h, --help               Show this help message
 
@@ -213,6 +216,10 @@ parse_args() {
                 ;;
             -v|--verbose)
                 VERBOSE=true
+                shift
+                ;;
+            --t0)
+                T0_MODE=true
                 shift
                 ;;
             -h|--help)
@@ -456,6 +463,28 @@ build_gp_cmd() {
     echo "$cmd"
 }
 
+# Prompt for card removal and reinsertion (T=0 mode only)
+prompt_card_cycle() {
+    if ! $T0_MODE; then
+        return
+    fi
+    local phase="$1"
+    echo ""
+    echo -e "${BOLD}========================================${NC}"
+    echo -e "${YELLOW}  T=0 Card Cycle Required${NC}"
+    echo -e "${BOLD}========================================${NC}"
+    echo ""
+    echo -e "  ${CYAN}Completed:${NC} $phase"
+    echo ""
+    echo -e "  1. ${RED}REMOVE${NC} the card from the reader"
+    echo -e "  2. Wait 2 seconds"
+    echo -e "  3. ${GREEN}REINSERT${NC} the card into the reader"
+    echo ""
+    read -p "  Press ENTER when card has been reinserted..." -r
+    echo ""
+    log_info "Continuing..."
+}
+
 # Query card for apps
 query_card() {
     log_step "Querying card for installed applications..."
@@ -492,6 +521,8 @@ load_cap_files() {
 
     log_info "Loading PSE: $PSE_CAP"
     $gp_cmd --force --install "$PSE_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    prompt_card_cycle "Installed PSE CAP"
 
     log_info "Loading Payment App: $PAYAPP_CAP"
     $gp_cmd --force --install "$PAYAPP_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
@@ -645,14 +676,7 @@ personalize_card() {
     # SFI3/REC4: 9F46 (2-byte tag, len=02)
     gp_cmd+=" -a 8003041C029F46"
 
-    log_info "Sending personalization APDUs (batch 1: PSE + certificates + templates)..."
-    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
-
-    # Second batch: remaining tags (need to re-select the payment app)
-    gp_cmd=$(build_gp_cmd)
-    gp_cmd+=" -d"
-    gp_cmd+=" -a 00A4040007${full_aid}"
-
+    # Continue with remaining tags (single batch for proper data storage)
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_aid}"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
@@ -694,10 +718,361 @@ personalize_card() {
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
 
-    log_info "Sending personalization APDUs (batch 2: remaining tags)..."
+    log_info "Sending personalization APDUs..."
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
     log_success "Personalization complete"
+}
+
+# Personalize PSE only (for T=0 mode)
+personalize_pse() {
+    log_step "Personalizing PSE..."
+
+    local full_aid="${RID}${AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    local pse_aid="315041592E5359532E4444463031"
+
+    # Convert values to hex
+    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
+    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+
+    # Directory entry for PSE
+    local full_aid_len=$(printf '%02X' $((${#full_aid} / 2)))
+    local dir_entry="4F${full_aid_len}${full_aid}50${app_label_len}${app_label_hex}870101"
+    local dir_entry_len=$(printf '%02X' $((${#dir_entry} / 2)))
+    local full_dir_entry="61${dir_entry_len}${dir_entry}"
+    local full_dir_entry_len=$(printf '%02X' $((${#full_dir_entry} / 2)))
+
+    # PSE personalization APDUs
+    gp_cmd+=" -a 00A404000E${pse_aid}"
+    gp_cmd+=" -a 8005000000"
+    gp_cmd+=" -a 8001008E0E${pse_aid}"
+    gp_cmd+=" -a 800100840E${pse_aid}"
+    gp_cmd+=" -a 800100880101"
+    gp_cmd+=" -a 80015F2D02656E"
+    gp_cmd+=" -a 8002000502008800"
+    gp_cmd+=" -a 8002000404008400A5"
+    gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
+    gp_cmd+=" -a 8003010C${full_dir_entry_len}${full_dir_entry}"
+
+    log_info "Sending PSE personalization APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "PSE personalization complete"
+}
+
+# Personalize Payment Application - small APDUs only (templates, tags, AIP, AFL)
+# This is called first to ensure basic card functionality works
+personalize_payapp_small() {
+    log_step "Personalizing Payment Application (basic tags)..."
+
+    local full_aid="${RID}${AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    # Convert values to hex
+    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
+    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+    local cardholder_name="${DEFAULT_APP_LABEL}/CARDHOLDER "
+    local cardholder_hex=$(echo -n "$cardholder_name" | xxd -p | tr -d '\n')
+    local cardholder_len=$(printf '%02X' ${#cardholder_name})
+
+    # PAN formatting
+    local pan_hex="$PAN"
+    if (( ${#PAN} % 2 == 1 )); then
+        pan_hex="${PAN}F"
+    fi
+    local pan_bytes=$((${#pan_hex} / 2))
+    local pan_len_hex=$(printf '%02X' $pan_bytes)
+
+    # Track 2
+    local track2="${pan_hex}D${DEFAULT_EXPIRY:0:4}2201000000000000F"
+    track2="${track2:0:38}"
+    local track2_len=$(printf '%02X' $((${#track2} / 2)))
+
+    # ICC remainder (small - usually <42 bytes)
+    local icc_rem_hex=$(xxd -p "$ICC_REM" | tr -d '\n')
+    local icc_rem_size=$(wc -c < "$ICC_REM" | tr -d ' ')
+    local icc_rem_len=$(printf '%02X' $icc_rem_size)
+
+    # Issuer remainder (small)
+    local issuer_rem_hex=$(xxd -p "$ISSUER_REM" | tr -d '\n')
+    local issuer_rem_size=$(wc -c < "$ISSUER_REM" | tr -d ' ')
+    local issuer_rem_len=$(printf '%02X' $issuer_rem_size)
+
+    # Payment app selection and factory reset
+    gp_cmd+=" -a 00A4040007${full_aid}"
+    gp_cmd+=" -a 8005000000"
+
+    # Settings (small)
+    gp_cmd+=" -a 80040003020001"
+    gp_cmd+=" -a 8004000102123400"
+    gp_cmd+=" -a 8004000202007700"
+
+    # Templates - only non-certificate related ones
+    gp_cmd+=" -a 800200010400820094"
+    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 800200050400500087"
+    gp_cmd+=" -a 8002000404008400A5"
+    # SFI 1 Record 2: 57, 5F20, 9F1F (no certs)
+    gp_cmd+=" -a 8003020C0600575F209F1F"
+    # SFI 3 Record 1: non-cert tags only
+    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
+    # SFI 3 Record 2: 8E (CVM list, no certs)
+    gp_cmd+=" -a 8003021C02008E"
+    # SFI 3 Record 3: 5F30,9F08,9F42,9F44,9F49 (no certs)
+    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
+    # NOTE: SFI 2 (cert records) and SFI 3 Record 4 (ICC cert) templates moved to personalize_payapp_large
+
+    # Small EMV tags - CRITICAL: AIP and AFL
+    gp_cmd+=" -a 80010082023101"
+    gp_cmd+=" -a 800100940C080202001001020018010401"
+
+    # Other small tags
+    gp_cmd+=" -a 80019F36020001"
+    gp_cmd+=" -a 8001008407${full_aid}"
+    gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
+    gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
+    gp_cmd+=" -a 80015F340101"
+    gp_cmd+=" -a 80010057${track2_len}${track2}"
+    gp_cmd+=" -a 80010050${app_label_len}${app_label_hex}"
+    gp_cmd+=" -a 800100870101"
+    gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
+    gp_cmd+=" -a 80019F08020001"
+    gp_cmd+=" -a 80015F2503240101"
+    gp_cmd+=" -a 80015F28020840"
+    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80019F4A0182"
+    gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
+    gp_cmd+=" -a 80015F30020201"
+    gp_cmd+=" -a 80019F42020840"
+    gp_cmd+=" -a 80019F440102"
+    gp_cmd+=" -a 80019F49039F3704"
+    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 80019F0D05FC688C9800"
+    gp_cmd+=" -a 80019F0E050000000000"
+    gp_cmd+=" -a 80019F0F05FC68FC9800"
+    gp_cmd+=" -a 80019F100706010A03A4A002"
+
+    # Small certificate-related tags
+    gp_cmd+=" -a 8001008F0192"
+    gp_cmd+=" -a 80019F320103"
+    gp_cmd+=" -a 80019F470103"
+    gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
+    gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
+
+    log_info "Sending basic Payment App APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "Payment Application basic personalization complete"
+}
+
+# Generate chunked APDU commands for large tag data
+# Usage: generate_chunked_apdus TAG_HEX DATA_HEX
+# Returns: space-separated list of -a APDU arguments
+# Protocol: 80 09 P1 P2 LC data
+#   First chunk: [total_len_hi][total_len_lo][chunk_data...]
+#   Subsequent chunks: [chunk_data...]
+generate_chunked_apdus() {
+    local tag_hex="$1"
+    local data_hex="$2"
+    local chunk_size=200  # Max bytes per chunk (leaves room for headers)
+
+    local data_len=$((${#data_hex} / 2))
+    local total_len_hex=$(printf '%04X' $data_len)
+
+    local result=""
+    local offset=0
+    local is_first=true
+
+    while (( offset * 2 < ${#data_hex} )); do
+        local remaining=$(( (${#data_hex} - offset * 2) / 2 ))
+        local this_chunk_data_size
+
+        if $is_first; then
+            # First chunk: 2 bytes for length header + data
+            this_chunk_data_size=$(( chunk_size - 2 ))
+            if (( this_chunk_data_size > remaining )); then
+                this_chunk_data_size=$remaining
+            fi
+            local chunk_data="${data_hex:$((offset * 2)):$((this_chunk_data_size * 2))}"
+            local apdu_data="${total_len_hex}${chunk_data}"
+            local lc=$(printf '%02X' $(( 2 + this_chunk_data_size )))
+            result+=" -a 8009${tag_hex}${lc}${apdu_data}"
+            is_first=false
+        else
+            # Subsequent chunks: just data
+            this_chunk_data_size=$chunk_size
+            if (( this_chunk_data_size > remaining )); then
+                this_chunk_data_size=$remaining
+            fi
+            local chunk_data="${data_hex:$((offset * 2)):$((this_chunk_data_size * 2))}"
+            local lc=$(printf '%02X' $this_chunk_data_size)
+            result+=" -a 8009${tag_hex}${lc}${chunk_data}"
+        fi
+
+        offset=$(( offset + this_chunk_data_size ))
+    done
+
+    echo "$result"
+}
+
+# Generate chunked APDU commands for large settings data (RSA key)
+# Usage: generate_chunked_settings_apdus SETTING_ID_HEX DATA_HEX
+# Protocol: 80 0A P1 P2 LC data (similar to chunked tags)
+generate_chunked_settings_apdus() {
+    local setting_id_hex="$1"
+    local data_hex="$2"
+    local chunk_size=200
+
+    local data_len=$((${#data_hex} / 2))
+    local total_len_hex=$(printf '%04X' $data_len)
+
+    local result=""
+    local offset=0
+    local is_first=true
+
+    while (( offset * 2 < ${#data_hex} )); do
+        local remaining=$(( (${#data_hex} - offset * 2) / 2 ))
+        local this_chunk_data_size
+
+        if $is_first; then
+            this_chunk_data_size=$(( chunk_size - 2 ))
+            if (( this_chunk_data_size > remaining )); then
+                this_chunk_data_size=$remaining
+            fi
+            local chunk_data="${data_hex:$((offset * 2)):$((this_chunk_data_size * 2))}"
+            local apdu_data="${total_len_hex}${chunk_data}"
+            local lc=$(printf '%02X' $(( 2 + this_chunk_data_size )))
+            result+=" -a 800A${setting_id_hex}${lc}${apdu_data}"
+            is_first=false
+        else
+            this_chunk_data_size=$chunk_size
+            if (( this_chunk_data_size > remaining )); then
+                this_chunk_data_size=$remaining
+            fi
+            local chunk_data="${data_hex:$((offset * 2)):$((this_chunk_data_size * 2))}"
+            local lc=$(printf '%02X' $this_chunk_data_size)
+            result+=" -a 800A${setting_id_hex}${lc}${chunk_data}"
+        fi
+
+        offset=$(( offset + this_chunk_data_size ))
+    done
+
+    echo "$result"
+}
+
+# Personalize Payment Application - large APDUs (RSA keys, certificates)
+# This is called after small APDUs, requires extended APDU support or chunked transfer
+personalize_payapp_large() {
+    log_step "Personalizing Payment Application (certificates/keys)..."
+
+    local full_aid="${RID}${AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    # Certificate data
+    local icc_cert_hex=$(xxd -p "$ICC_CERT" | tr -d '\n')
+    local icc_cert_size=$(wc -c < "$ICC_CERT" | tr -d ' ')
+
+    local icc_mod_hex=$(xxd -p "$ICC_MODULUS" | tr -d '\n')
+    local icc_mod_size=$(wc -c < "$ICC_MODULUS" | tr -d ' ')
+
+    local icc_priv_exp=$(openssl rsa -in "$ICC_PRIVKEY" -noout -text 2>/dev/null | awk '/^privateExponent:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag' | tr -d ' :\n' | sed 's/^0*//')
+    if (( ${#icc_priv_exp} % 2 == 1 )); then
+        icc_priv_exp="0${icc_priv_exp}"
+    fi
+    local mod_size_hex=$(( icc_mod_size * 2 ))
+    while (( ${#icc_priv_exp} < mod_size_hex )); do
+        icc_priv_exp="0${icc_priv_exp}"
+    done
+    local icc_priv_size=$((${#icc_priv_exp} / 2))
+
+    local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
+    local issuer_cert_size=$(wc -c < "$ISSUER_CERT" | tr -d ' ')
+
+    # Select payment app
+    gp_cmd+=" -a 00A4040007${full_aid}"
+
+    # Certificate-related templates FIRST (small APDUs - will succeed on T=0)
+    # SFI 2 Record 1: 8F, 92, 9F32, 9F47 (cert-related)
+    gp_cmd+=" -a 8003011408008F00929F329F47"
+    # SFI 2 Record 2: 90 (Issuer PK Cert)
+    gp_cmd+=" -a 80030214020090"
+    # SFI 3 Record 4: 9F46 (ICC PK Cert)
+    gp_cmd+=" -a 8003041C029F46"
+
+    if $T0_MODE; then
+        # T=0 mode: use chunked transfer for ALL large data (no extended APDUs)
+        log_info "Using chunked transfer for T=0 protocol..."
+
+        # RSA modulus - use chunked settings (80 0A 00 04)
+        local mod_apdus=$(generate_chunked_settings_apdus "0004" "$icc_mod_hex")
+        gp_cmd+="$mod_apdus"
+
+        # RSA private exponent - use chunked settings (80 0A 00 05)
+        local exp_apdus=$(generate_chunked_settings_apdus "0005" "$icc_priv_exp")
+        gp_cmd+="$exp_apdus"
+
+        # Issuer certificate (tag 90) - use chunked EMV tag (80 09)
+        local issuer_apdus=$(generate_chunked_apdus "0090" "$issuer_cert_hex")
+        gp_cmd+="$issuer_apdus"
+
+        # ICC certificate (tag 9F46) - use chunked EMV tag (80 09)
+        local icc_apdus=$(generate_chunked_apdus "9F46" "$icc_cert_hex")
+        gp_cmd+="$icc_apdus"
+    else
+        # T=1 mode: use extended APDUs (original approach)
+        local icc_cert_lc
+        if (( icc_cert_size > 255 )); then
+            icc_cert_lc=$(printf '00%04X' $icc_cert_size)
+        else
+            icc_cert_lc=$(printf '%02X' $icc_cert_size)
+        fi
+
+        local icc_mod_len
+        if (( icc_mod_size >= 256 )); then
+            icc_mod_len=$(printf '00%04X' $icc_mod_size)
+        else
+            icc_mod_len=$(printf '%02X' $icc_mod_size)
+        fi
+
+        local icc_priv_len
+        if (( icc_priv_size >= 256 )); then
+            icc_priv_len=$(printf '00%04X' $icc_priv_size)
+        else
+            icc_priv_len=$(printf '%02X' $icc_priv_size)
+        fi
+
+        local issuer_cert_lc
+        if (( issuer_cert_size > 255 )); then
+            issuer_cert_lc=$(printf '00%04X' $issuer_cert_size)
+        else
+            issuer_cert_lc=$(printf '%02X' $issuer_cert_size)
+        fi
+
+        # Large APDUs: RSA key and certificates
+        gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
+        gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+        gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
+        gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
+    fi
+
+    log_info "Sending certificate/key APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "Payment Application certificate personalization complete"
+}
+
+# Personalize Payment Application - combined (for T=1 mode)
+personalize_payapp() {
+    personalize_payapp_small
+    personalize_payapp_large
 }
 
 # Validate certificates
@@ -759,6 +1134,11 @@ main() {
     parse_args "$@"
     apply_defaults
 
+    if $T0_MODE; then
+        echo -e "${YELLOW}T=0 mode enabled - will prompt for card removal/reinsertion between steps${NC}"
+        echo ""
+    fi
+
     # Validate PAN/BIN
     validate_pan_bin
 
@@ -775,17 +1155,42 @@ main() {
     # Validate certificates
     validate_certificates
 
-    # Query card
-    query_card
+    if $T0_MODE; then
+        # T=0 mode: separate gp.jar calls with card cycles between each
+        # Skip query/remove - use --force on install instead
 
-    # Remove existing apps
-    remove_all_apps
+        # Load CAP files (has internal prompt between PSE and PaymentApp)
+        load_cap_files
 
-    # Load CAP files
-    load_cap_files
+        prompt_card_cycle "Installed Payment App CAP"
 
-    # Personalize card
-    personalize_card
+        # Personalize PSE
+        personalize_pse
+
+        prompt_card_cycle "Personalized PSE"
+
+        # Personalize Payment Application - small APDUs first (AIP, AFL, templates)
+        personalize_payapp_small
+
+        prompt_card_cycle "Personalized Payment App (basic tags)"
+
+        # Personalize Payment Application - large APDUs (certificates, RSA keys)
+        personalize_payapp_large
+    else
+        # T=1 mode: original flow with multiple gp.jar calls in sequence
+
+        # Query card
+        query_card
+
+        # Remove existing apps
+        remove_all_apps
+
+        # Load CAP files
+        load_cap_files
+
+        # Personalize card (both PSE and PaymentApp in one session)
+        personalize_card
+    fi
 
     # Generate config files
     generate_configs

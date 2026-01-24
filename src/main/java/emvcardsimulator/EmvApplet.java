@@ -50,6 +50,8 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected static final short CMD_LOG_CONSUME               = (short) 0x8006;
     protected static final short CMD_FUZZ_RESET                = (short) 0x8007;
     protected static final short CMD_LIST_TAGS                 = (short) 0x8008;
+    protected static final short CMD_SET_EMV_TAG_CHUNKED       = (short) 0x8009;
+    protected static final short CMD_SET_SETTINGS_CHUNKED      = (short) 0x800A;
     protected static final short CMD_SELECT = (short) 0x00A4;
     protected static final short CMD_READ_RECORD = (short) 0x00B2;
     protected static final short CMD_DDA = (short) 0x0088;
@@ -67,6 +69,12 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     // For GET RESPONSE chaining of large responses
     protected static short pendingResponseOffset = 0;
     protected static short pendingResponseLength = 0;
+
+    // For chunked tag transfer (T=0 cards that don't support extended APDUs)
+    protected static byte[] chunkBuffer;
+    protected static short chunkTagId = 0;
+    protected static short chunkExpectedLength = 0;
+    protected static short chunkAccumulatedLength = 0;
 
     protected static void logAndThrow(short responseTrailer) {
         ApduLog.addLogEntry(responseTrailer);
@@ -170,20 +178,99 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
-        // Get actual data length (works for both short and extended APDUs)
-        short dataLen = apdu.getIncomingLength();
-        // Fallback: if getIncomingLength returns 0, try LC byte (0 means 256 for short APDU)
-        if (dataLen == 0) {
-            short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-            dataLen = (lcByte == 0) ? (short) 256 : lcByte;
-        }
+        // Determine data length and offset
+        // Check for extended APDU: LC byte is 0, followed by 2-byte length
+        short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        short dataLen;
+        short dataOffset;
 
-        // Get the correct data offset (may differ for extended APDU)
-        short dataOffset = apdu.getOffsetCdata();
+        if (lcByte == 0) {
+            // Extended APDU format: LC=0x00, then 2-byte length at offset 5-6, data at offset 7
+            dataLen = Util.getShort(buf, (short)(ISO7816.OFFSET_LC + 1));
+            dataOffset = (short) 7;  // Extended APDU data starts at offset 7
+        } else {
+            // Short APDU format: LC at offset 4, data at offset 5
+            dataLen = lcByte;
+            dataOffset = ISO7816.OFFSET_CDATA;  // = 5
+        }
 
         JCSystem.beginTransaction();
         EmvTag tag = EmvTag.setTag(tagId, buf, dataOffset, dataLen);
         JCSystem.commitTransaction();
+
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
+    }
+
+    /**
+     * Process chunked EMV tag data for T=0 cards that don't support extended APDUs.
+     * Command: 80 09 P1 P2 LC data
+     * P1P2 = tag ID
+     * First chunk: data[0..1] = total length (big-endian), data[2..] = first chunk data
+     * Subsequent chunks: data = chunk data (appended to buffer)
+     * When accumulated length == expected length, tag is finalized.
+     */
+    protected void processSetEmvTagChunked(APDU apdu, byte[] buf) {
+        short tagId = Util.getShort(buf, ISO7816.OFFSET_P1);
+        if (tagId == 0x0000) {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
+        // Get data length and offset (short APDU only for chunked transfer)
+        short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        short dataLen = lcByte;
+        short dataOffset = ISO7816.OFFSET_CDATA;
+
+        // Check if this is a new tag or continuation of existing
+        if (chunkTagId != tagId || chunkAccumulatedLength == 0) {
+            // New chunked transfer - first 2 bytes are total length
+            if (dataLen < 2) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            // Reset chunking state
+            chunkTagId = tagId;
+            chunkExpectedLength = Util.getShort(buf, dataOffset);
+            chunkAccumulatedLength = 0;
+
+            // Validate expected length fits in buffer
+            if (chunkExpectedLength > (short) 512 || chunkExpectedLength <= 0) {
+                chunkTagId = 0;
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            // Copy first chunk data (after the 2-byte length header)
+            short chunkDataLen = (short) (dataLen - 2);
+            if (chunkDataLen > 0) {
+                Util.arrayCopy(buf, (short) (dataOffset + 2), chunkBuffer, (short) 0, chunkDataLen);
+                chunkAccumulatedLength = chunkDataLen;
+            }
+        } else {
+            // Continuation of existing chunked transfer
+            // Validate we won't overflow
+            if ((short) (chunkAccumulatedLength + dataLen) > chunkExpectedLength) {
+                // Too much data - abort
+                chunkTagId = 0;
+                chunkAccumulatedLength = 0;
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            // Append chunk data
+            Util.arrayCopy(buf, dataOffset, chunkBuffer, chunkAccumulatedLength, dataLen);
+            chunkAccumulatedLength += dataLen;
+        }
+
+        // Check if transfer is complete
+        if (chunkAccumulatedLength == chunkExpectedLength) {
+            // Finalize - store the tag
+            JCSystem.beginTransaction();
+            EmvTag.setTag(chunkTagId, chunkBuffer, (short) 0, chunkExpectedLength);
+            JCSystem.commitTransaction();
+
+            // Reset chunking state
+            chunkTagId = 0;
+            chunkAccumulatedLength = 0;
+            chunkExpectedLength = 0;
+        }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -196,10 +283,13 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
-        tag.fuzzOffset     = buf[(short) (ISO7816.OFFSET_CDATA)];
-        tag.fuzzLength     = buf[(short) (ISO7816.OFFSET_CDATA + 1)];
-        tag.fuzzFlags      = buf[(short) (ISO7816.OFFSET_CDATA + 2)];
-        tag.fuzzOccurrence = buf[(short) (ISO7816.OFFSET_CDATA + 3)];
+        // Use correct data offset (works for both short and extended APDUs)
+        short dataOffset = apdu.getOffsetCdata();
+
+        tag.fuzzOffset     = buf[dataOffset];
+        tag.fuzzLength     = buf[(short) (dataOffset + 1)];
+        tag.fuzzFlags      = buf[(short) (dataOffset + 2)];
+        tag.fuzzOccurrence = buf[(short) (dataOffset + 3)];
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -236,8 +326,17 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        // Use APDU methods for correct offset and length (works for both short and extended APDUs)
+        short dataOffset = apdu.getOffsetCdata();
+        short dataLen = apdu.getIncomingLength();
+        // Fallback for platforms where getIncomingLength returns 0
+        if (dataLen == 0) {
+            dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataOffset = ISO7816.OFFSET_CDATA;
+        }
+
         JCSystem.beginTransaction();
-        template.setData(buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        template.setData(buf, dataOffset, (byte) dataLen);
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
@@ -250,8 +349,17 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        // Use APDU methods for correct offset and length (works for both short and extended APDUs)
+        short dataOffset = apdu.getOffsetCdata();
+        short dataLen = apdu.getIncomingLength();
+        // Fallback for platforms where getIncomingLength returns 0
+        if (dataLen == 0) {
+            dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataOffset = ISO7816.OFFSET_CDATA;
+        }
+
         JCSystem.beginTransaction();
-        ReadRecord.setRecord(readRecordId, buf, (short) ISO7816.OFFSET_CDATA, buf[ISO7816.OFFSET_LC]);
+        ReadRecord.setRecord(readRecordId, buf, dataOffset, (byte) dataLen);
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
@@ -378,7 +486,8 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
     protected EmvApplet() {
         tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
-        
+        chunkBuffer = new byte[512];  // Persistent buffer for chunked transfers
+
         factoryReset();
 
         responseTemplateGetProcessingOptions = new TagTemplate();
