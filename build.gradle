@@ -222,17 +222,31 @@ task cap {
         // Create build/card directory
         file('build/card').mkdirs()
 
-        // 1PAY.SYS.DDF01
+        // 1PAY.SYS.DDF01 (Contact PSE)
         ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
                 output: 'build/card/pse.cap',
                 jca: 'build/card/pse.jca',
-                export: 'build/card',
+                export: 'build/card/pse_export',
                 classes: "build/classes/java/main",
                 aid: '315041592E000000000000000000') {
                     applet (class: 'emvcardsimulator.PaymentSystemEnvironment', aid: '315041592E5359532E4444463031')
+            }
+        }
+
+        // 2PAY.SYS.DDF01 (Contactless PPSE) - separate package
+        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+            cap (
+                package: 'emvcardsimulator.ppse',
+                version: '0.1',
+                output: 'build/card/ppse.cap',
+                jca: 'build/card/ppse.jca',
+                export: 'build/card/ppse_export',
+                classes: "build/classes/java/main",
+                aid: '325041592E000000000000000000') {
+                    applet (class: 'emvcardsimulator.ppse.ProximityPaymentSystemEnvironment', aid: '325041592E5359532E4444463031')
             }
         }
 
