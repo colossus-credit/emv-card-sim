@@ -53,6 +53,7 @@ ISSUER_CERT=""
 ISSUER_REM=""
 ISSUER_EXP=""
 PSE_CAP=""
+PPSE_CAP=""
 PAYAPP_CAP=""
 GEN_KEYS=false
 VERBOSE=false
@@ -283,11 +284,19 @@ validate_pan_bin() {
 locate_cap_files() {
     log_step "Locating CAP files..."
 
-    # PSE CAP
+    # PSE CAP (Contact)
     if [[ -z "$PSE_CAP" ]]; then
         if [[ -f "${BUILD_DIR}/card/pse.cap" ]]; then
             PSE_CAP="${BUILD_DIR}/card/pse.cap"
             log_info "Found PSE CAP: $PSE_CAP"
+        fi
+    fi
+
+    # PPSE CAP (Contactless)
+    if [[ -z "$PPSE_CAP" ]]; then
+        if [[ -f "${BUILD_DIR}/card/ppse.cap" ]]; then
+            PPSE_CAP="${BUILD_DIR}/card/ppse.cap"
+            log_info "Found PPSE CAP: $PPSE_CAP"
         fi
     fi
 
@@ -299,8 +308,8 @@ locate_cap_files() {
         fi
     fi
 
-    # If either is missing, offer to build
-    if [[ -z "$PSE_CAP" || -z "$PAYAPP_CAP" ]]; then
+    # If any is missing, offer to build
+    if [[ -z "$PSE_CAP" || -z "$PPSE_CAP" || -z "$PAYAPP_CAP" ]]; then
         log_warn "CAP files not found in build/card/"
 
         read -p "Would you like to build the CAP files? (y/n) " -n 1 -r
@@ -322,6 +331,9 @@ locate_cap_files() {
             # Verify files were created
             if [[ -f "${BUILD_DIR}/card/pse.cap" ]]; then
                 PSE_CAP="${BUILD_DIR}/card/pse.cap"
+            fi
+            if [[ -f "${BUILD_DIR}/card/ppse.cap" ]]; then
+                PPSE_CAP="${BUILD_DIR}/card/ppse.cap"
             fi
             if [[ -f "${BUILD_DIR}/card/paymentapp.cap" ]]; then
                 PAYAPP_CAP="${BUILD_DIR}/card/paymentapp.cap"
@@ -519,10 +531,17 @@ load_cap_files() {
     log_step "Loading CAP files to card..."
     local gp_cmd=$(build_gp_cmd)
 
-    log_info "Loading PSE: $PSE_CAP"
+    log_info "Loading PSE (Contact): $PSE_CAP"
     $gp_cmd --force --install "$PSE_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
     prompt_card_cycle "Installed PSE CAP"
+
+    if [[ -n "$PPSE_CAP" && -f "$PPSE_CAP" ]]; then
+        log_info "Loading PPSE (Contactless): $PPSE_CAP"
+        $gp_cmd --force --install "$PPSE_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+        prompt_card_cycle "Installed PPSE CAP"
+    fi
 
     log_info "Loading Payment App: $PAYAPP_CAP"
     $gp_cmd --force --install "$PAYAPP_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
@@ -637,6 +656,14 @@ personalize_card() {
     gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
     gp_cmd+=" -a 8003010C${full_dir_entry_len}${full_dir_entry}"
 
+    # PPSE personalization (Contactless) - new simplified applet
+    # FCI structure: 6F -> 84 (PPSE AID), A5 -> BF0C -> 61 (directory entry)
+    local ppse_aid="325041592E5359532E4444463031"
+    gp_cmd+=" -a 00A404000E${ppse_aid}"
+    gp_cmd+=" -a 8005000000"
+    # Set directory entry content (applet builds FCI automatically)
+    gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
+
     # Payment app selection and base personalization
     gp_cmd+=" -a 00A4040007${full_aid}"
     gp_cmd+=" -a 8005000000"
@@ -652,7 +679,8 @@ personalize_card() {
     gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
     gp_cmd+=" -a 8004000202007700"
-    gp_cmd+=" -a 800200010400820094"
+    # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
+    gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
     # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
@@ -717,6 +745,10 @@ personalize_card() {
     # IAC-Online: conditions that require online
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
+    # CTQ (Card Transaction Qualifiers) - required for contactless
+    # Byte 1: 80 = Online cryptogram required (typical for ARQC transactions)
+    # Byte 2: 00 = No special processing flags
+    gp_cmd+=" -a 80019F6C028000"
 
     log_info "Sending personalization APDUs..."
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
@@ -761,6 +793,40 @@ personalize_pse() {
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
     log_success "PSE personalization complete"
+}
+
+# Personalize PPSE only (for contactless support)
+personalize_ppse() {
+    log_step "Personalizing PPSE (Contactless)..."
+
+    local full_aid="${RID}${AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    local ppse_aid="325041592E5359532E4444463031"
+
+    # Convert values to hex
+    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
+    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+
+    # Directory entry content: 4F <AID>, 50 <label>, 87 <priority>
+    local full_aid_len=$(printf '%02X' $((${#full_aid} / 2)))
+    local dir_entry_content="4F${full_aid_len}${full_aid}50${app_label_len}${app_label_hex}870101"
+    local dir_entry_content_len=$(printf '%02X' $((${#dir_entry_content} / 2)))
+
+    # PPSE personalization APDUs (new simplified applet)
+    # Select PPSE
+    gp_cmd+=" -a 00A404000E${ppse_aid}"
+    # Factory reset
+    gp_cmd+=" -a 8005000000"
+    # Set directory entry content (command 80 01 00 61)
+    # The applet will build FCI with BF0C containing 61 wrapper around this content
+    gp_cmd+=" -a 80010061${dir_entry_content_len}${dir_entry_content}"
+
+    log_info "Sending PPSE personalization APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "PPSE personalization complete"
 }
 
 # Personalize Payment Application - small APDUs only (templates, tags, AIP, AFL)
@@ -812,7 +878,8 @@ personalize_payapp_small() {
     gp_cmd+=" -a 8004000202007700"
 
     # Templates - only non-certificate related ones
-    gp_cmd+=" -a 800200010400820094"
+    # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
+    gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
     gp_cmd+=" -a 800200050400500087"
@@ -858,6 +925,10 @@ personalize_payapp_small() {
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
+    # CTQ (Card Transaction Qualifiers) - required for contactless
+    # Byte 1: 80 = Online cryptogram required (typical for ARQC transactions)
+    # Byte 2: 00 = No special processing flags
+    gp_cmd+=" -a 80019F6C028000"
 
     # Small certificate-related tags
     gp_cmd+=" -a 8001008F0192"
@@ -1164,10 +1235,15 @@ main() {
 
         prompt_card_cycle "Installed Payment App CAP"
 
-        # Personalize PSE
+        # Personalize PSE (Contact)
         personalize_pse
 
         prompt_card_cycle "Personalized PSE"
+
+        # Personalize PPSE (Contactless)
+        personalize_ppse
+
+        prompt_card_cycle "Personalized PPSE"
 
         # Personalize Payment Application - small APDUs first (AIP, AFL, templates)
         personalize_payapp_small
