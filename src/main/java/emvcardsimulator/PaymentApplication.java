@@ -43,6 +43,125 @@ public class PaymentApplication extends EmvApplet {
     private short debugHashInputLength = 0;
     private byte[] debugHashOutput = null;
 
+    // Chunked settings transfer state (for RSA key on T=0 cards)
+    private byte[] settingsChunkBuffer = null;
+    private short settingsChunkSettingId = 0;
+    private short settingsChunkExpectedLength = 0;
+    private short settingsChunkAccumulatedLength = 0;
+
+    /**
+     * Process chunked settings data for T=0 cards that don't support extended APDUs.
+     * Command: 80 0A P1 P2 LC data
+     * P1P2 = setting ID (0004 for modulus, 0005 for exponent)
+     * First chunk: data[0..1] = total length (big-endian), data[2..] = first chunk data
+     * Subsequent chunks: data = chunk data (appended to buffer)
+     * When accumulated length == expected length, setting is applied.
+     */
+    private void processSetSettingsChunked(APDU apdu, byte[] buf) {
+        short settingId = Util.getShort(buf, ISO7816.OFFSET_P1);
+
+        // Only support RSA modulus (0004) and exponent (0005)
+        if (settingId != (short) 0x0004 && settingId != (short) 0x0005) {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
+        // Get data length and offset (short APDU only for chunked transfer)
+        short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        short dataLen = lcByte;
+        short dataOffset = ISO7816.OFFSET_CDATA;
+
+        // Check if this is a new setting or continuation
+        if (settingsChunkSettingId != settingId || settingsChunkAccumulatedLength == 0) {
+            // New chunked transfer - first 2 bytes are total length
+            if (dataLen < 2) {
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            // Reset chunking state
+            settingsChunkSettingId = settingId;
+            settingsChunkExpectedLength = Util.getShort(buf, dataOffset);
+            settingsChunkAccumulatedLength = 0;
+
+            // Validate expected length fits in buffer
+            if (settingsChunkExpectedLength > (short) 512 || settingsChunkExpectedLength <= 0) {
+                settingsChunkSettingId = 0;
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            // Copy first chunk data (after the 2-byte length header)
+            short chunkDataLen = (short) (dataLen - 2);
+            if (chunkDataLen > 0) {
+                Util.arrayCopy(buf, (short) (dataOffset + 2), settingsChunkBuffer, (short) 0, chunkDataLen);
+                settingsChunkAccumulatedLength = chunkDataLen;
+            }
+        } else {
+            // Continuation of existing chunked transfer
+            if ((short) (settingsChunkAccumulatedLength + dataLen) > settingsChunkExpectedLength) {
+                settingsChunkSettingId = 0;
+                settingsChunkAccumulatedLength = 0;
+                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+            }
+
+            Util.arrayCopy(buf, dataOffset, settingsChunkBuffer, settingsChunkAccumulatedLength, dataLen);
+            settingsChunkAccumulatedLength += dataLen;
+        }
+
+        // Check if transfer is complete
+        if (settingsChunkAccumulatedLength == settingsChunkExpectedLength) {
+            // Apply the setting
+            if (settingId == (short) 0x0004) {
+                // RSA modulus
+                rsaPrivateKeyByteSize = settingsChunkExpectedLength;
+                short keyLength = (short) (rsaPrivateKeyByteSize * 8);
+                switch (keyLength) {
+                    case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
+                    case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
+                    case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
+                    case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
+                    case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
+                    default:
+                        settingsChunkSettingId = 0;
+                        settingsChunkAccumulatedLength = 0;
+                        ISOException.throwIt((short) 0x6A80);
+                }
+                try {
+                    rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
+                    rsaPrivateKey.clearKey();
+                    rsaPrivateKey.setModulus(settingsChunkBuffer, (short) 0, rsaPrivateKeyByteSize);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    settingsChunkSettingId = 0;
+                    settingsChunkAccumulatedLength = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+            } else if (settingId == (short) 0x0005) {
+                // RSA exponent
+                if (rsaPrivateKey == null) {
+                    settingsChunkSettingId = 0;
+                    settingsChunkAccumulatedLength = 0;
+                    ISOException.throwIt((short) 0x6985);
+                }
+                try {
+                    rsaPrivateKey.setExponent(settingsChunkBuffer, (short) 0, settingsChunkExpectedLength);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    settingsChunkSettingId = 0;
+                    settingsChunkAccumulatedLength = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+            }
+
+            // Reset chunking state
+            settingsChunkSettingId = 0;
+            settingsChunkAccumulatedLength = 0;
+            settingsChunkExpectedLength = 0;
+        }
+
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
+    }
+
     private void processSetSettings(APDU apdu, byte[] buf) {
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
         switch (settingsId) {
@@ -205,6 +324,9 @@ public class PaymentApplication extends EmvApplet {
         debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
         debugHashInputLength = 0;
         debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
+
+        // Chunked settings buffer for RSA key on T=0 cards (persistent)
+        settingsChunkBuffer = new byte[512];
 
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
@@ -899,25 +1021,77 @@ public class PaymentApplication extends EmvApplet {
     public void process(APDU apdu) {
         byte[] buf = apdu.getBuffer();
 
-        // Receive incoming data (required for extended APDUs and to properly populate buffer)
+        // Determine if this command has incoming data by checking LC byte
+        // For ISO case 1 (no data, no Le) and case 2 (no data, Le only), LC position contains Le, not Lc
+        // For ISO case 3 (data, no Le) and case 4 (data, Le), LC position contains actual Lc
+        //
+        // Commands that have command data (case 3/4):
+        //   SELECT (A4), VERIFY (20), GET PROCESSING OPTIONS (A8), GENERATE AC (AE),
+        //   INTERNAL AUTHENTICATE (88), SET_SETTINGS (04), SET_EMV_TAG (01),
+        //   SET_EMV_TAG_FUZZ (06), SET_TAG_TEMPLATE (02), SET_READ_RECORD_TEMPLATE (03)
+        //
+        // Commands that have NO command data (case 1/2):
+        //   READ RECORD (B2), GET RESPONSE (C0), GET CHALLENGE (84), GET DATA (CA),
+        //   FACTORY_RESET (05), FUZZ_RESET (07), LOG_CONSUME (08), LIST_TAGS (09)
+
+        byte ins = buf[ISO7816.OFFSET_INS];
         short bytesReceived = 0;
-        short lc = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-        // Check for extended APDU (LC byte is 0x00 followed by 2-byte length)
-        if (lc == 0 && buf.length > ISO7816.OFFSET_CDATA) {
-            // Extended APDU: LC is in bytes 5-6
-            lc = Util.getShort(buf, (short)(ISO7816.OFFSET_LC + 1));
+
+        // Only try to receive data for commands that actually have command data
+        // This avoids the bug where reading "LC" on a case 2 command gives garbage
+        boolean hasCommandData;
+        switch (ins) {
+            case (byte)0xA4:  // SELECT
+            case (byte)0x20:  // VERIFY
+            case (byte)0xA8:  // GET PROCESSING OPTIONS
+            case (byte)0xAE:  // GENERATE AC
+            case (byte)0x88:  // INTERNAL AUTHENTICATE
+            case (byte)0x01:  // SET_EMV_TAG
+            case (byte)0x02:  // SET_TAG_TEMPLATE
+            case (byte)0x03:  // SET_READ_RECORD_TEMPLATE
+            case (byte)0x04:  // SET_SETTINGS
+            case (byte)0x06:  // SET_EMV_TAG_FUZZ
+            case (byte)0x09:  // SET_EMV_TAG_CHUNKED
+            case (byte)0x0A:  // SET_SETTINGS_CHUNKED
+                hasCommandData = true;
+                break;
+            default:
+                hasCommandData = false;
+                break;
         }
-        if (lc > 0) {
+
+        if (hasCommandData) {
+            // Determine data length and offset
+            // Check for extended APDU: LC byte is 0, followed by 2-byte length
+            short lcByte = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            short expectedLen;
+            short dataOffset;
+
+            if (lcByte == 0) {
+                // Extended APDU format: LC=0x00, then 2-byte length at offset 5-6, data at offset 7
+                expectedLen = Util.getShort(buf, (short)(ISO7816.OFFSET_LC + 1));
+                dataOffset = (short) 7;
+            } else {
+                // Short APDU format: LC at offset 4, data at offset 5
+                expectedLen = lcByte;
+                dataOffset = ISO7816.OFFSET_CDATA;  // = 5
+            }
+
+            // Receive incoming data
             bytesReceived = apdu.setIncomingAndReceive();
-            // For extended APDUs, may need to receive more data
-            while (bytesReceived < lc) {
-                short more = apdu.receiveBytes((short)(apdu.getOffsetCdata() + bytesReceived));
+
+            // For large data (extended APDUs or protocol chunking), receive remaining bytes
+            while (bytesReceived < expectedLen) {
+                short more = apdu.receiveBytes((short)(dataOffset + bytesReceived));
                 if (more <= 0) break;
                 bytesReceived += more;
             }
         }
 
-        ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
+        // Log the APDU (use getIncomingLength for proper length in all cases)
+        short logLen = hasCommandData ? (short)(5 + apdu.getIncomingLength()) : (short)5;
+        if (logLen > 255) logLen = 255;
+        ApduLog.addLogEntry(buf, (short) 0, (byte) logLen);
 
         // Get CLA+INS as command, but mask out the chaining bit (0x10) from CLA
         // This allows chained commands (CLA=0x90) to be recognized as regular commands (CLA=0x80)
@@ -941,6 +1115,12 @@ public class PaymentApplication extends EmvApplet {
                 return;
             case CMD_SET_READ_RECORD_TEMPLATE:
                 processSetReadRecordTemplate(apdu, buf);
+                return;
+            case CMD_SET_EMV_TAG_CHUNKED:
+                processSetEmvTagChunked(apdu, buf);
+                return;
+            case CMD_SET_SETTINGS_CHUNKED:
+                processSetSettingsChunked(apdu, buf);
                 return;
             case CMD_FACTORY_RESET:
                 factoryReset(apdu, buf);

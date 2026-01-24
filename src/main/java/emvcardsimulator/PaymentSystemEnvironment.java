@@ -21,13 +21,22 @@ public class PaymentSystemEnvironment extends EmvApplet {
 
     private void processSetSettings(APDU apdu, byte[] buf) {
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
+
+        // Use APDU methods for correct offset and length
+        short dataOffset = apdu.getOffsetCdata();
+        short dataLength = apdu.getIncomingLength();
+        // Fallback for platforms where getIncomingLength returns 0
+        if (dataLength == 0) {
+            dataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataOffset = ISO7816.OFFSET_CDATA;
+        }
+
         switch (settingsId) {
             // FALLBACK READ RECORD
             case 0x0006:
-                short dataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
                 defaultReadRecord = null;
                 defaultReadRecord = new byte[dataLength];
-                Util.arrayCopy(buf, (short) ISO7816.OFFSET_CDATA, defaultReadRecord, (short) 0, dataLength);
+                Util.arrayCopy(buf, dataOffset, defaultReadRecord, (short) 0, dataLength);
                 break;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -117,23 +126,40 @@ public class PaymentSystemEnvironment extends EmvApplet {
     public void process(APDU apdu) {
         byte[] buf = apdu.getBuffer();
 
-        // CRITICAL: Must call setIncomingAndReceive() to receive command data
-        // Without this, the data portion of the APDU buffer contains zeros
-        // Use a loop because setIncomingAndReceive() may return partial data
-        short lc = (short)(buf[ISO7816.OFFSET_LC] & 0x00FF);
-        if (lc > 0) {
-            short total = apdu.setIncomingAndReceive();
-            while (total < lc) {
-                short read = apdu.receiveBytes(ISO7816.OFFSET_CDATA);
-                if (read <= 0) break;
-                total += read;
-            }
-            if (total != lc) {
-                ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        // Determine if this command has incoming data
+        byte ins = buf[ISO7816.OFFSET_INS];
+        boolean hasCommandData;
+        switch (ins) {
+            case (byte)0xA4:  // SELECT
+            case (byte)0x01:  // SET_EMV_TAG
+            case (byte)0x02:  // SET_TAG_TEMPLATE
+            case (byte)0x03:  // SET_READ_RECORD_TEMPLATE
+            case (byte)0x04:  // SET_SETTINGS
+            case (byte)0x06:  // SET_EMV_TAG_FUZZ
+                hasCommandData = true;
+                break;
+            default:
+                hasCommandData = false;
+                break;
+        }
+
+        if (hasCommandData) {
+            // Receive incoming data
+            short bytesReceived = apdu.setIncomingAndReceive();
+            short actualLc = apdu.getIncomingLength();
+
+            // For large data, receive remaining bytes
+            while (bytesReceived < actualLc) {
+                short more = apdu.receiveBytes((short)(apdu.getOffsetCdata() + bytesReceived));
+                if (more <= 0) break;
+                bytesReceived += more;
             }
         }
 
-        ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
+        // Log the APDU
+        short logLen = hasCommandData ? (short)(5 + apdu.getIncomingLength()) : (short)5;
+        if (logLen > 255) logLen = 255;
+        ApduLog.addLogEntry(buf, (short) 0, (byte) logLen);
 
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
