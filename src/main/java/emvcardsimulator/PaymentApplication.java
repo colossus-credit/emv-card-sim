@@ -264,13 +264,13 @@ public class PaymentApplication extends EmvApplet {
                 return;
             // DIAGNOSTIC: Get Transaction Data Hash input and output
             case 0x0008:
-                // Return: [hash_input_len_hi, hash_input_len_lo, hash_output(20), hash_input(up to 200)]
+                // Return: [hash_input_len_hi, hash_input_len_lo, hash_output(32), hash_input(up to 200)]
                 buf[0] = (byte) ((debugHashInputLength >> 8) & 0xFF);
                 buf[1] = (byte) (debugHashInputLength & 0xFF);
-                Util.arrayCopy(debugHashOutput, (short) 0, buf, (short) 2, (short) 20);
+                Util.arrayCopy(debugHashOutput, (short) 0, buf, (short) 2, (short) 32);
                 short copyLen = (debugHashInputLength > (short) 200) ? (short) 200 : debugHashInputLength;
-                Util.arrayCopy(debugHashInput, (short) 0, buf, (short) 22, copyLen);
-                apdu.setOutgoingAndSend((short) 0, (short) (22 + copyLen));
+                Util.arrayCopy(debugHashInput, (short) 0, buf, (short) 34, copyLen);
+                apdu.setOutgoingAndSend((short) 0, (short) (34 + copyLen));
                 return;
             // DIAGNOSTIC: Get CDA decision variables
             case 0x0009:
@@ -296,6 +296,17 @@ public class PaymentApplication extends EmvApplet {
                 buf[4] = diagAipLen;
                 apdu.setOutgoingAndSend((short) 0, (short) 5);
                 return;
+            // DIAGNOSTIC: Test 61xx - just throws 0x6128 directly
+            case 0x000A:
+                // Store some dummy data for GET RESPONSE
+                tmpBuffer[0] = (byte) 0xAA;
+                tmpBuffer[1] = (byte) 0xBB;
+                tmpBuffer[2] = (byte) 0xCC;
+                pendingResponseOffset = (short) 0;
+                pendingResponseLength = (short) 3;
+                // Throw 61xx directly - should return SW=6103 if JCRE works correctly
+                ISOException.throwIt((short) 0x6103);
+                return; // Never reached but prevents fall-through warning
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
@@ -320,23 +331,26 @@ public class PaymentApplication extends EmvApplet {
         storedPdolData = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
         storedPdolLength = 0;
 
-        // DEBUG: Storage for hash input (256 bytes should be enough) and output (20 bytes for SHA-1)
+        // DEBUG: Storage for hash input (256 bytes should be enough) and output (32 bytes for SHA-256)
         debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
         debugHashInputLength = 0;
-        debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
+        debugHashOutput = JCSystem.makeTransientByteArray((short) 32, JCSystem.CLEAR_ON_DESELECT);
 
         // Chunked settings buffer for RSA key on T=0 cards (persistent)
         settingsChunkBuffer = new byte[512];
 
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
-        shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
+        shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
         // Reset stored data for new transaction
         storedCdol1Length = 0;
         storedPdolLength = 0;
+
+        // Don't clear logs here - it prevents reading logs via opensc-tool
+        // The rolling log limit (maxCount=10) handles old logs
 
         // Check if PAN (tag A5) exists in the ICC
         if (EmvTag.findTag((short) 0x5A) != null) {
@@ -541,18 +555,18 @@ public class PaymentApplication extends EmvApplet {
         // Build SDAD structure per EMV Book 2 Table 16
         tmpBuffer[0] = (byte) 0x6A;  // Header
         tmpBuffer[1] = (byte) 0x05;  // Signed Data Format for CDA
-        tmpBuffer[2] = (byte) 0x01;  // Hash Algorithm Indicator (SHA-1)
+        tmpBuffer[2] = (byte) 0x02;  // Hash Algorithm Indicator (SHA-256)
 
         // ICC Dynamic Data for CDA Format 05:
         // - ICC Dynamic Number Length (1 byte)
         // - ICC Dynamic Number (LDD bytes, we use 8)
         // - Cryptogram Information Data (1 byte)
         // - Application Cryptogram (8 bytes)
-        // - Transaction Data Hash Code (20 bytes) - hash over CDOL data
-        // Total: 1 + 8 + 1 + 8 + 20 = 38 bytes
+        // - Transaction Data Hash Code (32 bytes) - hash over CDOL data
+        // Total: 1 + 8 + 1 + 8 + 32 = 50 bytes
 
         byte iccDynNumLen = (byte) 8;
-        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8 + 20); // len + DN + CID + AC + TDH
+        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8 + 32); // len + DN + CID + AC + TDH
         tmpBuffer[3] = iccDynamicDataLength;
 
         short offset = 4;
@@ -760,16 +774,16 @@ public class PaymentApplication extends EmvApplet {
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
         // DEBUG: Store the Transaction Data Hash output
-        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
-        offset += 20;
+        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 32);
+        offset += 32;
 
         // Trailer at end
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
 
-        // Compute SDAD hash
-        // Hash input: bytes 1 through (signedDataSize - 22) = format through padding
+        // Compute SDAD hash (SHA-256)
+        // Hash input: bytes 1 through (signedDataSize - 34) = format through padding
         //             + Unpredictable Number (9F37)
-        short checksumStartIndex = (short) (signedDataSize - 21);
+        short checksumStartIndex = (short) (signedDataSize - 33);
 
         shaMessageDigest.reset();
         // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)
@@ -810,38 +824,56 @@ public class PaymentApplication extends EmvApplet {
         EmvApplet.logAndThrow(ISO7816.SW_NO_ERROR);
     }
 
-    private void processGetResponse(APDU apdu, byte[] buf) {
-        if (pendingResponseLength <= 0) {
-            EmvApplet.logAndThrow(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+    /**
+     * TEST: Send 291 bytes of zeroes to isolate T=0 chaining issue.
+     * Sends first 256 bytes, stores remaining 35 in chunkBuffer, throws 6123.
+     */
+    private void testSend291Zeroes(APDU apdu, byte[] buf) {
+        // Fill tmpBuffer with test pattern (0xAA for visibility)
+        short totalLen = (short) 291;
+        for (short i = 0; i < totalLen; i++) {
+            tmpBuffer[i] = (byte) 0xAA;
         }
 
-        // Requested length from Le byte (P3)
-        short requestedLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-        if (requestedLength == 0) {
-            requestedLength = (short) 256; // Le=00 means 256 bytes
-        }
+        // First chunk: 256 bytes
+        short firstChunk = (short) 256;
+        short remaining = (short) (totalLen - firstChunk);  // 35 bytes
 
-        // Send up to requested length from pending data
-        short sendLength = (pendingResponseLength < requestedLength) ? pendingResponseLength : requestedLength;
-        if (sendLength > (short) 256) {
-            sendLength = (short) 256;
-        }
+        // Copy remaining bytes to chunkBuffer for GET RESPONSE
+        Util.arrayCopy(tmpBuffer, firstChunk, chunkBuffer, (short) 0, remaining);
+        pendingResponseLength = remaining;
 
+        // Send first 256 bytes
         apdu.setOutgoing();
-        apdu.setOutgoingLength(sendLength);
-        apdu.sendBytesLong(tmpBuffer, pendingResponseOffset, sendLength);
+        apdu.setOutgoingLength(firstChunk);
+        apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
 
-        pendingResponseOffset += sendLength;
-        pendingResponseLength -= sendLength;
+        // Throw 61xx to signal more data (35 = 0x23)
+        ISOException.throwIt((short) (0x6100 | remaining));
+    }
 
-        // If more data remaining, indicate with 61xx
-        if (pendingResponseLength > 0) {
-            short remaining = pendingResponseLength;
-            if (remaining > (short) 255) {
-                remaining = (short) 255;
-            }
-            ISOException.throwIt((short) (0x6100 | remaining));
+    private void processGetResponse(APDU apdu, byte[] buf) {
+        // Check if there's pending response data
+        if (pendingResponseLength <= 0) {
+            ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
         }
+
+        // Use setOutgoing to get Le and set up outgoing mode
+        short le = apdu.setOutgoing();
+        if (le == 0) {
+            le = 256;
+        }
+
+        // Calculate how much to send (min of Le and remaining)
+        short send = (le < pendingResponseLength) ? le : pendingResponseLength;
+
+        // Set the outgoing length and send from chunkBuffer
+        apdu.setOutgoingLength(send);
+        apdu.sendBytesLong(chunkBuffer, (short) 0, send);
+
+        // Clear pending state (all done)
+        pendingResponseOffset = 0;
+        pendingResponseLength = 0;
     }
 
     private void processGetData(APDU apdu, byte[] buf) {
@@ -914,7 +946,7 @@ public class PaymentApplication extends EmvApplet {
 
         tmpBuffer[0] = (byte) 0x6A;
         tmpBuffer[1] = (byte) 0x05;
-        tmpBuffer[2] = (byte) 0x01; // SHA-1 hash algo
+        tmpBuffer[2] = (byte) 0x02; // SHA-256 hash algo
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
 
         tmpBuffer[3] = (byte) tag9f4cDynamicNumber.length;
@@ -922,7 +954,7 @@ public class PaymentApplication extends EmvApplet {
 
         Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 4, (short) tmpBuffer[3]);
 
-        short checksumStartIndex = (short) (signedDataSize - 21);
+        short checksumStartIndex = (short) (signedDataSize - 33);
         shaMessageDigest.reset();
         shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));        
         shaMessageDigest.doFinal(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF), tmpBuffer, checksumStartIndex);
@@ -1133,6 +1165,18 @@ public class PaymentApplication extends EmvApplet {
                 return;
             case CMD_LIST_TAGS:
                 listStoredTags(apdu, buf);
+                return;
+            case CMD_DIAGNOSTIC_61XX:
+                // DIAGNOSTIC: Test if JCRE passes 61xx through correctly
+                // No data needed - just throw 61xx directly
+                // Store some dummy data for GET RESPONSE
+                tmpBuffer[0] = (byte) 0xAA;
+                tmpBuffer[1] = (byte) 0xBB;
+                tmpBuffer[2] = (byte) 0xCC;
+                pendingResponseOffset = (short) 0;
+                pendingResponseLength = (short) 3;
+                // Throw 61xx - should return SW=6103 if JCRE works correctly
+                ISOException.throwIt((short) 0x6103);
                 return;
             default:
                 break;

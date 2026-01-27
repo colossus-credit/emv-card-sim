@@ -907,8 +907,8 @@ public class ColossusPaymentApplicationTest {
         assertEquals((byte) 0x05, recovered[1], "Signed Data Format must be 0x05 (CDA)");
         System.out.println("  Signed Data Format 0x05: PASS");
 
-        assertEquals((byte) 0x01, recovered[2], "Hash Algorithm must be 0x01 (SHA-1)");
-        System.out.println("  Hash Algorithm 0x01 (SHA-1): PASS");
+        assertEquals((byte) 0x02, recovered[2], "Hash Algorithm must be 0x02 (SHA-256)");
+        System.out.println("  Hash Algorithm 0x02 (SHA-256): PASS");
 
         int ldd = recovered[3] & 0xFF;
         System.out.println("  ICC Dynamic Data Length (LDD): " + ldd);
@@ -946,24 +946,24 @@ public class ColossusPaymentApplicationTest {
 
         // Verify padding pattern (0xBB)
         int paddingStart = 4 + ldd;
-        int hashStart = recovered.length - 21;  // 20-byte hash + 1-byte trailer
+        int hashStart = recovered.length - 33;  // 32-byte hash (SHA-256) + 1-byte trailer
         for (int i = paddingStart; i < hashStart; i++) {
             assertEquals((byte) 0xBB, recovered[i], "Padding must be 0xBB at offset " + i);
         }
         System.out.println("  Padding pattern 0xBB: PASS");
 
         // Verify UN binding via hash
-        // Hash = SHA-1(Format through Pad || UN)
+        // Hash = SHA-256(Format through Pad || UN)
         byte[] un = new byte[] { (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, (byte) 0x01 };
         byte[] hashInput = new byte[hashStart - 1 + 4];
         System.arraycopy(recovered, 1, hashInput, 0, hashStart - 1);
         System.arraycopy(un, 0, hashInput, hashStart - 1, 4);
 
-        MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-        byte[] calculatedHash = sha1.digest(hashInput);
+        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+        byte[] calculatedHash = sha256.digest(hashInput);
 
-        byte[] embeddedHash = new byte[20];
-        System.arraycopy(recovered, hashStart, embeddedHash, 0, 20);
+        byte[] embeddedHash = new byte[32];
+        System.arraycopy(recovered, hashStart, embeddedHash, 0, 32);
 
         System.out.println("  Calculated hash: " + bytesToHex(calculatedHash));
         System.out.println("  Embedded hash:   " + bytesToHex(embeddedHash));
@@ -1303,6 +1303,172 @@ public class ColossusPaymentApplicationTest {
         System.out.println("\n=== GENERATE AC RESPONSE ===");
         System.out.println("Response (" + responseData.length + " bytes): " + bytesToHex(responseData));
         System.out.println("SW: " + String.format("%04X", sw));
+    }
+
+    @Test
+    @DisplayName("Test GENERATE AC returns full 291 bytes for CDA response")
+    public void testGenerateAcFullResponse291Bytes() throws Exception {
+        // Setup card
+        setupColossusCard();
+        setupRsa2048Key();
+        enableCdaMode();
+        setupColossusCdol();
+        setupColossusCardData();
+
+        // Add 9F4B to response template for CDA
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x03,
+            (byte) 0x0A,              // 10 bytes (5 tags * 2 bytes each)
+            (byte) 0x9F, (byte) 0x27,  // CID
+            (byte) 0x9F, (byte) 0x36,  // ATC
+            (byte) 0x9F, (byte) 0x26,  // AC
+            (byte) 0x9F, (byte) 0x10,  // IAD
+            (byte) 0x9F, (byte) 0x4B   // SDAD
+        });
+
+        // Send GPO first (required for GENERATE AC)
+        byte[] gpoCmd = new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02,
+            (byte) 0x83, (byte) 0x00
+        };
+        ResponseAPDU gpoResponse = SmartCard.transmitCommand(gpoCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) gpoResponse.getSW(), "GPO should succeed");
+
+        // Exact GENERATE AC command from terminal log:
+        // 80 AE 80 00 3A [58 bytes of CDOL data]
+        // P1=0x80 means ARQC (no explicit CDA bit, but AIP has CDA enabled)
+        byte[] cdolData = new byte[] {
+            // Data from terminal log (58 bytes):
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x01, (byte) 0x00,  // Amount Auth
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,  // Amount Other
+            (byte) 0x08, (byte) 0x40,                                                      // Terminal Country
+            (byte) 0x04, (byte) 0x10, (byte) 0x00, (byte) 0x00, (byte) 0x00,              // TVR
+            (byte) 0x08, (byte) 0x40,                                                      // Currency
+            (byte) 0x26, (byte) 0x01, (byte) 0x25,                                         // Date
+            (byte) 0x00,                                                                   // Type
+            (byte) 0x59, (byte) 0xC7, (byte) 0x5F, (byte) 0x08,                           // UN
+            // Terminal ID (8 bytes) - "12345678"
+            (byte) 0x31, (byte) 0x32, (byte) 0x33, (byte) 0x34,
+            (byte) 0x35, (byte) 0x36, (byte) 0x37, (byte) 0x38,
+            // Merchant ID (15 bytes) - spaces
+            (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20,
+            (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20,
+            (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20, (byte) 0x20,
+            // Acquirer ID (6 bytes)
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00
+        };
+
+        // Use extended APDU format for GENERATE AC
+        byte[] genAcCmd = new byte[7 + cdolData.length + 2];
+        genAcCmd[0] = (byte) 0x80;  // CLA
+        genAcCmd[1] = (byte) 0xAE;  // INS (GENERATE AC)
+        genAcCmd[2] = (byte) 0x80;  // P1 (ARQC, CDA from AIP)
+        genAcCmd[3] = (byte) 0x00;  // P2
+        genAcCmd[4] = (byte) 0x00;  // Extended length indicator
+        genAcCmd[5] = (byte) 0x00;  // Lc high byte
+        genAcCmd[6] = (byte) cdolData.length;  // Lc low byte (58)
+        System.arraycopy(cdolData, 0, genAcCmd, 7, cdolData.length);
+        genAcCmd[genAcCmd.length - 2] = (byte) 0x00;  // Le high
+        genAcCmd[genAcCmd.length - 1] = (byte) 0x00;  // Le low
+
+        System.out.println("Sending GENERATE AC command (58 bytes CDOL data)...");
+
+        ResponseAPDU response = SmartCard.transmitCommand(genAcCmd);
+        int sw = response.getSW();
+        System.out.println("Initial SW: " + String.format("%04X", sw));
+
+        // Collect full response (handle 61xx chaining OR incomplete 9000 response)
+        ByteArrayOutputStream fullResponse = new ByteArrayOutputStream();
+        fullResponse.write(response.getData());
+
+        // Handle explicit 61xx chaining
+        while ((sw & 0xFF00) == 0x6100) {
+            int remaining = sw & 0x00FF;
+            System.out.println("GET RESPONSE for " + remaining + " more bytes...");
+            byte[] getResponseCmd = new byte[] {
+                (byte) 0x00, (byte) 0xC0, (byte) 0x00, (byte) 0x00, (byte) remaining
+            };
+            response = SmartCard.transmitCommand(getResponseCmd);
+            fullResponse.write(response.getData());
+            sw = response.getSW();
+            System.out.println("GET RESPONSE SW: " + String.format("%04X", sw));
+        }
+
+        // Handle incomplete response with 9000 (some JCREs can't throw 61xx after sending data)
+        // Check if template header indicates more data is expected
+        byte[] currentData = fullResponse.toByteArray();
+        if (sw == 0x9000 && currentData.length >= 4 && currentData[0] == 0x77 && currentData[1] == (byte) 0x82) {
+            int expectedLen = ((currentData[2] & 0xFF) << 8) | (currentData[3] & 0xFF);
+            int expectedTotal = 4 + expectedLen; // header + content
+            int missing = expectedTotal - currentData.length;
+            while (missing > 0 && sw == 0x9000) {
+                int toFetch = Math.min(missing, 255);
+                System.out.println("GET RESPONSE for " + toFetch + " more bytes (incomplete template)...");
+                byte[] getResponseCmd = new byte[] {
+                    (byte) 0x00, (byte) 0xC0, (byte) 0x00, (byte) 0x00, (byte) toFetch
+                };
+                response = SmartCard.transmitCommand(getResponseCmd);
+                if (response.getData().length == 0) break; // No more data
+                fullResponse.write(response.getData());
+                sw = response.getSW();
+                System.out.println("GET RESPONSE SW: " + String.format("%04X", sw));
+                currentData = fullResponse.toByteArray();
+                missing = expectedTotal - currentData.length;
+            }
+        }
+
+        byte[] responseData = fullResponse.toByteArray();
+        System.out.println("\n=== GENERATE AC FULL RESPONSE ===");
+        System.out.println("Total response length: " + responseData.length + " bytes");
+        System.out.println("Final SW: " + String.format("%04X", sw));
+
+        // Verify success
+        assertTrue(sw == 0x9000 || (sw & 0xFF00) == 0x6100,
+            "GENERATE AC should succeed, got SW=" + String.format("%04X", sw));
+
+        // The expected response structure for CDA:
+        // - Template 77 header: 4 bytes (77 82 01 23)
+        // - 9F27 (CID): 4 bytes (9F 27 01 XX)
+        // - 9F36 (ATC): 5 bytes (9F 36 02 XX XX)
+        // - 9F26 (AC): 11 bytes (9F 26 08 XX...)
+        // - 9F10 (IAD): ~10 bytes (9F 10 07 XX...)
+        // - 9F4B (SDAD): 259 bytes (9F 4B 82 01 00 + 256 bytes)
+        // Total: ~293 bytes (but 291 is what the terminal log showed)
+
+        int expectedMinLength = 291;
+        assertTrue(responseData.length >= expectedMinLength,
+            "CDA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
+
+        // Verify template structure
+        if (responseData.length > 0) {
+            assertEquals((byte) 0x77, responseData[0], "Response must start with tag 0x77");
+
+            // Parse template length
+            int templateLen = 0;
+            int dataStart = 0;
+            if (responseData[1] == (byte) 0x82) {
+                templateLen = ((responseData[2] & 0xFF) << 8) | (responseData[3] & 0xFF);
+                dataStart = 4;
+            } else if (responseData[1] == (byte) 0x81) {
+                templateLen = responseData[2] & 0xFF;
+                dataStart = 3;
+            } else {
+                templateLen = responseData[1] & 0xFF;
+                dataStart = 2;
+            }
+
+            System.out.println("Template 77 length: " + templateLen + " bytes");
+            System.out.println("Data starts at offset: " + dataStart);
+            System.out.println("Expected total: " + (dataStart + templateLen) + " bytes");
+
+            // For RSA-2048 CDA, template content should be ~287 bytes
+            // (9F27:4 + 9F36:5 + 9F26:11 + 9F10:10 + 9F4B:259 = 289, plus some variation)
+            assertTrue(templateLen >= 280,
+                "Template content must be at least 280 bytes for RSA-2048 CDA, got " + templateLen);
+        }
+
+        System.out.println("\n=== TEST PASSED: Full 291+ byte response received ===");
     }
 }
 

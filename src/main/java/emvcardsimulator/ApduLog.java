@@ -13,7 +13,7 @@ public class ApduLog {
     private byte[] data;
     private byte   length;
 
-    public static short maxCount = 10;
+    public static short maxCount = 20;
     public static short count = 0;
 
     protected ApduLog(byte[] src, short srcOffset, byte length) {
@@ -51,9 +51,13 @@ public class ApduLog {
             return;
         }
 
-        if (src[srcOffset] == (byte) 0x80) {
-            // do not log internal commands
-            return;
+        // Only skip internal admin commands (80 01 through 80 0B), not EMV commands like 80 AE
+        if (src[srcOffset] == (byte) 0x80 && length >= (byte) 2) {
+            byte ins = src[(short)(srcOffset + 1)];
+            if (ins >= (byte) 0x01 && ins <= (byte) 0x0B) {
+                // Internal admin command - don't log
+                return;
+            }
         }
 
         new ApduLog(src, srcOffset, length);

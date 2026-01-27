@@ -5,6 +5,7 @@
 #
 
 set -e
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
@@ -32,6 +33,7 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 # Default values
 DEFAULT_RID="A000000951"
 DEFAULT_AID="0001"
+DEFAULT_CONTACTLESS_AID="1010"
 DEFAULT_BIN="66907500"
 DEFAULT_APP_LABEL="COLOSSUS"
 DEFAULT_EXPIRY="271231"
@@ -39,6 +41,7 @@ DEFAULT_EXPIRY="271231"
 # Configuration variables
 RID=""
 AID=""
+CONTACTLESS_AID=""
 KEY_ENC=""
 KEY_MAC=""
 KEY_DEK=""
@@ -55,6 +58,7 @@ ISSUER_EXP=""
 PSE_CAP=""
 PPSE_CAP=""
 PAYAPP_CAP=""
+PAYAPP_CONTACTLESS_CAP=""
 GEN_KEYS=false
 VERBOSE=false
 T0_MODE=false
@@ -240,6 +244,7 @@ parse_args() {
 apply_defaults() {
     [[ -z "$RID" ]] && RID="$DEFAULT_RID"
     [[ -z "$AID" ]] && AID="$DEFAULT_AID"
+    [[ -z "$CONTACTLESS_AID" ]] && CONTACTLESS_AID="$DEFAULT_CONTACTLESS_AID"
     [[ -z "$BIN" ]] && BIN="$DEFAULT_BIN"
 }
 
@@ -300,7 +305,7 @@ locate_cap_files() {
         fi
     fi
 
-    # Payment App CAP
+    # Payment App CAP (Contact)
     if [[ -z "$PAYAPP_CAP" ]]; then
         if [[ -f "${BUILD_DIR}/card/paymentapp.cap" ]]; then
             PAYAPP_CAP="${BUILD_DIR}/card/paymentapp.cap"
@@ -308,8 +313,16 @@ locate_cap_files() {
         fi
     fi
 
+    # Payment App Contactless CAP
+    if [[ -z "$PAYAPP_CONTACTLESS_CAP" ]]; then
+        if [[ -f "${BUILD_DIR}/card/paymentapp_contactless.cap" ]]; then
+            PAYAPP_CONTACTLESS_CAP="${BUILD_DIR}/card/paymentapp_contactless.cap"
+            log_info "Found Contactless Payment App CAP: $PAYAPP_CONTACTLESS_CAP"
+        fi
+    fi
+
     # If any is missing, offer to build
-    if [[ -z "$PSE_CAP" || -z "$PPSE_CAP" || -z "$PAYAPP_CAP" ]]; then
+    if [[ -z "$PSE_CAP" || -z "$PPSE_CAP" || -z "$PAYAPP_CAP" || -z "$PAYAPP_CONTACTLESS_CAP" ]]; then
         log_warn "CAP files not found in build/card/"
 
         read -p "Would you like to build the CAP files? (y/n) " -n 1 -r
@@ -338,6 +351,9 @@ locate_cap_files() {
             if [[ -f "${BUILD_DIR}/card/paymentapp.cap" ]]; then
                 PAYAPP_CAP="${BUILD_DIR}/card/paymentapp.cap"
             fi
+            if [[ -f "${BUILD_DIR}/card/paymentapp_contactless.cap" ]]; then
+                PAYAPP_CONTACTLESS_CAP="${BUILD_DIR}/card/paymentapp_contactless.cap"
+            fi
         fi
     fi
 
@@ -348,6 +364,10 @@ locate_cap_files() {
     fi
     if [[ -z "$PAYAPP_CAP" || ! -f "$PAYAPP_CAP" ]]; then
         log_error "Payment App CAP file not found"
+        exit 1
+    fi
+    if [[ -z "$PAYAPP_CONTACTLESS_CAP" || ! -f "$PAYAPP_CONTACTLESS_CAP" ]]; then
+        log_error "Contactless Payment App CAP file not found"
         exit 1
     fi
 
@@ -543,8 +563,15 @@ load_cap_files() {
         prompt_card_cycle "Installed PPSE CAP"
     fi
 
-    log_info "Loading Payment App: $PAYAPP_CAP"
+    log_info "Loading Payment App (Contact): $PAYAPP_CAP"
     $gp_cmd --force --install "$PAYAPP_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    prompt_card_cycle "Installed Payment App CAP"
+
+    if [[ -n "$PAYAPP_CONTACTLESS_CAP" && -f "$PAYAPP_CONTACTLESS_CAP" ]]; then
+        log_info "Loading Payment App (Contactless): $PAYAPP_CONTACTLESS_CAP"
+        $gp_cmd --force --install "$PAYAPP_CONTACTLESS_CAP" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+    fi
 
     log_success "CAP files loaded"
 }
@@ -656,15 +683,19 @@ personalize_card() {
     gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
     gp_cmd+=" -a 8003010C${full_dir_entry_len}${full_dir_entry}"
 
-    # PPSE personalization (Contactless) - new simplified applet
+    # PPSE personalization (Contactless) - points to contactless payment app
     # FCI structure: 6F -> 84 (PPSE AID), A5 -> BF0C -> 61 (directory entry)
     local ppse_aid="325041592E5359532E4444463031"
+    local full_contactless_aid="${RID}${CONTACTLESS_AID}"
+    local full_contactless_aid_len=$(printf '%02X' $((${#full_contactless_aid} / 2)))
+    local contactless_dir_entry="4F${full_contactless_aid_len}${full_contactless_aid}50${app_label_len}${app_label_hex}870101"
+    local contactless_dir_entry_len=$(printf '%02X' $((${#contactless_dir_entry} / 2)))
     gp_cmd+=" -a 00A404000E${ppse_aid}"
     gp_cmd+=" -a 8005000000"
-    # Set directory entry content (applet builds FCI automatically)
-    gp_cmd+=" -a 80010061${dir_entry_len}${dir_entry}"
+    # Set directory entry content pointing to contactless AID
+    gp_cmd+=" -a 80010061${contactless_dir_entry_len}${contactless_dir_entry}"
 
-    # Payment app selection and base personalization
+    # Contact Payment app selection and base personalization
     gp_cmd+=" -a 00A4040007${full_aid}"
     gp_cmd+=" -a 8005000000"
     gp_cmd+=" -a 80040003020001"
@@ -750,6 +781,63 @@ personalize_card() {
     # Byte 2: 00 = No special processing flags
     gp_cmd+=" -a 80019F6C028000"
 
+    # Contactless Payment app personalization (same data, different AID)
+    gp_cmd+=" -a 00A4040007${full_contactless_aid}"
+    gp_cmd+=" -a 8005000000"
+    gp_cmd+=" -a 80040003020001"
+    gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
+    gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+    gp_cmd+=" -a 8001008F0192"
+    gp_cmd+=" -a 80019F320103"
+    gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
+    gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
+    gp_cmd+=" -a 80019F470103"
+    gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
+    gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
+    gp_cmd+=" -a 8004000102123400"
+    gp_cmd+=" -a 8004000202007700"
+    gp_cmd+=" -a 800200010600829F6C0094"
+    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 800200050400500087"
+    gp_cmd+=" -a 8002000404008400A5"
+    gp_cmd+=" -a 8003020C0600575F209F1F"
+    gp_cmd+=" -a 8003011408008F00929F329F47"
+    gp_cmd+=" -a 80030214020090"
+    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
+    gp_cmd+=" -a 8003021C02008E"
+    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
+    gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 80019F36020001"
+    gp_cmd+=" -a 8001008407${full_contactless_aid}"
+    gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
+    gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
+    gp_cmd+=" -a 80015F340101"
+    gp_cmd+=" -a 80010057${track2_len}${track2}"
+    gp_cmd+=" -a 80010050${app_label_len}${app_label_hex}"
+    gp_cmd+=" -a 800100870101"
+    gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
+    gp_cmd+=" -a 80019F08020001"
+    gp_cmd+=" -a 80015F2503240101"
+    gp_cmd+=" -a 80015F28020840"
+    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80010082023101"
+    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80019F4A0182"
+    gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
+    gp_cmd+=" -a 80015F30020201"
+    gp_cmd+=" -a 80019F42020840"
+    gp_cmd+=" -a 80019F440102"
+    gp_cmd+=" -a 80019F49039F3704"
+    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 80019F0D05FC688C9800"
+    gp_cmd+=" -a 80019F0E050000000000"
+    gp_cmd+=" -a 80019F0F05FC68FC9800"
+    gp_cmd+=" -a 80019F100706010A03A4A002"
+    gp_cmd+=" -a 80019F6C028000"
+
     log_info "Sending personalization APDUs..."
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
@@ -799,7 +887,8 @@ personalize_pse() {
 personalize_ppse() {
     log_step "Personalizing PPSE (Contactless)..."
 
-    local full_aid="${RID}${AID}"
+    # Use contactless AID for PPSE directory
+    local full_contactless_aid="${RID}${CONTACTLESS_AID}"
     local gp_cmd=$(build_gp_cmd)
     gp_cmd+=" -d"
 
@@ -810,8 +899,8 @@ personalize_ppse() {
     local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
 
     # Directory entry content: 4F <AID>, 50 <label>, 87 <priority>
-    local full_aid_len=$(printf '%02X' $((${#full_aid} / 2)))
-    local dir_entry_content="4F${full_aid_len}${full_aid}50${app_label_len}${app_label_hex}870101"
+    local full_aid_len=$(printf '%02X' $((${#full_contactless_aid} / 2)))
+    local dir_entry_content="4F${full_aid_len}${full_contactless_aid}50${app_label_len}${app_label_hex}870101"
     local dir_entry_content_len=$(printf '%02X' $((${#dir_entry_content} / 2)))
 
     # PPSE personalization APDUs (new simplified applet)
@@ -1146,6 +1235,209 @@ personalize_payapp() {
     personalize_payapp_large
 }
 
+# Personalize Contactless Payment Application - small APDUs
+personalize_payapp_contactless_small() {
+    log_step "Personalizing Contactless Payment Application (basic tags)..."
+
+    local full_aid="${RID}${CONTACTLESS_AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    # Convert values to hex
+    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
+    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+    local cardholder_name="${DEFAULT_APP_LABEL}/CARDHOLDER "
+    local cardholder_hex=$(echo -n "$cardholder_name" | xxd -p | tr -d '\n')
+    local cardholder_len=$(printf '%02X' ${#cardholder_name})
+
+    # PAN formatting
+    local pan_hex="$PAN"
+    if (( ${#PAN} % 2 == 1 )); then
+        pan_hex="${PAN}F"
+    fi
+    local pan_bytes=$((${#pan_hex} / 2))
+    local pan_len_hex=$(printf '%02X' $pan_bytes)
+
+    # Track 2
+    local track2="${pan_hex}D${DEFAULT_EXPIRY:0:4}2201000000000000F"
+    track2="${track2:0:38}"
+    local track2_len=$(printf '%02X' $((${#track2} / 2)))
+
+    # ICC remainder (small - usually <42 bytes)
+    local icc_rem_hex=$(xxd -p "$ICC_REM" | tr -d '\n')
+    local icc_rem_size=$(wc -c < "$ICC_REM" | tr -d ' ')
+    local icc_rem_len=$(printf '%02X' $icc_rem_size)
+
+    # Issuer remainder (small)
+    local issuer_rem_hex=$(xxd -p "$ISSUER_REM" | tr -d '\n')
+    local issuer_rem_size=$(wc -c < "$ISSUER_REM" | tr -d ' ')
+    local issuer_rem_len=$(printf '%02X' $issuer_rem_size)
+
+    # Payment app selection and factory reset
+    gp_cmd+=" -a 00A4040007${full_aid}"
+    gp_cmd+=" -a 8005000000"
+
+    # Settings (small)
+    gp_cmd+=" -a 80040003020001"
+    gp_cmd+=" -a 8004000102123400"
+    gp_cmd+=" -a 8004000202007700"
+
+    # Templates
+    gp_cmd+=" -a 800200010600829F6C0094"
+    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 800200050400500087"
+    gp_cmd+=" -a 8002000404008400A5"
+    gp_cmd+=" -a 8003020C0600575F209F1F"
+    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
+    gp_cmd+=" -a 8003021C02008E"
+    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
+
+    # Small EMV tags - CRITICAL: AIP and AFL
+    gp_cmd+=" -a 80010082023101"
+    gp_cmd+=" -a 800100940C080202001001020018010401"
+
+    # Other small tags
+    gp_cmd+=" -a 80019F36020001"
+    gp_cmd+=" -a 8001008407${full_aid}"
+    gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
+    gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
+    gp_cmd+=" -a 80015F340101"
+    gp_cmd+=" -a 80010057${track2_len}${track2}"
+    gp_cmd+=" -a 80010050${app_label_len}${app_label_hex}"
+    gp_cmd+=" -a 800100870101"
+    gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
+    gp_cmd+=" -a 80019F08020001"
+    gp_cmd+=" -a 80015F2503240101"
+    gp_cmd+=" -a 80015F28020840"
+    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80019F4A0182"
+    gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
+    gp_cmd+=" -a 80015F30020201"
+    gp_cmd+=" -a 80019F42020840"
+    gp_cmd+=" -a 80019F440102"
+    gp_cmd+=" -a 80019F49039F3704"
+    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 80019F0D05FC688C9800"
+    gp_cmd+=" -a 80019F0E050000000000"
+    gp_cmd+=" -a 80019F0F05FC68FC9800"
+    gp_cmd+=" -a 80019F100706010A03A4A002"
+    gp_cmd+=" -a 80019F6C028000"
+
+    # Small certificate-related tags
+    gp_cmd+=" -a 8001008F0192"
+    gp_cmd+=" -a 80019F320103"
+    gp_cmd+=" -a 80019F470103"
+    gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
+    gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
+
+    log_info "Sending basic Contactless Payment App APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "Contactless Payment Application basic personalization complete"
+}
+
+# Personalize Contactless Payment Application - large APDUs (RSA keys, certificates)
+personalize_payapp_contactless_large() {
+    log_step "Personalizing Contactless Payment Application (certificates/keys)..."
+
+    local full_aid="${RID}${CONTACTLESS_AID}"
+    local gp_cmd=$(build_gp_cmd)
+    gp_cmd+=" -d"
+
+    # Certificate data
+    local icc_cert_hex=$(xxd -p "$ICC_CERT" | tr -d '\n')
+    local icc_cert_size=$(wc -c < "$ICC_CERT" | tr -d ' ')
+
+    local icc_mod_hex=$(xxd -p "$ICC_MODULUS" | tr -d '\n')
+    local icc_mod_size=$(wc -c < "$ICC_MODULUS" | tr -d ' ')
+
+    local icc_priv_exp=$(openssl rsa -in "$ICC_PRIVKEY" -noout -text 2>/dev/null | awk '/^privateExponent:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag' | tr -d ' :\n' | sed 's/^0*//')
+    if (( ${#icc_priv_exp} % 2 == 1 )); then
+        icc_priv_exp="0${icc_priv_exp}"
+    fi
+    local mod_size_hex=$(( icc_mod_size * 2 ))
+    while (( ${#icc_priv_exp} < mod_size_hex )); do
+        icc_priv_exp="0${icc_priv_exp}"
+    done
+    local icc_priv_size=$((${#icc_priv_exp} / 2))
+
+    local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
+    local issuer_cert_size=$(wc -c < "$ISSUER_CERT" | tr -d ' ')
+
+    # Select payment app
+    gp_cmd+=" -a 00A4040007${full_aid}"
+
+    # Certificate-related templates
+    gp_cmd+=" -a 8003011408008F00929F329F47"
+    gp_cmd+=" -a 80030214020090"
+    gp_cmd+=" -a 8003041C029F46"
+
+    if $T0_MODE; then
+        # T=0 mode: use chunked transfer
+        log_info "Using chunked transfer for T=0 protocol..."
+
+        local mod_apdus=$(generate_chunked_settings_apdus "0004" "$icc_mod_hex")
+        gp_cmd+="$mod_apdus"
+
+        local exp_apdus=$(generate_chunked_settings_apdus "0005" "$icc_priv_exp")
+        gp_cmd+="$exp_apdus"
+
+        local issuer_apdus=$(generate_chunked_apdus "0090" "$issuer_cert_hex")
+        gp_cmd+="$issuer_apdus"
+
+        local icc_apdus=$(generate_chunked_apdus "9F46" "$icc_cert_hex")
+        gp_cmd+="$icc_apdus"
+    else
+        # T=1 mode: use extended APDUs
+        local icc_cert_lc
+        if (( icc_cert_size > 255 )); then
+            icc_cert_lc=$(printf '00%04X' $icc_cert_size)
+        else
+            icc_cert_lc=$(printf '%02X' $icc_cert_size)
+        fi
+
+        local icc_mod_len
+        if (( icc_mod_size >= 256 )); then
+            icc_mod_len=$(printf '00%04X' $icc_mod_size)
+        else
+            icc_mod_len=$(printf '%02X' $icc_mod_size)
+        fi
+
+        local icc_priv_len
+        if (( icc_priv_size >= 256 )); then
+            icc_priv_len=$(printf '00%04X' $icc_priv_size)
+        else
+            icc_priv_len=$(printf '%02X' $icc_priv_size)
+        fi
+
+        local issuer_cert_lc
+        if (( issuer_cert_size > 255 )); then
+            issuer_cert_lc=$(printf '00%04X' $issuer_cert_size)
+        else
+            issuer_cert_lc=$(printf '%02X' $issuer_cert_size)
+        fi
+
+        gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
+        gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+        gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
+        gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
+    fi
+
+    log_info "Sending certificate/key APDUs..."
+    eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
+
+    log_success "Contactless Payment Application certificate personalization complete"
+}
+
+# Personalize Contactless Payment Application - combined
+personalize_payapp_contactless() {
+    personalize_payapp_contactless_small
+    personalize_payapp_contactless_large
+}
+
 # Validate certificates
 validate_certificates() {
     log_step "Validating certificate chain..."
@@ -1181,11 +1473,12 @@ print_summary() {
     echo -e "${BOLD}       Personalization Summary          ${NC}"
     echo -e "${BOLD}========================================${NC}"
     echo ""
-    echo -e "  ${CYAN}RID:${NC}        $RID"
-    echo -e "  ${CYAN}AID:${NC}        ${RID}${AID}"
-    echo -e "  ${CYAN}PAN:${NC}        $PAN"
-    echo -e "  ${CYAN}Expiry:${NC}     ${DEFAULT_EXPIRY:0:2}/${DEFAULT_EXPIRY:2:2}/${DEFAULT_EXPIRY:4:2}"
-    echo -e "  ${CYAN}Label:${NC}      $DEFAULT_APP_LABEL"
+    echo -e "  ${CYAN}RID:${NC}              $RID"
+    echo -e "  ${CYAN}Contact AID:${NC}      ${RID}${AID}"
+    echo -e "  ${CYAN}Contactless AID:${NC}  ${RID}${CONTACTLESS_AID}"
+    echo -e "  ${CYAN}PAN:${NC}              $PAN"
+    echo -e "  ${CYAN}Expiry:${NC}           ${DEFAULT_EXPIRY:0:2}/${DEFAULT_EXPIRY:2:2}/${DEFAULT_EXPIRY:4:2}"
+    echo -e "  ${CYAN}Label:${NC}            $DEFAULT_APP_LABEL"
     echo ""
     echo -e "  ${CYAN}Config files:${NC}"
     echo -e "    Verifone: ${BUILD_DIR}/config/verifone/"
@@ -1245,13 +1538,23 @@ main() {
 
         prompt_card_cycle "Personalized PPSE"
 
-        # Personalize Payment Application - small APDUs first (AIP, AFL, templates)
+        # Personalize Contact Payment Application - small APDUs first (AIP, AFL, templates)
         personalize_payapp_small
 
-        prompt_card_cycle "Personalized Payment App (basic tags)"
+        prompt_card_cycle "Personalized Contact Payment App (basic tags)"
 
-        # Personalize Payment Application - large APDUs (certificates, RSA keys)
+        # Personalize Contact Payment Application - large APDUs (certificates, RSA keys)
         personalize_payapp_large
+
+        prompt_card_cycle "Personalized Contact Payment App (certificates)"
+
+        # Personalize Contactless Payment Application - small APDUs
+        personalize_payapp_contactless_small
+
+        prompt_card_cycle "Personalized Contactless Payment App (basic tags)"
+
+        # Personalize Contactless Payment Application - large APDUs
+        personalize_payapp_contactless_large
     else
         # T=1 mode: original flow with multiple gp.jar calls in sequence
 
