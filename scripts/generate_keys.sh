@@ -16,14 +16,14 @@ CAPK_KEY_SIZE_BYTES=$((CAPK_KEY_SIZE / 8))  # 248 bytes
 ISSUER_KEY_SIZE=1984
 ISSUER_KEY_SIZE_BYTES=$((ISSUER_KEY_SIZE / 8))  # 248 bytes
 
-ICC_KEY_SIZE=1024
-ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 128 bytes
+ICC_KEY_SIZE=1768
+ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 221 bytes
 
 # Certificate math (from spec):
 # Issuer cert (90) = CAPK modulus len = 248 bytes
 # Issuer remainder (92) = Issuer modulus - (CAPK - 36) = 248 - 212 = 36 bytes
 # ICC cert (9F46) = Issuer modulus len = 248 bytes
-# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 128 - 206 = 0 bytes (fits in cert)
+# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 221 - 206 = 15 bytes
 
 # Default values
 DEFAULT_RID="A000000951"
