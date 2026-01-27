@@ -16,14 +16,14 @@ CAPK_KEY_SIZE_BYTES=$((CAPK_KEY_SIZE / 8))  # 248 bytes
 ISSUER_KEY_SIZE=1984
 ISSUER_KEY_SIZE_BYTES=$((ISSUER_KEY_SIZE / 8))  # 248 bytes
 
-ICC_KEY_SIZE=2048
-ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 256 bytes
+ICC_KEY_SIZE=1024
+ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 128 bytes
 
 # Certificate math (from spec):
 # Issuer cert (90) = CAPK modulus len = 248 bytes
 # Issuer remainder (92) = Issuer modulus - (CAPK - 36) = 248 - 212 = 36 bytes
 # ICC cert (9F46) = Issuer modulus len = 248 bytes
-# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 256 - 206 = 50 bytes
+# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 128 - 206 = 0 bytes (fits in cert)
 
 # Default values
 DEFAULT_RID="A000000951"
@@ -272,29 +272,32 @@ generate_icc() {
     local serial="000001"
     local hash_algo="01"  # SHA-1
     local pk_algo="01"    # RSA
-    # EMV spec: PK length in bytes (256 = 0x00 mod 256, but we use actual value for clarity)
-    # For RSA-2048 (256 bytes), PK length byte should be 0x00 per EMV spec (mod 256)
-    local pk_len="00"
+    # EMV spec: PK length in bytes mod 256
+    local icc_modulus_len_bytes=$((${#icc_modulus_hex} / 2))
+    local pk_len=$(printf '%02X' $((icc_modulus_len_bytes % 256)))
     local pk_exp_len="01"
 
     # Calculate how much of ICC public key fits in certificate
     # Overhead: Header(1) + Format(1) + PAN(10) + Expiry(2) + Serial(3) + HashAlgo(1) + PKAlgo(1) + PKLen(1) + PKExpLen(1) + Hash(20) + Trailer(1) = 42
     local pk_in_cert_len=$((issuer_modulus_len - 42))  # 248 - 42 = 206 bytes
-    local icc_modulus_len_bytes=$((${#icc_modulus_hex} / 2))
 
-    local remainder_len=$((icc_modulus_len_bytes - pk_in_cert_len))  # 256 - 206 = 50 bytes
-    log_info "ICC cert: ${pk_in_cert_len} bytes in cert, ${remainder_len} bytes in remainder"
-
-    # Get the portion of ICC modulus that goes in certificate (leftmost 206 bytes)
-    local pk_in_cert="${icc_modulus_hex:0:$((pk_in_cert_len * 2))}"
-
-    # No padding needed since ICC modulus (256) > space available (206)
+    local remainder_len=0
     local padding=""
-
-    # Get remainder (rightmost 50 bytes) and exponent
+    local pk_in_cert=""
     local remainder_hex=""
-    if (( remainder_len > 0 )); then
+
+    if (( icc_modulus_len_bytes > pk_in_cert_len )); then
+        # ICC modulus larger than space: use leftmost bytes, remainder gets the rest
+        remainder_len=$((icc_modulus_len_bytes - pk_in_cert_len))
+        pk_in_cert="${icc_modulus_hex:0:$((pk_in_cert_len * 2))}"
         remainder_hex="${icc_modulus_hex:$((pk_in_cert_len * 2))}"
+        log_info "ICC cert: ${pk_in_cert_len} bytes in cert, ${remainder_len} bytes in remainder"
+    else
+        # ICC modulus fits in cert: use full modulus + BB padding
+        local padding_len=$((pk_in_cert_len - icc_modulus_len_bytes))
+        pk_in_cert="${icc_modulus_hex}"
+        padding=$(printf 'BB%.0s' $(seq 1 $padding_len))
+        log_info "ICC cert: ${icc_modulus_len_bytes} bytes in cert, ${padding_len} bytes padding, no remainder"
     fi
     local exponent_hex="03"  # Standard EMV exponent
 

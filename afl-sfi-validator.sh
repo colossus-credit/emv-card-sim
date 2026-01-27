@@ -3,8 +3,39 @@
 # AFL/SFI Validator Script - Works with any EMV card
 # Sends all commands in a single gp.jar session to avoid card reset issues
 #
+# Usage:
+#   ./afl-sfi-validator.sh           # Contact mode (PSE)
+#   ./afl-sfi-validator.sh --ppse    # Contactless mode (PPSE)
+#   ./afl-sfi-validator.sh -a AID    # Specify AID directly
+#
 
 set -e
+
+# Show help
+show_help() {
+    echo "AFL/SFI Validator - EMV Card Record Reader"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --ppse, -p       Use PPSE (2PAY.SYS.DDF01) for contactless"
+    echo "  --aid, -a AID    Specify AID directly (hex string)"
+    echo "  --help, -h       Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                           # Contact (PSE) mode"
+    echo "  $0 --ppse                    # Contactless (PPSE) mode"
+    echo "  $0 -a A0000009511010         # Direct AID selection"
+    echo ""
+    exit 0
+}
+
+# Check for help flag early
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        show_help
+    fi
+done
 
 # Function to read lines into an array (compatible with bash 3.x on macOS)
 read_lines_into_array() {
@@ -224,19 +255,53 @@ if [ ! -f "$GP_JAR" ]; then
     exit 1
 fi
 
-# Allow AID override via command line
-OVERRIDE_AID="$1"
+# Parse command line arguments
+OVERRIDE_AID=""
+USE_PPSE=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ppse|-p)
+            USE_PPSE=true
+            shift
+            ;;
+        --aid|-a)
+            OVERRIDE_AID="$2"
+            shift 2
+            ;;
+        *)
+            # Legacy: first positional arg is AID
+            if [ -z "$OVERRIDE_AID" ]; then
+                OVERRIDE_AID="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+echo "Mode: $(if $USE_PPSE; then echo 'Contactless (PPSE)'; else echo 'Contact (PSE)'; fi)"
+echo ""
 
 # ============================================
-# PHASE 1: Discover AID from PSE
+# PHASE 1: Discover AID from PSE or PPSE
 # ============================================
 echo -e "${CYAN}Phase 1: Application Discovery${NC}"
 echo ""
 
-# Send PSE select + read record in one session
-echo "Selecting PSE and reading directory..."
+# PSE AID: 1PAY.SYS.DDF01 (contact)
+# PPSE AID: 2PAY.SYS.DDF01 (contactless)
+if $USE_PPSE; then
+    DIRECTORY_AID="325041592E5359532E4444463031"  # 2PAY.SYS.DDF01
+    DIRECTORY_NAME="PPSE"
+else
+    DIRECTORY_AID="315041592E5359532E4444463031"  # 1PAY.SYS.DDF01
+    DIRECTORY_NAME="PSE"
+fi
+
+# Send directory select + read record in one session
+echo "Selecting $DIRECTORY_NAME and reading directory..."
 PHASE1_OUTPUT=$(java -jar "$GP_JAR" -d \
-    -a "00A404000E315041592E5359532E444446303100" \
+    -a "00A404000E${DIRECTORY_AID}00" \
     -a "00B2010C00" \
     2>&1)
 
@@ -248,43 +313,57 @@ if [ ${#RESPONSES[@]} -lt 1 ]; then
     exit 1
 fi
 
-# Parse PSE SELECT response
-PSE_LINE="${RESPONSES[0]}"
-PSE_FULL=$(parse_response "$PSE_LINE")
-PSE_SW="${PSE_FULL: -4}"
-PSE_DATA="${PSE_FULL:0:${#PSE_FULL}-4}"
+# Parse directory SELECT response
+DIR_LINE="${RESPONSES[0]}"
+DIR_FULL=$(parse_response "$DIR_LINE")
+DIR_SW="${DIR_FULL: -4}"
+DIR_DATA="${DIR_FULL:0:${#DIR_FULL}-4}"
 
-echo "PSE SELECT SW: $PSE_SW"
+echo "$DIRECTORY_NAME SELECT SW: $DIR_SW"
 
 SELECTED_AID=""
 
-if [ "$PSE_SW" == "9000" ]; then
-    echo -e "${GREEN}PSE Selected successfully${NC}"
+if [ "$DIR_SW" == "9000" ]; then
+    echo -e "${GREEN}$DIRECTORY_NAME Selected successfully${NC}"
 
-    # Parse PSE READ RECORD response
-    if [ ${#RESPONSES[@]} -ge 2 ]; then
-        REC_LINE="${RESPONSES[1]}"
-        REC_FULL=$(parse_response "$REC_LINE")
-        REC_SW="${REC_FULL: -4}"
-        REC_DATA="${REC_FULL:0:${#REC_FULL}-4}"
+    # For PPSE, the directory entry is in the SELECT response (FCI), not a separate record
+    if $USE_PPSE; then
+        echo ""
+        echo "$DIRECTORY_NAME FCI contents:"
+        parse_tlv "$DIR_DATA" "  "
 
-        echo "PSE Record SW: $REC_SW"
-
-        if [ "$REC_SW" == "9000" ]; then
+        # Extract AID from directory entry (tag 4F inside BF0C/61)
+        SELECTED_AID=$(extract_tag "$DIR_DATA" "4F")
+        if [ -n "$SELECTED_AID" ]; then
             echo ""
-            echo "PSE Record contents:"
-            parse_tlv "$REC_DATA" "  "
+            echo -e "${GREEN}Found AID: $SELECTED_AID${NC}"
+        fi
+    else
+        # Parse PSE READ RECORD response
+        if [ ${#RESPONSES[@]} -ge 2 ]; then
+            REC_LINE="${RESPONSES[1]}"
+            REC_FULL=$(parse_response "$REC_LINE")
+            REC_SW="${REC_FULL: -4}"
+            REC_DATA="${REC_FULL:0:${#REC_FULL}-4}"
 
-            # Extract AID from directory entry (tag 4F inside 61)
-            SELECTED_AID=$(extract_tag "$REC_DATA" "4F")
-            if [ -n "$SELECTED_AID" ]; then
+            echo "$DIRECTORY_NAME Record SW: $REC_SW"
+
+            if [ "$REC_SW" == "9000" ]; then
                 echo ""
-                echo -e "${GREEN}Found AID: $SELECTED_AID${NC}"
+                echo "$DIRECTORY_NAME Record contents:"
+                parse_tlv "$REC_DATA" "  "
+
+                # Extract AID from directory entry (tag 4F inside 61)
+                SELECTED_AID=$(extract_tag "$REC_DATA" "4F")
+                if [ -n "$SELECTED_AID" ]; then
+                    echo ""
+                    echo -e "${GREEN}Found AID: $SELECTED_AID${NC}"
+                fi
             fi
         fi
     fi
 else
-    echo "PSE not available, will try common AIDs"
+    echo "$DIRECTORY_NAME not available, will try common AIDs"
 fi
 
 # If no AID from PSE, try common AIDs
@@ -297,15 +376,29 @@ if [ -z "$SELECTED_AID" ]; then
         echo "Trying common AIDs..."
 
         # Build command to try all common AIDs
-        COMMON_AIDS=(
-            "A0000000031010"    # Visa Credit/Debit
-            "A0000000032010"    # Visa Electron
-            "A0000000041010"    # Mastercard Credit/Debit
-            "A0000000043060"    # Maestro
-            "A0000000651010"    # JCB
-            "A000000025010104"  # Amex
-            "A0000009510001"    # COLOSSUS
-        )
+        if $USE_PPSE; then
+            # Contactless AIDs
+            COMMON_AIDS=(
+                "A0000009511010"    # COLOSSUS Contactless
+                "A0000000031010"    # Visa Credit/Debit
+                "A0000000032010"    # Visa Electron
+                "A0000000041010"    # Mastercard Credit/Debit
+                "A0000000043060"    # Maestro
+                "A0000000651010"    # JCB
+                "A000000025010104"  # Amex
+            )
+        else
+            # Contact AIDs
+            COMMON_AIDS=(
+                "A0000009510001"    # COLOSSUS Contact
+                "A0000000031010"    # Visa Credit/Debit
+                "A0000000032010"    # Visa Electron
+                "A0000000041010"    # Mastercard Credit/Debit
+                "A0000000043060"    # Maestro
+                "A0000000651010"    # JCB
+                "A000000025010104"  # Amex
+            )
+        fi
 
         GP_ARGS=""
         for aid in "${COMMON_AIDS[@]}"; do

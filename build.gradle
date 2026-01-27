@@ -23,6 +23,13 @@ if (!project.hasProperty("paymentapp_cap_aid")) {
 if (!project.hasProperty("paymentapp_applet_aid")) {
     ext.paymentapp_applet_aid = "A0000009510001"
 }
+// Contactless payment app (same code, different AID for T=1 protocol)
+if (!project.hasProperty("paymentapp_contactless_cap_aid")) {
+    ext.paymentapp_contactless_cap_aid = "A000000951100000"
+}
+if (!project.hasProperty("paymentapp_contactless_applet_aid")) {
+    ext.paymentapp_contactless_applet_aid = "A0000009511010"
+}
 
 // 3.1.0 targeting does not work
 /*if (jc_version == "3.1.0") {
@@ -260,6 +267,20 @@ task cap {
                 classes: "build/classes/java/main",
                 aid: paymentapp_cap_aid) {
                     applet (class: 'emvcardsimulator.PaymentApplication', aid: paymentapp_applet_aid)
+            }
+        }
+
+        // Contactless payment app (same PaymentApplication class, different AID for T=1 protocol)
+        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+            cap (
+                package: 'emvcardsimulator',
+                version: '0.1',
+                output: 'build/card/paymentapp_contactless.cap',
+                jca: 'build/card/paymentapp_contactless.jca',
+                export: 'build/card/paymentapp_contactless_export',
+                classes: "build/classes/java/main",
+                aid: paymentapp_contactless_cap_aid) {
+                    applet (class: 'emvcardsimulator.PaymentApplication', aid: paymentapp_contactless_applet_aid)
             }
         }
     }

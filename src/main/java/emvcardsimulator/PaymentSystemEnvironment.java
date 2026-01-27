@@ -50,6 +50,9 @@ public class PaymentSystemEnvironment extends EmvApplet {
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
+        // Clear old logs at start of new transaction (rolling logs)
+        ApduLog.clear();
+        
         // Check if AID (tag 84) exists in the ICC
         if (EmvTag.findTag((short) 0x84) != null) {
             if (tagBf0cFci != null) {

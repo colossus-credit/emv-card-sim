@@ -52,6 +52,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected static final short CMD_LIST_TAGS                 = (short) 0x8008;
     protected static final short CMD_SET_EMV_TAG_CHUNKED       = (short) 0x8009;
     protected static final short CMD_SET_SETTINGS_CHUNKED      = (short) 0x800A;
+    protected static final short CMD_DIAGNOSTIC_61XX           = (short) 0x800B;
     protected static final short CMD_SELECT = (short) 0x00A4;
     protected static final short CMD_READ_RECORD = (short) 0x00B2;
     protected static final short CMD_DDA = (short) 0x0088;
@@ -379,41 +380,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
         }
 
-        // For responses <= 255 bytes, use original EmvTag-based approach
-        if (templateTagLength <= (short) 255) {
-            EmvTag.setTag(responseTemplateTag, tmpBuffer, (short) 0, (byte) templateTagLength);
-            sendResponse(apdu, buf, responseTemplateTag);
-        } else {
-            // For large responses (CDA with SDAD), build TLV header at start
-            short headerSize = (short) 4; // tag(1) + 82(1) + len(2)
-
-            // Move content to make room for header (work backwards to avoid overlap issues)
-            for (short i = (short)(templateTagLength - 1); i >= 0; i--) {
-                tmpBuffer[(short)(headerSize + i)] = tmpBuffer[i];
-            }
-
-            // Write TLV header at start
-            tmpBuffer[0] = (byte) (responseTemplateTag & 0xFF);
-            tmpBuffer[1] = (byte) 0x82;
-            tmpBuffer[2] = (byte) ((templateTagLength >> 8) & 0xFF);
-            tmpBuffer[3] = (byte) (templateTagLength & 0xFF);
-
-            short totalLength = (short) (headerSize + templateTagLength);
-
-            // Send first chunk (up to 256 bytes) and store rest for GET RESPONSE
-            short firstChunk = (totalLength > (short) 256) ? (short) 256 : totalLength;
-
-            apdu.setOutgoing();
-            apdu.setOutgoingLength(firstChunk);
-            apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
-
-            // Store remaining data for GET RESPONSE
-            if (totalLength > firstChunk) {
-                pendingResponseOffset = firstChunk;
-                pendingResponseLength = (short) (totalLength - firstChunk);
-            }
-            // Return 9000 - terminal should call GET RESPONSE if it needs more
-        }
+        // Set template tag with full length (supports > 255 bytes for CDA)
+        EmvTag.setTag(responseTemplateTag, tmpBuffer, (short) 0, templateTagLength);
+        sendResponse(apdu, buf, responseTemplateTag);
     }
 
     protected void sendResponse(APDU apdu, byte[] buf, short tagId) {
@@ -433,13 +402,17 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         } else {
             // For large responses, use GET RESPONSE chaining
             short firstChunk = (short) 256;
+            pendingResponseLength = (short) (dataLength - firstChunk);
+
+            // Copy remaining bytes to chunkBuffer for GET RESPONSE
+            Util.arrayCopy(tmpBuffer, firstChunk, chunkBuffer, (short) 0, pendingResponseLength);
+
+            // Send first 256 bytes
             apdu.setOutgoing();
             apdu.setOutgoingLength(firstChunk);
             apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
 
-            // Store remaining data for GET RESPONSE
-            pendingResponseOffset = firstChunk;
-            pendingResponseLength = (short) (dataLength - firstChunk);
+            // Signal more data available
             short remaining = pendingResponseLength;
             if (remaining > (short) 255) {
                 remaining = (short) 255;

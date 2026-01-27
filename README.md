@@ -43,6 +43,92 @@ This simulator now includes full support for the **Colossus Credit Card Network*
 
 See [COLOSSUS.md](COLOSSUS.md) for detailed documentation.
 
+## EMV PKI and Certificate Chain
+
+EMV uses a hierarchical PKI (Public Key Infrastructure) to authenticate cards. The ICC (card) public key is not stored directly - it's embedded in a signed certificate chain.
+
+### Certificate Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CAPK (CA Public Key)                         │
+│                    Root of Trust                                │
+│              Stored in terminal configuration                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ verifies
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Issuer Certificate (Tag 90)                        │
+│              Signed by CAPK private key                         │
+│              Contains: Issuer Public Key                        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ verifies
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               ICC Certificate (Tag 9F46)                        │
+│              Signed by Issuer private key                       │
+│              Contains: ICC Public Key                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ used for
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   SDAD / DDA Signature                          │
+│              Signed by ICC private key                          │
+│              Verified by terminal using ICC Public Key          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ICC Certificate Structure (Tag 9F46)
+
+The ICC certificate is a signed container that holds the public key:
+
+```
+┌─────────────────────────────────────────┐
+│ Header: 0x6A                            │
+│ Format: 0x04 (ICC certificate)          │
+│ PAN (Application PAN)                   │
+│ Expiry Date                             │
+│ Certificate Serial Number               │
+│ Hash Algorithm (01=SHA-1, 02=SHA-256)   │
+│ Public Key Algorithm                    │
+│ Public Key Length                       │
+│ Exponent Length                         │
+│ ICC Public Key (or leftmost portion)    │  ← Public key embedded here
+│ Padding (0xBB...)                       │
+│ Hash (20 or 32 bytes)                   │
+│ Trailer: 0xBC                           │
+└─────────────────────────────────────────┘
+        │
+        └── RSA-signed with Issuer Private Key
+```
+
+### Related EMV Tags
+
+| Tag | Name | Description |
+|-----|------|-------------|
+| `8F` | CA Public Key Index | Identifies which CAPK to use |
+| `90` | Issuer Public Key Certificate | Issuer cert signed by CAPK |
+| `92` | Issuer Public Key Remainder | Overflow bytes if key > cert space |
+| `9F32` | Issuer Public Key Exponent | Usually 03 or 010001 |
+| `9F46` | ICC Public Key Certificate | ICC cert signed by Issuer |
+| `9F47` | ICC Public Key Exponent | Usually 03 or 010001 |
+| `9F48` | ICC Public Key Remainder | Overflow bytes if key > cert space |
+| `9F4B` | Signed Dynamic Application Data | SDAD signed by ICC private key |
+
+### Public Key Recovery
+
+To recover the ICC public key, the terminal must:
+
+1. Look up **CAPK** using RID + CA Public Key Index (tag `8F`)
+2. Decrypt **Issuer Certificate** (tag `90`) using CAPK
+3. Extract Issuer public key, append **Issuer Remainder** (tag `92`) if present
+4. Decrypt **ICC Certificate** (tag `9F46`) using Issuer public key
+5. Extract ICC public key, append **ICC Remainder** (tag `9F48`) if present
+6. Use ICC public key to verify **SDAD** (tag `9F4B`) signatures
+
 ### Quick Start - Colossus Card
 
 ```bash
