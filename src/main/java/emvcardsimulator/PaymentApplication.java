@@ -562,7 +562,7 @@ public class PaymentApplication extends EmvApplet {
         // - ICC Dynamic Number (LDD bytes, we use 8)
         // - Cryptogram Information Data (1 byte)
         // - Application Cryptogram (8 bytes)
-        // - Transaction Data Hash Code (32 bytes) - hash over CDOL data
+        // - Transaction Data Hash Code (32 bytes) - SHA-256 hash over CDOL data
         // Total: 1 + 8 + 1 + 8 + 32 = 50 bytes
 
         byte iccDynNumLen = (byte) 8;

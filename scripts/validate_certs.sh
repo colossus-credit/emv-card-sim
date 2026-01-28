@@ -169,38 +169,12 @@ validate_icc_cert() {
     local static_data_auth=""
 
     if [[ -z "$STATIC_DATA_AUTH" ]]; then
-        # Build SDA from actual certificate files
-        # Record 1: 8F 01 92 9F32 01 03 9F4A 01 82
-        local record1="8F01929F3201039F4A0182"
-
-        # Record 2: Issuer Certificate with TLV encoding (90 82 01 00 + 256 bytes)
-        local issuer_cert_hex=$(xxd -p "${issuer_dir}/issuer_certificate.bin" | tr -d '\n')
-        local issuer_cert_size=$((${#issuer_cert_hex} / 2))
-        local record2=""
-        if (( issuer_cert_size > 255 )); then
-            # Length encoding: 82 XX XX for > 255 bytes
-            record2=$(printf '9082%04X' $issuer_cert_size)
-        elif (( issuer_cert_size >= 128 )); then
-            # Length encoding: 81 XX for 128-255 bytes
-            record2=$(printf '9081%02X' $issuer_cert_size)
-        else
-            record2=$(printf '90%02X' $issuer_cert_size)
-        fi
-        record2+="$issuer_cert_hex"
-
-        # Record 3: Issuer Remainder with TLV encoding (92 XX + remainder bytes)
-        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
-        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
-        local record3=""
-        if (( issuer_rem_size > 0 )); then
-            record3=$(printf '92%02X' $issuer_rem_size)
-            record3+="$issuer_rem_hex"
-        fi
-
-        # AIP value (tag 82 value)
-        local aip="3D01"
-
-        static_data_auth="${record1}${record2}${record3}${aip}"
+        # SDA (Static Data to be Authenticated) depends on AFL ODA records
+        # Since AFL has ODA count=0 for all SFIs, only 9F4A-specified data is included
+        # 9F4A = 82 means include AIP (tag 82) only
+        # AIP value (tag 82 value) - must match what's programmed on card
+        local aip="3101"
+        static_data_auth="${aip}"
     else
         static_data_auth="$STATIC_DATA_AUTH"
     fi

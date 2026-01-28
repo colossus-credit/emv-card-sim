@@ -733,7 +733,7 @@ personalize_card() {
     # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49 (all 2-byte tags, len=0A)
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
     # SFI3/REC4: 9F46 (2-byte tag, len=02)
-    gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003041C049F469F48"
 
     # Continue with remaining tags (single batch for proper data storage)
     gp_cmd+=" -a 80019F36020001"
@@ -751,8 +751,8 @@ personalize_card() {
     gp_cmd+=" -a 80019F070200FF00"
     # AIP: 3101 (DDA+CDA supported, cardholder verification, NO issuer auth, NO terminal risk management)
     gp_cmd+=" -a 80010082023101"
-    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (0 ODA)
+    gp_cmd+=" -a 800100940C080202001001020018010400"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
     gp_cmd+=" -a 80019F4A0182"
     # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
@@ -807,7 +807,7 @@ personalize_card() {
     gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
     gp_cmd+=" -a 8003021C02008E"
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
-    gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003041C049F469F48"
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_contactless_aid}"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
@@ -822,7 +822,7 @@ personalize_card() {
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
     gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 800100940C080202001001020018010400"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -985,7 +985,7 @@ personalize_payapp_small() {
 
     # Small EMV tags - CRITICAL: AIP and AFL
     gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 800100940C080202001001020018010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1165,7 +1165,7 @@ personalize_payapp_large() {
     # SFI 2 Record 2: 90 (Issuer PK Cert)
     gp_cmd+=" -a 80030214020090"
     # SFI 3 Record 4: 9F46 (ICC PK Cert)
-    gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003041C049F469F48"
 
     if $T0_MODE; then
         # T=0 mode: use chunked transfer for ALL large data (no extended APDUs)
@@ -1295,7 +1295,7 @@ personalize_payapp_contactless_small() {
 
     # Small EMV tags - CRITICAL: AIP and AFL
     gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 800100940C080202001001020018010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1373,7 +1373,7 @@ personalize_payapp_contactless_large() {
     # Certificate-related templates
     gp_cmd+=" -a 8003011408008F00929F329F47"
     gp_cmd+=" -a 80030214020090"
-    gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003041C049F469F48"
 
     if $T0_MODE; then
         # T=0 mode: use chunked transfer
