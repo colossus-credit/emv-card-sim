@@ -930,7 +930,120 @@ public class PaymentApplication extends EmvApplet {
             storedPdolLength = 0;
         }
 
-        sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
+        // Check if we should use qVSDC mode (return everything in GPO) or contact mode (return AIP+AFL)
+        // qVSDC mode is triggered when PDOL contains TTQ (9F66) - contactless transaction
+        // For now, check if PDOL length matches contactless PDOL (33 bytes with TTQ)
+        boolean qvsdcMode = (pdolLen >= 4); // Has at least TTQ data
+
+        if (qvsdcMode) {
+            // Visa qVSDC: Return all data in GPO response, no READ RECORD needed
+            processGetProcessingOptionsQvsdc(apdu, buf, pdolLen);
+        } else {
+            // Contact mode: Return AIP + AFL, terminal will do READ RECORD
+            sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
+        }
+    }
+
+    /**
+     * Process GPO in qVSDC mode - return all transaction data in GPO response.
+     * Response includes: 82, 57, 5F20, 5F34, 9F10, 9F26, 9F27, 9F36, 9F6C, 9F6E
+     * No AFL - terminal should not do READ RECORD.
+     */
+    private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
+        short offset = 0;
+
+        // Increment ATC
+        incrementApplicationTransactionCounter();
+
+        // Generate ARQC from PDOL data
+        short cdolOffset = (short) (ISO7816.OFFSET_CDATA + 2);
+        generateApplicationCryptogram(buf, cdolOffset, pdolLen);
+
+        // Build response in tmpBuffer
+        // 82 AIP (2 bytes) - 20 00 for qVSDC (SDA not supported, no CDA in GPO)
+        tmpBuffer[offset++] = (byte) 0x82;
+        tmpBuffer[offset++] = (byte) 0x02;
+        tmpBuffer[offset++] = (byte) 0x20;
+        tmpBuffer[offset++] = (byte) 0x00;
+
+        // 57 Track 2 Equivalent Data
+        EmvTag track2Tag = EmvTag.findTag((short) 0x0057);
+        if (track2Tag != null && track2Tag.getLength() > 0) {
+            tmpBuffer[offset++] = (byte) 0x57;
+            tmpBuffer[offset++] = (byte) (track2Tag.getLength() & 0xFF);
+            offset = track2Tag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 5F20 Cardholder Name
+        EmvTag nameTag = EmvTag.findTag((short) 0x5F20);
+        if (nameTag != null && nameTag.getLength() > 0) {
+            tmpBuffer[offset++] = (byte) 0x5F;
+            tmpBuffer[offset++] = (byte) 0x20;
+            tmpBuffer[offset++] = (byte) (nameTag.getLength() & 0xFF);
+            offset = nameTag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 5F34 PAN Sequence Number
+        EmvTag psnTag = EmvTag.findTag((short) 0x5F34);
+        if (psnTag != null && psnTag.getLength() > 0) {
+            tmpBuffer[offset++] = (byte) 0x5F;
+            tmpBuffer[offset++] = (byte) 0x34;
+            tmpBuffer[offset++] = (byte) (psnTag.getLength() & 0xFF);
+            offset = psnTag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 9F10 Issuer Application Data (IAD) - 7 bytes
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        if (iadTag != null && iadTag.getLength() > 0) {
+            tmpBuffer[offset++] = (byte) 0x9F;
+            tmpBuffer[offset++] = (byte) 0x10;
+            tmpBuffer[offset++] = (byte) (iadTag.getLength() & 0xFF);
+            offset = iadTag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 9F26 Application Cryptogram (8 bytes)
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        if (acTag != null) {
+            tmpBuffer[offset++] = (byte) 0x9F;
+            tmpBuffer[offset++] = (byte) 0x26;
+            tmpBuffer[offset++] = (byte) 0x08;
+            offset = acTag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 9F27 CID - ARQC = 0x80
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x27;
+        tmpBuffer[offset++] = (byte) 0x01;
+        tmpBuffer[offset++] = (byte) 0x80;
+
+        // 9F36 ATC
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) {
+            tmpBuffer[offset++] = (byte) 0x9F;
+            tmpBuffer[offset++] = (byte) 0x36;
+            tmpBuffer[offset++] = (byte) 0x02;
+            offset = atcTag.copyDataToArray(tmpBuffer, offset);
+        }
+
+        // 9F6C CTQ (Card Transaction Qualifiers) - 00 00
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x6C;
+        tmpBuffer[offset++] = (byte) 0x02;
+        tmpBuffer[offset++] = (byte) 0x00;
+        tmpBuffer[offset++] = (byte) 0x00;
+
+        // 9F6E Form Factor Indicator - 20 70 00 00 (card)
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x6E;
+        tmpBuffer[offset++] = (byte) 0x04;
+        tmpBuffer[offset++] = (byte) 0x20;
+        tmpBuffer[offset++] = (byte) 0x70;
+        tmpBuffer[offset++] = (byte) 0x00;
+        tmpBuffer[offset++] = (byte) 0x00;
+
+        // Store as tag 77 and send
+        EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
+        sendResponse(apdu, buf, (short) 0x0077);
     }
 
     private void processDynamicDataAuthentication(APDU apdu, byte[] buf) {

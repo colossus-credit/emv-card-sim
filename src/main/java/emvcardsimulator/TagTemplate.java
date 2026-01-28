@@ -16,7 +16,6 @@ public class TagTemplate {
 
     /**
      * Set BER-TLV EMV tag list. All tags should be stored as EmvTag before serialization.
-     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public final void setData(byte[] src, short srcOffset, byte length) {
         if (length % 2 != 0) {
@@ -24,11 +23,7 @@ public class TagTemplate {
         }
 
         this.length = length;
-        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        short shortLength = (short) (this.length & 0x00FF);
-        for (short i = 0; i < shortLength; i++) {
-            data[i] = src[(short)(srcOffset + i)];
-        }
+        Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
     }
 
     /**
@@ -89,15 +84,11 @@ public class TagTemplate {
 
     /**
      * Serialize template's data to array AS-IS, i.e. template is raw data or should not be interpreted from EmvTag.
-     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyDataToArray(byte[] dst, short dstOffset) {
         short shortLength = (short) (length & 0x00FF);
 
-        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        for (short i = 0; i < shortLength; i++) {
-            dst[(short)(dstOffset + i)] = data[i];
-        }
+        Util.arrayCopy(data, (short) 0, dst, dstOffset, shortLength);
 
         return (short) (dstOffset + shortLength);
     }
