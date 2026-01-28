@@ -138,14 +138,10 @@ public class EmvTag {
 
     /**
      * Set the data/value and length of the tag.
-     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public void setData(byte[] src, short srcOffset, short length) {
         this.length = length;
-        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        for (short i = 0; i < this.length; i++) {
-            data[i] = src[(short)(srcOffset + i)];
-        }
+        Util.arrayCopy(src, srcOffset, data, (short) 0, this.length);
     }
 
     /**
@@ -185,19 +181,17 @@ public class EmvTag {
 
     /**
      * Serialize tag as BER-TLV to array.
-     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyToArray(byte[] dst, short dstOffset) {
         short copyOffset = dstOffset;
 
         if (tag[0] == (byte) 0x00) {
-            // Single byte tag - copy byte-by-byte for T=0 compatibility
+            // Single byte tag
             dst[dstOffset] = tag[1];
             copyOffset += (short) 1;
         } else {
-            // Two byte tag - copy byte-by-byte for T=0 compatibility
-            dst[dstOffset] = tag[0];
-            dst[(short)(dstOffset + 1)] = tag[1];
+            // Two byte tag
+            Util.arrayCopy(tag, (short) 0, dst, dstOffset, (short) 2);
             copyOffset += (short) 2;
         }
 
@@ -228,13 +222,9 @@ public class EmvTag {
 
     /**
      * Serialize tag's data to array, i.e. no BER-TLV header.
-     * Uses byte-by-byte copy for T=0 compatibility.
      */
     public short copyDataToArray(byte[] dst, short dstOffset) {
-        // Byte-by-byte copy for T=0 compatibility instead of Util.arrayCopy
-        for (short i = 0; i < length; i++) {
-            dst[(short)(dstOffset + i)] = data[i];
-        }
+        Util.arrayCopy(data, (short) 0, dst, dstOffset, length);
 
         short copyLength = length;
         if (fuzzLength > (byte) 0x00) {

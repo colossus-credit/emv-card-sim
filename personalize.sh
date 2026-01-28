@@ -594,6 +594,11 @@ personalize_card() {
     local cardholder_hex=$(echo -n "$cardholder_name" | xxd -p | tr -d '\n')
     local cardholder_len=$(printf '%02X' ${#cardholder_name})
 
+    # Preferred name for 9F12 (e.g., "COLOSSUS CREDIT")
+    local preferred_name="${DEFAULT_APP_LABEL} CREDIT"
+    local preferred_name_hex=$(echo -n "$preferred_name" | xxd -p | tr -d '\n')
+    local preferred_name_len=$(printf '%02X' ${#preferred_name})
+
     # PAN formatting
     local pan_hex="$PAN"
     if (( ${#PAN} % 2 == 1 )); then
@@ -688,7 +693,12 @@ personalize_card() {
     local ppse_aid="325041592E5359532E4444463031"
     local full_contactless_aid="${RID}${CONTACTLESS_AID}"
     local full_contactless_aid_len=$(printf '%02X' $((${#full_contactless_aid} / 2)))
-    local contactless_dir_entry="4F${full_contactless_aid_len}${full_contactless_aid}50${app_label_len}${app_label_hex}870101"
+    # Application label and preferred name both use "VISA CREDIT" to match working Visa response
+    local ppse_label="${DEFAULT_APP_LABEL} CREDIT"
+    local ppse_label_hex=$(echo -n "$ppse_label" | xxd -p | tr -d '\n')
+    local ppse_label_len=$(printf '%02X' ${#ppse_label})
+    # Directory entry: 4F(AID) + 50(label="VISA CREDIT") + 9F12(preferred name="VISA CREDIT") + 87(priority)
+    local contactless_dir_entry="4F${full_contactless_aid_len}${full_contactless_aid}50${ppse_label_len}${ppse_label_hex}9F12${ppse_label_len}${ppse_label_hex}870101"
     local contactless_dir_entry_len=$(printf '%02X' $((${#contactless_dir_entry} / 2)))
     gp_cmd+=" -a 00A404000E${ppse_aid}"
     gp_cmd+=" -a 8005000000"
@@ -709,7 +719,7 @@ personalize_card() {
     gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202007700"
+    gp_cmd+=" -a 8004000202008000"
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
@@ -795,11 +805,13 @@ personalize_card() {
     gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202007700"
-    gp_cmd+=" -a 800200010600829F6C0094"
+    gp_cmd+=" -a 8004000202008000"
+    # GPO template: Format 1 = AIP (82) + AFL (94) only, no CTQ for Format 1
+    gp_cmd+=" -a 800200010400820094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    gp_cmd+=" -a 800200050400500087"
+    # FCI template: 50 (label), 87 (priority), 9F12 (preferred name), 9F38 (PDOL)
+    gp_cmd+=" -a 8002000508005000879F129F38"
     gp_cmd+=" -a 8002000404008400A5"
     gp_cmd+=" -a 8003020C0600575F209F1F"
     gp_cmd+=" -a 8003011408008F00929F329F47"
@@ -810,6 +822,10 @@ personalize_card() {
     gp_cmd+=" -a 8003041C029F46"
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_contactless_aid}"
+    # 9F12 Application Preferred Name (reuse preferred_name from PPSE section)
+    gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
+    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
+    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
     gp_cmd+=" -a 80015F340101"
@@ -839,6 +855,11 @@ personalize_card() {
     gp_cmd+=" -a 80019F6C028000"
 
     log_info "Sending personalization APDUs..."
+
+    # Debug: dump gp_cmd to file for inspection
+    echo "$gp_cmd" > /tmp/gp_cmd_debug.txt
+    log_info "APDU command saved to /tmp/gp_cmd_debug.txt"
+
     eval "$gp_cmd" 2>&1 | grep -v "^WARNING:" | grep -v "^Warning:"
 
     log_success "Personalization complete"
@@ -894,13 +915,14 @@ personalize_ppse() {
 
     local ppse_aid="325041592E5359532E4444463031"
 
-    # Convert values to hex
-    local app_label_hex=$(echo -n "$DEFAULT_APP_LABEL" | xxd -p | tr -d '\n')
-    local app_label_len=$(printf '%02X' ${#DEFAULT_APP_LABEL})
+    # Application label and preferred name both use "VISA CREDIT" to match working Visa response
+    local ppse_label="${DEFAULT_APP_LABEL} CREDIT"
+    local ppse_label_hex=$(echo -n "$ppse_label" | xxd -p | tr -d '\n')
+    local ppse_label_len=$(printf '%02X' ${#ppse_label})
 
-    # Directory entry content: 4F <AID>, 50 <label>, 87 <priority>
+    # Directory entry content: 4F <AID>, 50 <label="VISA CREDIT">, 9F12 <preferred name="VISA CREDIT">, 87 <priority>
     local full_aid_len=$(printf '%02X' $((${#full_contactless_aid} / 2)))
-    local dir_entry_content="4F${full_aid_len}${full_contactless_aid}50${app_label_len}${app_label_hex}870101"
+    local dir_entry_content="4F${full_aid_len}${full_contactless_aid}50${ppse_label_len}${ppse_label_hex}9F12${ppse_label_len}${ppse_label_hex}870101"
     local dir_entry_content_len=$(printf '%02X' $((${#dir_entry_content} / 2)))
 
     # PPSE personalization APDUs (new simplified applet)
@@ -964,7 +986,7 @@ personalize_payapp_small() {
     # Settings (small)
     gp_cmd+=" -a 80040003020001"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202007700"
+    gp_cmd+=" -a 8004000202008000"
 
     # Templates - only non-certificate related ones
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
@@ -1250,6 +1272,11 @@ personalize_payapp_contactless_small() {
     local cardholder_hex=$(echo -n "$cardholder_name" | xxd -p | tr -d '\n')
     local cardholder_len=$(printf '%02X' ${#cardholder_name})
 
+    # Preferred name for 9F12 (e.g., "VISA CREDIT")
+    local preferred_name="${DEFAULT_APP_LABEL} CREDIT"
+    local preferred_name_hex=$(echo -n "$preferred_name" | xxd -p | tr -d '\n')
+    local preferred_name_len=$(printf '%02X' ${#preferred_name})
+
     # PAN formatting
     local pan_hex="$PAN"
     if (( ${#PAN} % 2 == 1 )); then
@@ -1280,18 +1307,31 @@ personalize_payapp_contactless_small() {
     # Settings (small)
     gp_cmd+=" -a 80040003020001"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202007700"
+    gp_cmd+=" -a 8004000202008000"
 
     # Templates
-    gp_cmd+=" -a 800200010600829F6C0094"
+    # GPO template: Format 1 = AIP (82) + AFL (94) only, no CTQ for Format 1
+    gp_cmd+=" -a 800200010400820094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    gp_cmd+=" -a 800200050400500087"
+    # FCI template: 50 (label), 87 (priority), 9F12 (preferred name), 9F38 (PDOL)
+    gp_cmd+=" -a 8002000508005000879F129F38"
     gp_cmd+=" -a 8002000404008400A5"
+    # READ RECORD templates - must match AFL entries
+    # SFI1/REC2: 57, 5F20, 9F1F (Track2, Cardholder, DiscData)
     gp_cmd+=" -a 8003020C0600575F209F1F"
+    # SFI2/REC1: 8F, 92, 9F32, 9F47 (CAPublicKeyIndex, IssuerCert, etc.)
+    gp_cmd+=" -a 8003011408008F00929F329F47"
+    # SFI2/REC2: 90 (IssuerPubKey)
+    gp_cmd+=" -a 80030214020090"
+    # SFI3/REC1: 5A,5F24,5F25,5F28,5F34,9F07,9F0D,9F0E,9F0F,9F4A,8C,8D
     gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
+    # SFI3/REC2: 8E (CVM)
     gp_cmd+=" -a 8003021C02008E"
+    # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
+    # SFI3/REC4: 9F46 (ICC PublicKey Cert)
+    gp_cmd+=" -a 8003041C029F46"
 
     # Small EMV tags - CRITICAL: AIP and AFL
     gp_cmd+=" -a 80010082023101"
@@ -1300,6 +1340,10 @@ personalize_payapp_contactless_small() {
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_aid}"
+    # 9F12 Application Preferred Name
+    gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
+    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
+    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
     gp_cmd+=" -a 80015F340101"
