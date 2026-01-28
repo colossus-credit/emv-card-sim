@@ -95,7 +95,8 @@ public class ProximityPaymentSystemEnvironment extends Applet {
             short bf0cContentLen = (short)(2 + dir61Len);
 
             // A5 <len> BF0C ...
-            short a5ContentLen = (short)(2 + bf0cContentLen);
+            // BF0C is 2-byte tag + 1-byte length + content = 3 + bf0cContentLen
+            short a5ContentLen = (short)(3 + bf0cContentLen);
             if (bf0cContentLen > 127) a5ContentLen++;
 
             // 84 <len> <AID>
