@@ -199,6 +199,9 @@ public class PaymentApplication extends EmvApplet {
                     case (short) 1536:
                         keyLength = KeyBuilder.LENGTH_RSA_1536;
                         break;
+                    case (short) 1768:
+                        // Non-standard EMV size (221 bytes) - keep raw value
+                        break;
                     case (short) 1984:
                         keyLength = KeyBuilder.LENGTH_RSA_1984;
                         break;
@@ -421,8 +424,8 @@ public class PaymentApplication extends EmvApplet {
             cdaSupportedInAip = ((aipByte1 & (byte) 0x01) != 0);
         }
 
-        // Perform CDA if: explicitly requested OR (supported in AIP AND we can do it)
-        boolean shouldPerformCda = cdaRequested || (cdaSupportedInAip && canPerformCda);
+        // Perform CDA only if explicitly requested AND we can do it
+        boolean shouldPerformCda = cdaRequested && canPerformCda;
 
         // Set Cryptogram Information Data (9F27)
         // CID bits 7-6 indicate cryptogram type: 00=AAC, 01=TC, 10=ARQC
@@ -434,7 +437,13 @@ public class PaymentApplication extends EmvApplet {
         incrementApplicationTransactionCounter();
 
         // Generate Application Cryptogram (9F26)
-        short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        // Use apdu.getIncomingLength() instead of reading LC byte directly
+        // After setIncomingAndReceive() is called, we must use the APDU API
+        short cdolLen = apdu.getIncomingLength();
+        if (cdolLen == 0) {
+            // Fallback for some platforms
+            cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        }
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
         // If CDA should be performed (requested OR AIP advertises it) and we have ICC private key
@@ -867,13 +876,20 @@ public class PaymentApplication extends EmvApplet {
         // Calculate how much to send (min of Le and remaining)
         short send = (le < pendingResponseLength) ? le : pendingResponseLength;
 
-        // Set the outgoing length and send from chunkBuffer
+        // Set the outgoing length and send from chunkBuffer at current offset
         apdu.setOutgoingLength(send);
-        apdu.sendBytesLong(chunkBuffer, (short) 0, send);
+        apdu.sendBytesLong(chunkBuffer, pendingResponseOffset, send);
 
-        // Clear pending state (all done)
-        pendingResponseOffset = 0;
-        pendingResponseLength = 0;
+        // Update pending state
+        pendingResponseOffset += send;
+        pendingResponseLength -= send;
+
+        // If more data remains, signal with 61XX
+        if (pendingResponseLength > 0) {
+            short remaining = (pendingResponseLength > (short) 255) ? (short) 255 : pendingResponseLength;
+            ISOException.throwIt((short) (0x6100 | remaining));
+        }
+        // Otherwise return 9000 (implicit)
     }
 
     private void processGetData(APDU apdu, byte[] buf) {

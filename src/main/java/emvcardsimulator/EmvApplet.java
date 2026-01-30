@@ -195,9 +195,15 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             dataOffset = ISO7816.OFFSET_CDATA;  // = 5
         }
 
-        JCSystem.beginTransaction();
+        // Store the tag (no transaction needed - simpler and more compatible)
         EmvTag tag = EmvTag.setTag(tagId, buf, dataOffset, dataLen);
-        JCSystem.commitTransaction();
+
+        // Verify tag was stored correctly by reading it back
+        EmvTag verifyTag = EmvTag.findTag(tagId);
+        if (verifyTag == null) {
+            // Tag storage failed - return error
+            ISOException.throwIt((short) 0x6581); // Memory failure
+        }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -394,31 +400,32 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         // Copy tag TLV to tmpBuffer for consistent handling
         short dataLength = tag.copyToArray(tmpBuffer, (short) 0);
 
-        // For responses <= 256 bytes, use simple approach
-        if (dataLength <= (short) 256) {
-            Util.arrayCopy(tmpBuffer, (short) 0, buf, (short) ISO7816.OFFSET_CDATA, dataLength);
-            ApduLog.addLogEntry(buf, (short) ISO7816.OFFSET_CDATA, (byte) (dataLength & 0xFF));
-            apdu.setOutgoingAndSend((short) ISO7816.OFFSET_CDATA, dataLength);
-        } else {
-            // For large responses, use GET RESPONSE chaining
-            short firstChunk = (short) 256;
-            pendingResponseLength = (short) (dataLength - firstChunk);
-
-            // Copy remaining bytes to chunkBuffer for GET RESPONSE
-            Util.arrayCopy(tmpBuffer, firstChunk, chunkBuffer, (short) 0, pendingResponseLength);
-
-            // Send first 256 bytes
-            apdu.setOutgoing();
-            apdu.setOutgoingLength(firstChunk);
-            apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
-
-            // Signal more data available
-            short remaining = pendingResponseLength;
-            if (remaining > (short) 255) {
-                remaining = (short) 255;
-            }
-            ISOException.throwIt((short) (0x6100 | remaining));
+        // Get Ne (expected response length) from APDU
+        short ne = apdu.setOutgoing();
+        if (ne == (short) 0) {
+            ne = (short) 256; // Standard APDU: Le=00 means max 256
         }
+
+        // If response fits, send it all
+        if (dataLength <= ne) {
+            apdu.setOutgoingLength(dataLength);
+            apdu.sendBytesLong(tmpBuffer, (short) 0, dataLength);
+            return;
+        }
+
+        // Response too large - use 61XX chaining
+        // Send first chunk (up to ne bytes)
+        short firstChunk = ne;
+        apdu.setOutgoingLength(firstChunk);
+        apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
+
+        // Store remaining data for GET RESPONSE
+        pendingResponseLength = (short) (dataLength - firstChunk);
+        Util.arrayCopy(tmpBuffer, firstChunk, chunkBuffer, (short) 0, pendingResponseLength);
+
+        // Signal more data available: 61XX where XX = remaining bytes (max FF)
+        short remaining = (pendingResponseLength > (short) 255) ? (short) 255 : pendingResponseLength;
+        ISOException.throwIt((short) (0x6100 | remaining));
     }
 
     protected void sendResponse(APDU apdu, byte[] buf, byte[] data, short dataOffset, short length) {

@@ -705,47 +705,30 @@ personalize_card() {
     # Set directory entry content pointing to contactless AID
     gp_cmd+=" -a 80010061${contactless_dir_entry_len}${contactless_dir_entry}"
 
-    # Contact Payment app selection and base personalization
+    # ============================================================
+    # CONTACT PAYMENT APP - Online-Only Minimal Spec
+    # ============================================================
     gp_cmd+=" -a 00A4040007${full_aid}"
     gp_cmd+=" -a 8005000000"
+    # No RSA keys needed for online-only (skip CDA)
     gp_cmd+=" -a 80040003020001"
-    gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
-    gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
-    gp_cmd+=" -a 8001008F0192"
-    gp_cmd+=" -a 80019F320103"
-    gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
-    gp_cmd+=" -a 80010092${issuer_rem_len}${issuer_rem_hex}"
-    gp_cmd+=" -a 80019F470103"
-    gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
-    gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
     gp_cmd+=" -a 8004000202008000"
-    # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
-    gp_cmd+=" -a 800200010600829F6C0094"
+    # GPO response template: AIP (82) + AFL (94) - Format 2 (tag 77)
+    gp_cmd+=" -a 800200010400820094"
+    # DDA template (not used)
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
+    # GENAC response template: 9F27, 9F36, 9F26, 9F10 - NO 9F4B (no CDA)
+    gp_cmd+=" -a 800200030A9F279F369F269F100000"
+    # FCI template: 50 (label), 87 (priority) - NO PDOL
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
-    # PDOL removed from FCI - card accepts empty GPO (83 00)
-    # gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
-    # SFI1/REC2: 57, 5F20, 9F1F (len=06: 00 + 1+2+2)
-    gp_cmd+=" -a 8003020C0600575F209F1F"
-    # SFI2/REC1: 8F, 92, 9F32, 9F47 (len=08: 008F + 0092 + 9F32 + 9F47)
-    gp_cmd+=" -a 8003011408008F00929F329F47"
-    # SFI2/REC2: 90 only (len=02: 00 + 1)
-    gp_cmd+=" -a 80030214020090"
-    # SFI2/REC3-5 removed (Visa uses only 2 records on SFI2)
-    # SFI3/REC1: 5A,5F24,5F25,5F28,5F34,9F07,9F0D,9F0E,9F0F,9F4A,8C,8D (len=18: 005A + 9x2byte + 008C + 008D)
-    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
-    # SFI3/REC2: 8E only (len=02: 00 + 1)
-    gp_cmd+=" -a 8003021C02008E"
-    # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49 (all 2-byte tags, len=0A)
-    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
-    # SFI3/REC4: 9F46 (2-byte tag, len=02)
-    gp_cmd+=" -a 8003041C029F46"
+    # SFI1/REC2: Track2 (57) + Cardholder Name (5F20)
+    gp_cmd+=" -a 8003020C0400575F20"
+    # SFI1/REC3: 5A, 5F24, 5F28, 5F34, 9F07, 9F0D, 9F0E, 9F0F, 8E, 8C, 8D, 9F08
+    gp_cmd+=" -a 8003030C18005A5F245F285F349F079F0D9F0E9F0F008E008C008D9F08"
 
-    # Continue with remaining tags (single batch for proper data storage)
+    # Tag values
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_aid}"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
@@ -756,41 +739,27 @@ personalize_card() {
     gp_cmd+=" -a 800100870101"
     gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
     gp_cmd+=" -a 80019F08020001"
-    gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
-    # AIP: 3101 (DDA+CDA supported, cardholder verification, NO issuer auth, NO terminal risk management)
-    gp_cmd+=" -a 80010082023101"
-    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
-    gp_cmd+=" -a 800100940C080202001001020018010401"
-    # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
-    gp_cmd+=" -a 80019F4A0182"
-    # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
-    gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
-    # 5F30 = Service Code
-    gp_cmd+=" -a 80015F30020201"
-    # 9F42 = Application Currency Code (USD = 0840)
-    gp_cmd+=" -a 80019F42020840"
-    # 9F44 = Application Currency Exponent
-    gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (9F37 04 = Unpredictable Number)
-    gp_cmd+=" -a 80019F49039F3704"
+    gp_cmd+=" -a 80019F070200FF"
+    # AIP: 1980 = CDA supported
+    gp_cmd+=" -a 80010082021980"
+    # AFL: SFI1 rec2-3 only, 0 ODA = 08 02 03 00
+    gp_cmd+=" -a 800100940408020301"
+    # CDOLs (unchanged)
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    # CVM List (20 bytes - Visa format)
+    # CVM List
     gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
-    # IAC-Default: conditions that default to online
+    # IACs
     gp_cmd+=" -a 80019F0D05FC688C9800"
-    # IAC-Denial: set to zeros so nothing triggers offline decline
     gp_cmd+=" -a 80019F0E050000000000"
-    # IAC-Online: conditions that require online
     gp_cmd+=" -a 80019F0F05FC68FC9800"
-    gp_cmd+=" -a 80019F100706010A03A4A002"
-    # CTQ (Card Transaction Qualifiers) - required for contactless
-    # Byte 1: 80 = Online cryptogram required (typical for ARQC transactions)
-    # Byte 2: 00 = No special processing flags
-    gp_cmd+=" -a 80019F6C028000"
+    # IAD (MChip format, 18 bytes)
+    gp_cmd+=" -a 80019F10120114A04001220000000000000000000000FF"
 
+    # ============================================================
+    # CONTACTLESS PAYMENT APP
+    # ============================================================
     # Contactless Payment app personalization (same data, different AID)
     gp_cmd+=" -a 00A4040007${full_contactless_aid}"
     gp_cmd+=" -a 8005000000"
@@ -805,54 +774,69 @@ personalize_card() {
     gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     gp_cmd+=" -a 80019F48${icc_rem_len}${icc_rem_hex}"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202008000"
-    # GPO template: Format 1 = AIP (82) + AFL (94) only, no CTQ for Format 1
+    gp_cmd+=" -a 8004000202007700"
+    # GPO template: Format 2 (tag 77) = AIP (82) + AFL (94) as TLV
     gp_cmd+=" -a 800200010400820094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    # FCI template: 50 (label), 87 (priority), 9F12 (preferred name), 9F38 (PDOL)
-    gp_cmd+=" -a 8002000508005000879F129F38"
+    # FCI template: 50 (label), 87 (priority), 5F2D (lang), BF0C (discretionary)
+    # NO PDOL - Mastercard doesn't have it, terminal sends 83 00 in GPO
+    gp_cmd+=" -a 800200050800500087BF0C5F2D"
     gp_cmd+=" -a 8002000404008400A5"
-    gp_cmd+=" -a 8003020C0600575F209F1F"
-    gp_cmd+=" -a 8003011408008F00929F329F47"
-    gp_cmd+=" -a 80030214020090"
-    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
-    gp_cmd+=" -a 8003021C02008E"
-    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
-    gp_cmd+=" -a 8003041C029F46"
+    # READ RECORD templates - match AFL: 08 01 01 00 10 01 01 01 20 03 05 00
+    # SFI1/REC1 (P2=0C): minimal record
+    gp_cmd+=" -a 8003010C0200FF"
+    # SFI2/REC1 (P2=14): Static data for ODA
+    gp_cmd+=" -a 800301141C9F425F255F249F07005A5F34008E9F0D9F0E9F0F008C008D5F289F4A"
+    # SFI4/REC3 (P2=24): 9F08,57,92,8F,9F32,9F47
+    gp_cmd+=" -a 800303240C9F0800570092008F9F329F47"
+    # SFI4/REC4 (P2=24): 90 (Issuer PK Cert)
+    gp_cmd+=" -a 80030424020090"
+    # SFI4/REC5 (P2=24): 9F46 (ICC PK Cert)
+    gp_cmd+=" -a 80030524029F46"
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_contactless_aid}"
-    # 9F12 Application Preferred Name (reuse preferred_name from PPSE section)
-    gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
-    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
-    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
+    # Language preference (5F2D) - "enesfr" like Mastercard
+    gp_cmd+=" -a 80015F2D06656E65736672"
+    # BF0C discretionary data: 9F4D + 9F6E
+    gp_cmd+=" -a 8001BF0C0F9F4D020B0A9F6E0708400000303000"
+    # NO PDOL - intentionally removed
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
-    gp_cmd+=" -a 80015F340101"
+    gp_cmd+=" -a 80015F340100"
     gp_cmd+=" -a 80010057${track2_len}${track2}"
     gp_cmd+=" -a 80010050${app_label_len}${app_label_hex}"
     gp_cmd+=" -a 800100870101"
     gp_cmd+=" -a 80015F20${cardholder_len}${cardholder_hex}"
-    gp_cmd+=" -a 80019F08020001"
-    gp_cmd+=" -a 80015F2503240101"
+    gp_cmd+=" -a 80019F08020002"
+    gp_cmd+=" -a 80015F2503251007"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
-    gp_cmd+=" -a 80019F4A0182"
+    gp_cmd+=" -a 80019F0702FF00"
+    # AIP: 1980
+    gp_cmd+=" -a 80010082021980"
+    # AFL: 08 01 01 00 10 01 01 01 20 03 05 00 (SFI2 ODA=1)
+    gp_cmd+=" -a 800100940C080101001001010120030500"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
     gp_cmd+=" -a 80019F49039F3704"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
-    gp_cmd+=" -a 80019F0D05FC688C9800"
+    gp_cmd+=" -a 80019F4A0182"
+    # CDOL1 matching Mastercard
+    gp_cmd+=" -a 8001008C279F02069F03069F1A0295055F2A029A039C019F37049F35019F45029F4C089F34039F21039F7C14"
+    # CDOL2 matching Mastercard
+    gp_cmd+=" -a 8001008D0C910A8A0295059F37049F4C08"
+    # CVM List matching Mastercard
+    gp_cmd+=" -a 8001008E0E00000000000000001E031F034203"
+    # IAC values matching Mastercard
+    gp_cmd+=" -a 80019F0D05B450840000"
     gp_cmd+=" -a 80019F0E050000000000"
-    gp_cmd+=" -a 80019F0F05FC68FC9800"
-    gp_cmd+=" -a 80019F100706010A03A4A002"
+    gp_cmd+=" -a 80019F0F05B470848000"
+    # IAD matching Mastercard
+    gp_cmd+=" -a 80019F10120114A04001220000000000000000000000FF"
     gp_cmd+=" -a 80019F6C028000"
+    # Tag FF for SFI1/REC1
+    gp_cmd+=" -a 800100FF0100"
 
     log_info "Sending personalization APDUs..."
 
@@ -1006,8 +990,8 @@ personalize_payapp_small() {
     # NOTE: SFI 2 (cert records) and SFI 3 Record 4 (ICC cert) templates moved to personalize_payapp_large
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80010082021980"
+    gp_cmd+=" -a 800100940C080202001001020118010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1307,43 +1291,44 @@ personalize_payapp_contactless_small() {
     # Settings (small)
     gp_cmd+=" -a 80040003020001"
     gp_cmd+=" -a 8004000102123400"
-    gp_cmd+=" -a 8004000202008000"
+    gp_cmd+=" -a 8004000202007700"
 
     # Templates
-    # GPO template: Format 1 = AIP (82) + AFL (94) only, no CTQ for Format 1
+    # GPO template: Format 2 (tag 77) = AIP (82) + AFL (94) as TLV
     gp_cmd+=" -a 800200010400820094"
     gp_cmd+=" -a 80020002029F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
-    # FCI template: 50 (label), 87 (priority), 9F12 (preferred name), 9F38 (PDOL)
-    gp_cmd+=" -a 8002000508005000879F129F38"
+    # FCI template: 50 (label), 87 (priority), 5F2D (lang), BF0C (discretionary)
+    # NO PDOL (9F38) - Mastercard doesn't have it, terminal sends 83 00 in GPO
+    gp_cmd+=" -a 800200050800500087BF0C5F2D"
     gp_cmd+=" -a 8002000404008400A5"
-    # READ RECORD templates - must match AFL entries
-    # SFI1/REC2: 57, 5F20, 9F1F (Track2, Cardholder, DiscData)
-    gp_cmd+=" -a 8003020C0600575F209F1F"
-    # SFI2/REC1: 8F, 92, 9F32, 9F47 (CAPublicKeyIndex, IssuerCert, etc.)
-    gp_cmd+=" -a 8003011408008F00929F329F47"
-    # SFI2/REC2: 90 (IssuerPubKey)
-    gp_cmd+=" -a 80030214020090"
-    # SFI3/REC1: 5A,5F24,5F25,5F28,5F34,9F07,9F0D,9F0E,9F0F,9F4A,8C,8D
-    gp_cmd+=" -a 8003011C18005A5F245F255F285F349F079F0D9F0E9F0F9F4A008C008D"
-    # SFI3/REC2: 8E (CVM)
-    gp_cmd+=" -a 8003021C02008E"
-    # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49
-    gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
-    # SFI3/REC4: 9F46 (ICC PublicKey Cert)
-    gp_cmd+=" -a 8003041C029F46"
+    # READ RECORD templates - must match AFL: 08 01 01 00 10 01 01 01 20 03 05 00
+    # SFI1/REC1 (P2=0C): Empty/minimal record (ODA=0)
+    gp_cmd+=" -a 8003010C0200FF"
+    # SFI2/REC1 (P2=14): Static data for ODA - 9F42,5F25,5F24,9F07,5A,5F34,8E,9F0D,9F0E,9F0F,8C,8D,5F28,9F4A
+    gp_cmd+=" -a 800301141C9F425F255F249F07005A5F34008E9F0D9F0E9F0F008C008D5F289F4A"
+    # SFI4/REC3 (P2=24): 9F08,57,92,8F,9F32,9F47
+    gp_cmd+=" -a 800303240C9F0800570092008F9F329F47"
+    # SFI4/REC4 (P2=24): 90 (Issuer PK Cert)
+    gp_cmd+=" -a 80030424020090"
+    # SFI4/REC5 (P2=24): 9F46 (ICC PK Cert)
+    gp_cmd+=" -a 80030524029F46"
 
-    # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    # Small EMV tags - CRITICAL: AIP and AFL (matching Mastercard trace exactly)
+    # AIP: 1980
+    gp_cmd+=" -a 80010082021980"
+    # AFL: 08 01 01 00 10 01 01 01 20 03 05 00
+    # SFI1 rec1 ODA=0, SFI2 rec1 ODA=1, SFI4 rec3-5 ODA=0
+    gp_cmd+=" -a 800100940C080101001001010120030500"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_aid}"
-    # 9F12 Application Preferred Name
-    gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
-    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
-    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
+    # Language preference (5F2D) - "enesfr" like Mastercard
+    gp_cmd+=" -a 80015F2D06656E65736672"
+    # BF0C discretionary data: 9F4D 02 0B0A + 9F6E 07 08400000303000 = 15 bytes
+    gp_cmd+=" -a 8001BF0C0F9F4D020B0A9F6E0708400000303000"
+    # NO PDOL (9F38) - intentionally removed to match Mastercard
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
     gp_cmd+=" -a 80015F340101"
@@ -1361,16 +1346,23 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
     gp_cmd+=" -a 80019F49039F3704"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
-    gp_cmd+=" -a 80019F0D05FC688C9800"
+    # CDOL1 matching Mastercard (39 bytes)
+    gp_cmd+=" -a 8001008C279F02069F03069F1A0295055F2A029A039C019F37049F35019F45029F4C089F34039F21039F7C14"
+    # CDOL2 matching Mastercard (12 bytes)
+    gp_cmd+=" -a 8001008D0C910A8A0295059F37049F4C08"
+    # CVM List matching Mastercard (14 bytes)
+    gp_cmd+=" -a 8001008E0E00000000000000001E031F034203"
+    # IAC values matching Mastercard trace
+    gp_cmd+=" -a 80019F0D05B450840000"
     gp_cmd+=" -a 80019F0E050000000000"
-    gp_cmd+=" -a 80019F0F05FC68FC9800"
-    gp_cmd+=" -a 80019F100706010A03A4A002"
+    gp_cmd+=" -a 80019F0F05B470848000"
+    # IAD matching Mastercard (18 bytes)
+    gp_cmd+=" -a 80019F10120114A04001220000000000000000000000FF"
     gp_cmd+=" -a 80019F6C028000"
+    # Tag FF placeholder for SFI1/REC1
+    gp_cmd+=" -a 800100FF0100"
 
-    # Small certificate-related tags
+    # Small certificate-related tags (keeping CA PK Index 92 for Colossus certs)
     gp_cmd+=" -a 8001008F0192"
     gp_cmd+=" -a 80019F320103"
     gp_cmd+=" -a 80019F470103"

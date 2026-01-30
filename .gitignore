@@ -38,3 +38,5 @@ build
 !gradle/wrapper/gradle-wrapper.jar
 
 keys/
+
+card_profiles/*
