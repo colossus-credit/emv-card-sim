@@ -394,30 +394,22 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         // Copy tag TLV to tmpBuffer for consistent handling
         short dataLength = tag.copyToArray(tmpBuffer, (short) 0);
 
-        // For responses <= 256 bytes, use simple approach
+        // For short responses, use simple approach
         if (dataLength <= (short) 256) {
             Util.arrayCopy(tmpBuffer, (short) 0, buf, (short) ISO7816.OFFSET_CDATA, dataLength);
             ApduLog.addLogEntry(buf, (short) ISO7816.OFFSET_CDATA, (byte) (dataLength & 0xFF));
             apdu.setOutgoingAndSend((short) ISO7816.OFFSET_CDATA, dataLength);
         } else {
-            // For large responses, use GET RESPONSE chaining
-            short firstChunk = (short) 256;
-            pendingResponseLength = (short) (dataLength - firstChunk);
-
-            // Copy remaining bytes to chunkBuffer for GET RESPONSE
-            Util.arrayCopy(tmpBuffer, firstChunk, chunkBuffer, (short) 0, pendingResponseLength);
-
-            // Send first 256 bytes
+            // For extended responses - send 256 bytes first, return 9000
+            // The caller should handle this via terminal configuration
             apdu.setOutgoing();
-            apdu.setOutgoingLength(firstChunk);
-            apdu.sendBytesLong(tmpBuffer, (short) 0, firstChunk);
-
-            // Signal more data available
-            short remaining = pendingResponseLength;
-            if (remaining > (short) 255) {
-                remaining = (short) 255;
-            }
-            ISOException.throwIt((short) (0x6100 | remaining));
+            apdu.setOutgoingLength((short) 256);
+            apdu.sendBytesLong(tmpBuffer, (short) 0, (short) 256);
+            // Store remaining for potential GET RESPONSE
+            pendingResponseLength = (short) (dataLength - 256);
+            Util.arrayCopy(tmpBuffer, (short) 256, chunkBuffer, (short) 0, pendingResponseLength);
+            // Don't throw 61xx - just return with 9000
+            // The terminal should issue GET RESPONSE if needed
         }
     }
 

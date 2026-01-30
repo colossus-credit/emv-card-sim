@@ -16,14 +16,14 @@ CAPK_KEY_SIZE_BYTES=$((CAPK_KEY_SIZE / 8))  # 248 bytes
 ISSUER_KEY_SIZE=1984
 ISSUER_KEY_SIZE_BYTES=$((ISSUER_KEY_SIZE / 8))  # 248 bytes
 
-ICC_KEY_SIZE=1768
-ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 221 bytes
+ICC_KEY_SIZE=2048
+ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 256 bytes
 
 # Certificate math (from spec):
 # Issuer cert (90) = CAPK modulus len = 248 bytes
 # Issuer remainder (92) = Issuer modulus - (CAPK - 36) = 248 - 212 = 36 bytes
 # ICC cert (9F46) = Issuer modulus len = 248 bytes
-# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 221 - 206 = 15 bytes
+# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 256 - 206 = 50 bytes
 
 # Default values
 DEFAULT_RID="A000000951"
@@ -337,8 +337,9 @@ generate_icc() {
         fi
         log_info "Issuer remainder: ${issuer_rem_size} bytes"
 
-        # AIP value (tag 82 value)
-        local aip="3D01"
+        # AIP value (tag 82 value) - MUST match AIP personalized on card
+        # 1980 = CDA supported, terminal risk management, issuer auth supported
+        local aip="1980"
 
         static_data_auth="${record1}${record2}${record3}${aip}"
         log_info "Computed SDA data (${#static_data_auth} hex chars / $(( ${#static_data_auth} / 2 )) bytes)"

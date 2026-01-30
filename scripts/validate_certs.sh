@@ -197,8 +197,8 @@ validate_icc_cert() {
             record3+="$issuer_rem_hex"
         fi
 
-        # AIP value (tag 82 value)
-        local aip="3D01"
+        # AIP value (tag 82 value) - MUST match AIP on card (1980 = CDA supported)
+        local aip="1980"
 
         static_data_auth="${record1}${record2}${record3}${aip}"
     else

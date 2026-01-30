@@ -21,7 +21,7 @@ public class EmvTag {
 
     protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];
-        data = new byte[300];  // Increased for RSA-2048 certificates (256 bytes)
+        data = new byte[400];  // Increased for qVSDC response with SDAD (~350 bytes)
         this.length = length;
 
         Util.setShort(tag, (short) 0, tagId);

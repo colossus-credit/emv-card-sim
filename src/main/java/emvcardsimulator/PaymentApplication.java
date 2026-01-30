@@ -199,6 +199,9 @@ public class PaymentApplication extends EmvApplet {
                     case (short) 1536:
                         keyLength = KeyBuilder.LENGTH_RSA_1536;
                         break;
+                    case (short) 1768:
+                        // Non-standard EMV size (221 bytes) - keep raw value
+                        break;
                     case (short) 1984:
                         keyLength = KeyBuilder.LENGTH_RSA_1984;
                         break;
@@ -421,8 +424,8 @@ public class PaymentApplication extends EmvApplet {
             cdaSupportedInAip = ((aipByte1 & (byte) 0x01) != 0);
         }
 
-        // Perform CDA if: explicitly requested OR (supported in AIP AND we can do it)
-        boolean shouldPerformCda = cdaRequested || (cdaSupportedInAip && canPerformCda);
+        // Perform CDA only if explicitly requested AND we can do it
+        boolean shouldPerformCda = cdaRequested && canPerformCda;
 
         // Set Cryptogram Information Data (9F27)
         // CID bits 7-6 indicate cryptogram type: 00=AAC, 01=TC, 10=ARQC
