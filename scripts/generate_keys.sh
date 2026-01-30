@@ -16,8 +16,8 @@ CAPK_KEY_SIZE_BYTES=$((CAPK_KEY_SIZE / 8))  # 248 bytes
 ISSUER_KEY_SIZE=1984
 ISSUER_KEY_SIZE_BYTES=$((ISSUER_KEY_SIZE / 8))  # 248 bytes
 
-ICC_KEY_SIZE=2048
-ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 256 bytes
+ICC_KEY_SIZE=1024
+ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 128 bytes
 
 # Certificate math (from spec):
 # Issuer cert (90) = CAPK modulus len = 248 bytes
