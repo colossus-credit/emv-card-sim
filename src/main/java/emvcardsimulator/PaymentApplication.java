@@ -43,6 +43,11 @@ public class PaymentApplication extends EmvApplet {
     private short debugHashInputLength = 0;
     private byte[] debugHashOutput = null;
 
+    // DEBUG: Storage for SDAD hash input and output
+    private byte[] debugSdadHashInput = null;
+    private short debugSdadHashInputLength = 0;
+    private byte[] debugSdadHashOutput = null;
+
     // Chunked settings transfer state (for RSA key on T=0 cards)
     private byte[] settingsChunkBuffer = null;
     private short settingsChunkSettingId = 0;
@@ -310,6 +315,16 @@ public class PaymentApplication extends EmvApplet {
                 // Throw 61xx directly - should return SW=6103 if JCRE works correctly
                 ISOException.throwIt((short) 0x6103);
                 return; // Never reached but prevents fall-through warning
+            // DIAGNOSTIC: Get SDAD hash input and output
+            case 0x000B:
+                // Return: [input_len_hi, input_len_lo, hash_output(32), hash_input(up to 98)]
+                buf[0] = (byte) ((debugSdadHashInputLength >> 8) & 0xFF);
+                buf[1] = (byte) (debugSdadHashInputLength & 0xFF);
+                Util.arrayCopy(debugSdadHashOutput, (short) 0, buf, (short) 2, (short) 32);
+                short sdadCopyLen = (debugSdadHashInputLength > (short) 98) ? (short) 98 : debugSdadHashInputLength;
+                Util.arrayCopy(debugSdadHashInput, (short) 0, buf, (short) 34, sdadCopyLen);
+                apdu.setOutgoingAndSend((short) 0, (short) (34 + sdadCopyLen));
+                return;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
@@ -338,6 +353,12 @@ public class PaymentApplication extends EmvApplet {
         debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
         debugHashInputLength = 0;
         debugHashOutput = JCSystem.makeTransientByteArray((short) 32, JCSystem.CLEAR_ON_DESELECT);
+
+        // DEBUG: Storage for SDAD hash input (100 bytes: 94 bytes SDAD data + 4 bytes UN + margin) and output
+        // Use PERSISTENT storage so data survives app deselect/reselect for debugging
+        debugSdadHashInput = new byte[100];
+        debugSdadHashInputLength = 0;
+        debugSdadHashOutput = new byte[32];
 
         // Chunked settings buffer for RSA key on T=0 cards (persistent)
         settingsChunkBuffer = new byte[512];
@@ -788,9 +809,18 @@ public class PaymentApplication extends EmvApplet {
         //             + Unpredictable Number (9F37)
         short checksumStartIndex = (short) (signedDataSize - 33);
 
+        // DEBUG: Clear and prepare to record SDAD hash input
+        debugSdadHashInputLength = 0;
+
         shaMessageDigest.reset();
         // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)
-        shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));
+        short sdadDataLen = (short) (checksumStartIndex - 1);
+        shaMessageDigest.update(tmpBuffer, (short) 1, sdadDataLen);
+
+        // DEBUG: Record SDAD data portion (first 94 bytes or less)
+        short copyLen = (sdadDataLen > (short) 94) ? (short) 94 : sdadDataLen;
+        Util.arrayCopy(tmpBuffer, (short) 1, debugSdadHashInput, (short) 0, copyLen);
+        debugSdadHashInputLength = copyLen;
 
         // Include Unpredictable Number from CDOL data
         // CDOL1: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)... UN at offset 25
@@ -799,9 +829,17 @@ public class PaymentApplication extends EmvApplet {
         short unOffset = (cdolLen == (short) 60) ? (short) 27 : (short) 25;
         if (cdolLen >= (short) (unOffset + 4)) {
             shaMessageDigest.update(buf, (short) (ISO7816.OFFSET_CDATA + unOffset), (short) 4);
+            // DEBUG: Record UN
+            if ((short)(debugSdadHashInputLength + 4) <= (short) 100) {
+                Util.arrayCopy(buf, (short) (ISO7816.OFFSET_CDATA + unOffset), debugSdadHashInput, debugSdadHashInputLength, (short) 4);
+                debugSdadHashInputLength = (short)(debugSdadHashInputLength + 4);
+            }
         }
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, checksumStartIndex);
+
+        // DEBUG: Store the SDAD hash output
+        Util.arrayCopy(tmpBuffer, checksumStartIndex, debugSdadHashOutput, (short) 0, (short) 32);
 
         // RSA sign (encrypt with private key)
         // Use tmpBuffer[256..] for output to avoid overwriting APDU buffer header

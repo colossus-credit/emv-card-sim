@@ -23,7 +23,7 @@ ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 128 bytes
 # Issuer cert (90) = CAPK modulus len = 248 bytes
 # Issuer remainder (92) = Issuer modulus - (CAPK - 36) = 248 - 212 = 36 bytes
 # ICC cert (9F46) = Issuer modulus len = 248 bytes
-# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 256 - 206 = 50 bytes
+# ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 128 - 206 = 0 bytes (fits in cert)
 
 # Default values
 DEFAULT_RID="A000000951"
@@ -270,7 +270,7 @@ generate_icc() {
 
     local cert_expiry="${expiry:2:2}${expiry:0:2}"  # MMYY (from YYMMDD input)
     local serial="000001"
-    local hash_algo="01"  # SHA-1
+    local hash_algo="02"  # SHA-256 (must match SDAD hash algorithm)
     local pk_algo="01"    # RSA
     # EMV spec: PK length in bytes mod 256
     local icc_modulus_len_bytes=$((${#icc_modulus_hex} / 2))
@@ -278,8 +278,8 @@ generate_icc() {
     local pk_exp_len="01"
 
     # Calculate how much of ICC public key fits in certificate
-    # Overhead: Header(1) + Format(1) + PAN(10) + Expiry(2) + Serial(3) + HashAlgo(1) + PKAlgo(1) + PKLen(1) + PKExpLen(1) + Hash(20) + Trailer(1) = 42
-    local pk_in_cert_len=$((issuer_modulus_len - 42))  # 248 - 42 = 206 bytes
+    # Overhead: Header(1) + Format(1) + PAN(10) + Expiry(2) + Serial(3) + HashAlgo(1) + PKAlgo(1) + PKLen(1) + PKExpLen(1) + Hash(32 for SHA-256) + Trailer(1) = 54
+    local pk_in_cert_len=$((issuer_modulus_len - 54))  # 248 - 54 = 194 bytes
 
     local remainder_len=0
     local padding=""
@@ -310,9 +310,23 @@ generate_icc() {
     local static_data_auth=""
 
     if [[ -z "$STATIC_DATA_AUTH" ]]; then
-        # Build SDA from actual certificate files
-        # Record 1: 8F 01 92 9F32 01 03 9F4A 01 82
-        local record1="8F01929F3201039F4A0182"
+        # Build SDA from actual card record layout
+        # SFI2/REC1: 8F (CAPK index), 92 (issuer remainder), 9F32 (issuer exp), 9F47 (ICC exp)
+        # SFI2/REC2: 90 (issuer cert)
+
+        # Get issuer remainder for record 1
+        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
+        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
+
+        # Record 1: 8F 01 92 + 92 <len> <issuer_rem> + 9F32 01 03 + 9F47 01 03
+        local record1="8F0192"  # CAPK index = 0x92
+        if (( issuer_rem_size > 0 )); then
+            record1+=$(printf '92%02X' $issuer_rem_size)
+            record1+="$issuer_rem_hex"
+        fi
+        record1+="9F320103"  # Issuer exponent = 0x03
+        record1+="9F470103"  # ICC exponent = 0x03
+        log_info "Record 1: 8F, 92 (${issuer_rem_size} bytes), 9F32, 9F47"
 
         # Record 2: Issuer Certificate with TLV encoding (90 81 F8 + 248 bytes)
         local issuer_cert_hex=$(xxd -p "${issuer_dir}/issuer_certificate.bin" | tr -d '\n')
@@ -325,23 +339,12 @@ generate_icc() {
             record2=$(printf '90%02X' $issuer_cert_size)
         fi
         record2+="$issuer_cert_hex"
-        log_info "Issuer cert TLV: ${issuer_cert_size} bytes"
+        log_info "Record 2: Issuer cert TLV (${issuer_cert_size} bytes)"
 
-        # Record 3: Issuer Remainder with TLV encoding (92 24 + 36 bytes)
-        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
-        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
-        local record3=""
-        if (( issuer_rem_size > 0 )); then
-            record3=$(printf '92%02X' $issuer_rem_size)
-            record3+="$issuer_rem_hex"
-        fi
-        log_info "Issuer remainder: ${issuer_rem_size} bytes"
-
-        # AIP value (tag 82 value) - MUST match AIP personalized on card
-        # 1980 = CDA supported, terminal risk management, issuer auth supported
+        # AIP value (tag 82 value) - matches card's actual AIP for contactless CDA
         local aip="1980"
 
-        static_data_auth="${record1}${record2}${record3}${aip}"
+        static_data_auth="${record1}${record2}${aip}"
         log_info "Computed SDA data (${#static_data_auth} hex chars / $(( ${#static_data_auth} / 2 )) bytes)"
     else
         static_data_auth="$STATIC_DATA_AUTH"
@@ -351,8 +354,8 @@ generate_icc() {
     local data_in_cert="${format}${pan_cert}${cert_expiry}${serial}${hash_algo}${pk_algo}${pk_len}${pk_exp_len}${pk_in_cert}${padding}"
     local data_to_hash="${data_in_cert}${remainder_hex}${exponent_hex}${static_data_auth}"
 
-    # Calculate SHA-1 hash
-    local hash=$(echo -n "$data_to_hash" | xxd -r -p | openssl dgst -sha1 -binary | xxd -p | tr -d '\n')
+    # Calculate SHA-256 hash (32 bytes, matching SDAD hash algorithm)
+    local hash=$(echo -n "$data_to_hash" | xxd -r -p | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
 
     # Build complete certificate data (data in cert + hash)
     local cert_content="${data_in_cert}${hash}"

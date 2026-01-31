@@ -140,12 +140,12 @@ validate_icc_cert() {
         return 1
     fi
 
-    # Extract hash from certificate
-    local cert_hash="${decrypted: -42:40}"
+    # Extract hash from certificate (SHA-256 = 32 bytes = 64 hex chars)
+    local cert_hash="${decrypted: -66:64}"
 
     # Extract data to verify (cert data without header, hash, and trailer)
     # EMV hash is computed over: Format || PAN || Expiry || Serial || Hash Algo || PK Algo || PK Len || Exp Len || PK Data || Remainder || Exponent || Static Data Auth
-    local data_len=$((${#decrypted} - 2 - 40 - 2))
+    local data_len=$((${#decrypted} - 2 - 64 - 2))  # header(2) + hash(64) + trailer(2) = 68 hex chars
     local data_in_cert="${decrypted:2:$data_len}"
 
     # Get the remainder and exponent (these are part of the hash but stored separately)
@@ -162,18 +162,30 @@ validate_icc_cert() {
 
     # Static Data to be Authenticated (for CDA cards)
     # This MUST include ALL offline data auth records from AFL:
-    #   - SFI 2 Record 1: 8F (CAPK Index), 9F32 (Issuer PK Exp), 9F4A (SDA Tag List)
+    #   - SFI 2 Record 1: 8F (CAPK Index), 92 (Issuer PK Remainder), 9F32 (Issuer PK Exp), 9F47 (ICC PK Exp)
     #   - SFI 2 Record 2: 90 (Issuer Certificate)
-    #   - SFI 2 Record 3: 92 (Issuer PK Remainder)
-    #   - AIP value (because 9F4A=82 says to include tag 82)
+    #   - AIP value
     local static_data_auth=""
 
     if [[ -z "$STATIC_DATA_AUTH" ]]; then
-        # Build SDA from actual certificate files
-        # Record 1: 8F 01 92 9F32 01 03 9F4A 01 82
-        local record1="8F01929F3201039F4A0182"
+        # Build SDA from actual card record layout
+        # SFI2/REC1: 8F (CAPK index), 92 (issuer remainder), 9F32 (issuer exp), 9F47 (ICC exp)
+        # SFI2/REC2: 90 (issuer cert)
 
-        # Record 2: Issuer Certificate with TLV encoding (90 82 01 00 + 256 bytes)
+        # Get issuer remainder for record 1
+        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
+        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
+
+        # Record 1: 8F 01 92 + 92 <len> <issuer_rem> + 9F32 01 03 + 9F47 01 03
+        local record1="8F0192"  # CAPK index = 0x92
+        if (( issuer_rem_size > 0 )); then
+            record1+=$(printf '92%02X' $issuer_rem_size)
+            record1+="$issuer_rem_hex"
+        fi
+        record1+="9F320103"  # Issuer exponent = 0x03
+        record1+="9F470103"  # ICC exponent = 0x03
+
+        # Record 2: Issuer Certificate with TLV encoding (90 81 F8 + 248 bytes)
         local issuer_cert_hex=$(xxd -p "${issuer_dir}/issuer_certificate.bin" | tr -d '\n')
         local issuer_cert_size=$((${#issuer_cert_hex} / 2))
         local record2=""
@@ -188,19 +200,10 @@ validate_icc_cert() {
         fi
         record2+="$issuer_cert_hex"
 
-        # Record 3: Issuer Remainder with TLV encoding (92 XX + remainder bytes)
-        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
-        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
-        local record3=""
-        if (( issuer_rem_size > 0 )); then
-            record3=$(printf '92%02X' $issuer_rem_size)
-            record3+="$issuer_rem_hex"
-        fi
-
-        # AIP value (tag 82 value) - MUST match AIP on card (1980 = CDA supported)
+        # AIP value (tag 82 value) - matches card's actual AIP for contactless CDA
         local aip="1980"
 
-        static_data_auth="${record1}${record2}${record3}${aip}"
+        static_data_auth="${record1}${record2}${aip}"
     else
         static_data_auth="$STATIC_DATA_AUTH"
     fi
@@ -208,15 +211,15 @@ validate_icc_cert() {
     # Build complete data to hash: cert data + remainder + exponent + static data auth
     local data_to_verify="${data_in_cert}${remainder_hex}${exponent_hex}${static_data_auth}"
 
-    # Calculate hash
-    local calculated_hash=$(echo -n "$data_to_verify" | xxd -r -p | openssl dgst -sha1 -binary | xxd -p | tr -d '\n')
+    # Calculate hash (SHA-256 to match SDAD hash algorithm)
+    local calculated_hash=$(echo -n "$data_to_verify" | xxd -r -p | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
 
     if [[ "$cert_hash" == "$calculated_hash" ]]; then
         log_pass "ICC certificate hash verified"
     else
         # Try without static data auth (in case certificates were generated differently)
         local data_to_verify_no_sda="${data_in_cert}${remainder_hex}${exponent_hex}"
-        local calculated_hash_no_sda=$(echo -n "$data_to_verify_no_sda" | xxd -r -p | openssl dgst -sha1 -binary | xxd -p | tr -d '\n')
+        local calculated_hash_no_sda=$(echo -n "$data_to_verify_no_sda" | xxd -r -p | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
 
         if [[ "$cert_hash" == "$calculated_hash_no_sda" ]]; then
             log_pass "ICC certificate hash verified (no static data auth)"

@@ -762,7 +762,7 @@ personalize_card() {
     # AIP: 1980 (CDA supported, terminal risk management, issuer auth supported)
     gp_cmd+=" -a 80010082021980"
     # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (0 ODA)
-    gp_cmd+=" -a 800100940C080202001001020018010400"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
     gp_cmd+=" -a 80019F4A0182"
     # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
@@ -838,7 +838,7 @@ personalize_card() {
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F070200FF00"
     gp_cmd+=" -a 80010082021980"
-    gp_cmd+=" -a 800100940C080202001001020018010400"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -1007,7 +1007,7 @@ personalize_payapp_small() {
 
     # Small EMV tags - CRITICAL: AIP and AFL
     gp_cmd+=" -a 80010082021980"
-    gp_cmd+=" -a 800100940C080202001001020018010400"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1335,7 +1335,7 @@ personalize_payapp_contactless_small() {
 
     # Small EMV tags - CRITICAL: AIP and AFL
     gp_cmd+=" -a 80010082021980"
-    gp_cmd+=" -a 800100940C080202001001020018010400"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
