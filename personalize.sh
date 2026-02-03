@@ -52,6 +52,7 @@ ICC_REM=""
 ICC_EXP=""
 ICC_PRIVKEY=""
 ICC_MODULUS=""
+ICC_PROVIDED=false
 ISSUER_CERT=""
 ISSUER_REM=""
 ISSUER_EXP=""
@@ -385,6 +386,9 @@ locate_cert_files() {
     [[ -n "$ICC_CERT" || -n "$ICC_REM" || -n "$ICC_EXP" || -n "$ICC_PRIVKEY" ]] && icc_provided=true
     [[ -n "$ISSUER_CERT" || -n "$ISSUER_REM" || -n "$ISSUER_EXP" ]] && issuer_provided=true
 
+    # Track globally whether external ICC keys were provided (skip regeneration)
+    $icc_provided && ICC_PROVIDED=true
+
     # If any cert option provided, all must be provided
     if $icc_provided; then
         if [[ -z "$ICC_CERT" || -z "$ICC_REM" || -z "$ICC_EXP" || -z "$ICC_PRIVKEY" ]]; then
@@ -441,8 +445,18 @@ locate_cert_files() {
         fi
     fi
 
-    # Set ICC modulus if using default path
-    [[ -z "$ICC_MODULUS" ]] && ICC_MODULUS="${KEYS_DIR}/icc/icc_modulus.bin"
+    # Set ICC modulus: extract from provided private key, or use default path
+    if [[ -z "$ICC_MODULUS" ]]; then
+        if $ICC_PROVIDED && [[ -n "$ICC_PRIVKEY" ]]; then
+            # Extract modulus from provided private key into a temp file
+            ICC_MODULUS="${KEYS_DIR}/icc/icc_modulus.bin"
+            openssl rsa -in "$ICC_PRIVKEY" -modulus -noout 2>/dev/null | \
+                sed 's/Modulus=//' | xxd -r -p > "$ICC_MODULUS"
+            log_info "Extracted ICC modulus from provided private key ($(wc -c < "$ICC_MODULUS" | tr -d ' ') bytes)"
+        else
+            ICC_MODULUS="${KEYS_DIR}/icc/icc_modulus.bin"
+        fi
+    fi
 
     # Verify all files exist
     for f in "$ICC_CERT" "$ICC_REM" "$ICC_EXP" "$ICC_PRIVKEY" "$ISSUER_CERT" "$ISSUER_REM" "$ISSUER_EXP"; do
@@ -1514,7 +1528,12 @@ main() {
 
     # Regenerate ICC certificate to match the current PAN
     # (ICC cert contains PAN and must be regenerated each time)
-    regenerate_icc_cert
+    # Skip regeneration if external ICC keys were provided
+    if $ICC_PROVIDED; then
+        log_info "Using externally provided ICC keys — skipping ICC regeneration"
+    else
+        regenerate_icc_cert
+    fi
 
     # Validate certificates
     validate_certificates

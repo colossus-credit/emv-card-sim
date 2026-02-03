@@ -21,7 +21,7 @@ public class EmvTag {
 
     protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];
-        data = new byte[300];  // Increased for RSA-2048 certificates (256 bytes)
+        data = new byte[350];  // Sized for RSA-2048: record 70 wrapping 9F46 (261) + 9F48 (57) = 318+
         this.length = length;
 
         Util.setShort(tag, (short) 0, tagId);

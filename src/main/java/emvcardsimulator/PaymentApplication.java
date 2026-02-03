@@ -681,25 +681,6 @@ public class PaymentApplication extends EmvApplet {
             }
         }
 
-        // 3. Include low byte of response template (77) length BEFORE TLV tags
-        // The terminal parses tag 77 with response_data[3..] which includes this byte
-        // when length >= 256 (encoded as 77 82 XX YY, [3..] gives YY followed by TLV data)
-        // Calculate total response content length:
-        // 9F27(4) + 9F36(5) + 9F26(11) + 9F10(3+iadLen) + 9F4B(2+lengthBytes+rsaKeySize)
-        EmvTag iadTagForLen = EmvTag.findTag((short) 0x9F10);
-        short iadLenForCalc = (iadTagForLen != null) ? (short) (iadTagForLen.getLength() & 0xFF) : 0;
-        short sdadLengthBytes = (rsaPrivateKeyByteSize >= (short) 256) ? (short) 3 : (short) 2;
-        short responseContentLen = (short) (4 + 5 + 11 + 3 + iadLenForCalc + 2 + sdadLengthBytes + rsaPrivateKeyByteSize);
-        // Only include low byte if length requires 82 XX YY encoding (>= 256)
-        if (responseContentLen >= (short) 256) {
-            tmpBuffer[400] = (byte) (responseContentLen & 0xFF);
-            shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
-            // DEBUG: Record length byte
-            if (debugHashInputLength < (short) 256) {
-                debugHashInput[debugHashInputLength] = (byte) (responseContentLen & 0xFF);
-                debugHashInputLength = (short)(debugHashInputLength + 1);
-            }
-        }
 
         // 4. Include response TLV tags (EMV Book 2 Section 6.5.1.4)
         // 9F27 (CID) - 1 byte value
@@ -758,18 +739,6 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) (3 + iadLen));
                 debugHashInputLength = (short)(debugHashInputLength + 3 + iadLen);
             }
-        }
-
-        // 5. Include 9F4B tag bytes (but not length or value)
-        // The terminal includes the 9F4B tag because it subtracts only 6 hex chars (3 bytes)
-        // for what it thinks is the header, but the actual header is 5 bytes (9F4B + 82 01 00)
-        tmpBuffer[400] = (byte) 0x9F;
-        tmpBuffer[401] = (byte) 0x4B;
-        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 2);
-        // DEBUG: Record 9F4B tag
-        if ((short)(debugHashInputLength + 2) <= (short) 256) {
-            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 2);
-            debugHashInputLength = (short)(debugHashInputLength + 2);
         }
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
