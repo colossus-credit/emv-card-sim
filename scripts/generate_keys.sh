@@ -9,21 +9,22 @@ KEYS_DIR="${PROJECT_ROOT}/keys"
 
 # Key sizes (in bits)
 # CAPK and Issuer: RSA-1984 (248 bytes) - terminal CAPK storage limitation
-# ICC: RSA-1984 (248 bytes) - for CDA signing (SDAD size)
+# ICC: RSA-1984 (248 bytes) - for DDA signing (SDAD size, fits in single APDU)
 CAPK_KEY_SIZE=1984
 CAPK_KEY_SIZE_BYTES=$((CAPK_KEY_SIZE / 8))  # 248 bytes
 
 ISSUER_KEY_SIZE=1984
 ISSUER_KEY_SIZE_BYTES=$((ISSUER_KEY_SIZE / 8))  # 248 bytes
 
-ICC_KEY_SIZE=1536
-ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 192 bytes
+ICC_KEY_SIZE=1984
+ICC_KEY_SIZE_BYTES=$((ICC_KEY_SIZE / 8))  # 248 bytes
 
 # Certificate math (from spec):
 # Issuer cert (90) = CAPK modulus len = 248 bytes
 # Issuer remainder (92) = Issuer modulus - (CAPK - 36) = 248 - 212 = 36 bytes
 # ICC cert (9F46) = Issuer modulus len = 248 bytes
 # ICC remainder (9F48) = ICC modulus - (Issuer - 42) = 248 - 206 = 42 bytes
+# SDAD (9F4B) = ICC modulus len = 248 bytes
 
 # Default values
 DEFAULT_RID="A000000951"
@@ -218,7 +219,7 @@ EOF
     log_info "Issuer certificate generated in ${output_dir}"
 }
 
-# Generate ICC key pair and certificate - RSA-2048
+# Generate ICC key pair and certificate - RSA-1984
 generate_icc() {
     local pan="$1"
     local expiry="${2:-271231}"  # Default expiry YYMMDD
@@ -233,7 +234,7 @@ generate_icc() {
 
     log_info "Generating ICC key pair and certificate - RSA-${ICC_KEY_SIZE} (${ICC_KEY_SIZE_BYTES} bytes)..."
 
-    # Generate RSA key pair for ICC (2048 bits)
+    # Generate RSA key pair for ICC (1984 bits)
     openssl genrsa -3 -out "${output_dir}/icc_private.pem" $ICC_KEY_SIZE 2>/dev/null
 
     # Extract public key
@@ -256,7 +257,7 @@ generate_icc() {
     # Create ICC certificate (signed by Issuer)
     # Certificate length = Issuer modulus length = 248 bytes
     # Overhead = 42 bytes, so modulus fragment = 248 - 42 = 206 bytes
-    # ICC modulus = 256 bytes, so remainder = 256 - 206 = 50 bytes
+    # ICC modulus = 248 bytes, so remainder = 248 - 206 = 42 bytes
     local issuer_modulus_len=$ISSUER_KEY_SIZE_BYTES  # 248
 
     local header="6A"
@@ -336,7 +337,7 @@ generate_icc() {
         log_info "SFI2 Record 2 (Issuer cert TLV): ${issuer_cert_size} bytes"
 
         # AIP value (tag 82 value, because 9F4A=82)
-        local aip="3D01"
+        local aip="3C01"
 
         static_data_auth="${record1}${record2}${aip}"
         log_info "Computed SDA data (${#static_data_auth} hex chars / $(( ${#static_data_auth} / 2 )) bytes)"
@@ -368,7 +369,7 @@ generate_icc() {
     echo -n "$sign_block" | xxd -r -p > /tmp/icc_cert_data.bin
     openssl rsautl -sign -inkey "${issuer_dir}/issuer_private.pem" -in /tmp/icc_cert_data.bin -out "${output_dir}/icc_certificate.bin" -raw 2>/dev/null
 
-    # Save remainder (50 bytes)
+    # Save remainder (42 bytes for RSA-1984)
     if (( remainder_len > 0 )); then
         echo -n "$remainder_hex" | xxd -r -p > "${output_dir}/icc_remainder.bin"
         log_info "ICC remainder: ${remainder_len} bytes saved"
@@ -417,7 +418,7 @@ generate_all() {
     log_info "  - Issuer cert (90):    ${CAPK_KEY_SIZE_BYTES} bytes"
     log_info "  - Issuer remainder(92): 36 bytes"
     log_info "  - ICC cert (9F46):     ${ISSUER_KEY_SIZE_BYTES} bytes"
-    log_info "  - ICC remainder(9F48): 50 bytes"
+    log_info "  - ICC remainder(9F48): 42 bytes"
     log_info "  - SDAD (9F4B):         ${ICC_KEY_SIZE_BYTES} bytes"
 }
 

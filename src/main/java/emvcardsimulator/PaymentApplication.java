@@ -935,17 +935,21 @@ public class PaymentApplication extends EmvApplet {
 
         Util.arrayFillNonAtomic(tmpBuffer, (short) 0, signedDataSize, (byte) 0xBB);
 
-        tmpBuffer[0] = (byte) 0x6A;
-        tmpBuffer[1] = (byte) 0x05;
-        tmpBuffer[2] = (byte) 0x02; // SHA-256 hash algo
-        tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
+        tmpBuffer[0] = (byte) 0x6A;  // Header
+        tmpBuffer[1] = (byte) 0x05;  // Signed Data Format (DDA/CDA)
+        tmpBuffer[2] = (byte) 0x01;  // Hash Algorithm Indicator (SHA-1)
+        tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;  // Trailer
 
-        tmpBuffer[3] = (byte) tag9f4cDynamicNumber.length;
+        // ICC Dynamic Data per EMV Book 2 Table 15:
+        // LDD = 1 (ICC Dynamic Number Length) + ICC Dynamic Number
+        byte iccDynNumLen = (byte) tag9f4cDynamicNumber.length;
+        tmpBuffer[3] = (byte) (1 + iccDynNumLen);  // LDD
+        tmpBuffer[4] = iccDynNumLen;  // ICC Dynamic Number Length
         arrayRandomFill(tag9f4cDynamicNumber);
 
-        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 4, (short) tmpBuffer[3]);
+        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 5, (short) iccDynNumLen);
 
-        short checksumStartIndex = (short) (signedDataSize - 33);
+        short checksumStartIndex = (short) (signedDataSize - 21);
         shaMessageDigest.reset();
         shaMessageDigest.update(tmpBuffer, (short) 1, (short) (checksumStartIndex - 1));        
         shaMessageDigest.doFinal(buf, (short) ISO7816.OFFSET_CDATA, (short) (buf[ISO7816.OFFSET_LC] & 0x00FF), tmpBuffer, checksumStartIndex);

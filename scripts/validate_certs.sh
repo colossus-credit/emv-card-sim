@@ -193,7 +193,7 @@ validate_icc_cert() {
         record2+="$issuer_cert_hex"
 
         # AIP value (tag 82 value, because 9F4A=82)
-        local aip="3D01"
+        local aip="3C01"
 
         static_data_auth="${record1}${record2}${aip}"
     else
