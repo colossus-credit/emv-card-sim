@@ -748,11 +748,11 @@ personalize_card() {
     gp_cmd+=" -a 80019F08020001"
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
-    # AIP: 3101 (DDA+CDA supported, cardholder verification, NO issuer auth, NO terminal risk management)
-    gp_cmd+=" -a 80010082023101"
-    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (0 ODA), SFI3 rec1-4 (1 ODA on rec4)
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80019F0702FF0000"
+    # AIP: 3D01 (DDA+CDA supported, cardholder verification, issuer auth, terminal risk management)
+    gp_cmd+=" -a 80010082023D01"
+    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (2 ODA), SFI3 rec1-4 (0 ODA)
+    gp_cmd+=" -a 800100940C080202001001020218010400"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
     gp_cmd+=" -a 80019F4A0182"
     # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
@@ -768,7 +768,7 @@ personalize_card() {
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     # CVM List (20 bytes - Visa format)
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 8001008E0A00000000000000001F00"
     # IAC-Default: conditions that default to online
     gp_cmd+=" -a 80019F0D05FC688C9800"
     # IAC-Denial: set to zeros so nothing triggers offline decline
@@ -820,9 +820,9 @@ personalize_card() {
     gp_cmd+=" -a 80019F08020001"
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80019F0702FF0000"
+    gp_cmd+=" -a 80010082023D01"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -831,7 +831,7 @@ personalize_card() {
     gp_cmd+=" -a 80019F49039F3704"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"
@@ -984,8 +984,8 @@ personalize_payapp_small() {
     # NOTE: SFI 2 (cert records) and SFI 3 Record 4 (ICC cert) templates moved to personalize_payapp_large
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80010082023D01"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1000,7 +1000,7 @@ personalize_payapp_small() {
     gp_cmd+=" -a 80019F08020001"
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80019F0702FF0000"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -1009,7 +1009,7 @@ personalize_payapp_small() {
     gp_cmd+=" -a 80019F49039F3704"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"
@@ -1294,8 +1294,8 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023101"
-    gp_cmd+=" -a 800100940C080202001001020018010401"
+    gp_cmd+=" -a 80010082023D01"
+    gp_cmd+=" -a 800100940C080202001001020218010400"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1310,7 +1310,7 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80019F08020001"
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
-    gp_cmd+=" -a 80019F070200FF00"
+    gp_cmd+=" -a 80019F0702FF0000"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -1319,7 +1319,7 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80019F49039F3704"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008E140000000000000000020142041E0400055E001F00"
+    gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"

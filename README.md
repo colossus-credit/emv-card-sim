@@ -30,6 +30,20 @@ If you have all developer tools existing, or enter to `nix-shell`, then you can 
 gradle build
 ```
 
+### Building with custom AIDs
+
+By default, CAP files are built with the Colossus RID (`A000000951`). To build for a different RID (e.g., Visa `A000000003`):
+
+```sh
+./gradlew cap \
+  -Ppaymentapp_cap_aid=A000000003000000 \
+  -Ppaymentapp_applet_aid=A0000000031010 \
+  -Ppaymentapp_contactless_cap_aid=A000000003100000 \
+  -Ppaymentapp_contactless_applet_aid=A0000000031020
+```
+
+The applet AID is baked into the CAP file at build time. The `personalize.sh` script uses the RID from its config, so the CAP must be built with matching AIDs before personalization.
+
 ## Colossus Credit Card Network Support
 
 This simulator now includes full support for the **Colossus Credit Card Network** with CDA (Combined Dynamic Data Authentication):
