@@ -334,14 +334,14 @@ public class PaymentApplication extends EmvApplet {
         // DEBUG: Storage for hash input (256 bytes should be enough) and output (32 bytes for SHA-256)
         debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
         debugHashInputLength = 0;
-        debugHashOutput = JCSystem.makeTransientByteArray((short) 32, JCSystem.CLEAR_ON_DESELECT);
+        debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
 
         // Chunked settings buffer for RSA key on T=0 cards (persistent)
         settingsChunkBuffer = new byte[512];
 
         rsaCipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
 
-        shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
+        shaMessageDigest = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
@@ -555,18 +555,18 @@ public class PaymentApplication extends EmvApplet {
         // Build SDAD structure per EMV Book 2 Table 16
         tmpBuffer[0] = (byte) 0x6A;  // Header
         tmpBuffer[1] = (byte) 0x05;  // Signed Data Format for CDA
-        tmpBuffer[2] = (byte) 0x02;  // Hash Algorithm Indicator (SHA-256)
+        tmpBuffer[2] = (byte) 0x01;  // Hash Algorithm Indicator (SHA-1)
 
         // ICC Dynamic Data for CDA Format 05:
         // - ICC Dynamic Number Length (1 byte)
         // - ICC Dynamic Number (LDD bytes, we use 8)
         // - Cryptogram Information Data (1 byte)
         // - Application Cryptogram (8 bytes)
-        // - Transaction Data Hash Code (32 bytes) - hash over CDOL data
-        // Total: 1 + 8 + 1 + 8 + 32 = 50 bytes
+        // - Transaction Data Hash Code (20 bytes) - hash over CDOL data
+        // Total: 1 + 8 + 1 + 8 + 20 = 38 bytes
 
         byte iccDynNumLen = (byte) 8;
-        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8 + 32); // len + DN + CID + AC + TDH
+        byte iccDynamicDataLength = (byte) (1 + iccDynNumLen + 1 + 8 + 20); // len + DN + CID + AC + TDH
         tmpBuffer[3] = iccDynamicDataLength;
 
         short offset = 4;
@@ -760,30 +760,21 @@ public class PaymentApplication extends EmvApplet {
             }
         }
 
-        // 5. Include 9F4B tag bytes (but not length or value)
-        // The terminal includes the 9F4B tag because it subtracts only 6 hex chars (3 bytes)
-        // for what it thinks is the header, but the actual header is 5 bytes (9F4B + 82 01 00)
-        tmpBuffer[400] = (byte) 0x9F;
-        tmpBuffer[401] = (byte) 0x4B;
-        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 2);
-        // DEBUG: Record 9F4B tag
-        if ((short)(debugHashInputLength + 2) <= (short) 256) {
-            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 2);
-            debugHashInputLength = (short)(debugHashInputLength + 2);
-        }
+        // 9F4B (SDAD) is excluded per EMV Book 2 Section 6.6.3 Step 10:
+        // "with the exception of the Signed Dynamic Application Data"
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
         // DEBUG: Store the Transaction Data Hash output
-        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 32);
-        offset += 32;
+        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
+        offset += 20;
 
         // Trailer at end
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
 
-        // Compute SDAD hash (SHA-256)
-        // Hash input: bytes 1 through (signedDataSize - 34) = format through padding
+        // Compute SDAD hash (SHA-1)
+        // Hash input: bytes 1 through (signedDataSize - 22) = format through padding
         //             + Unpredictable Number (9F37)
-        short checksumStartIndex = (short) (signedDataSize - 33);
+        short checksumStartIndex = (short) (signedDataSize - 21);
 
         shaMessageDigest.reset();
         // Hash: Format through Pad Pattern (bytes 1 to checksumStartIndex-1)

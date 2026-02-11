@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 KEYS_DIR="${PROJECT_ROOT}/keys"
 
+DEFAULT_CAPK_INDEX="92"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -161,46 +163,39 @@ validate_icc_cert() {
     fi
 
     # Static Data to be Authenticated (for CDA cards)
-    # This MUST include ALL offline data auth records from AFL:
-    #   - SFI 2 Record 1: 8F (CAPK Index), 9F32 (Issuer PK Exp), 9F4A (SDA Tag List)
+    # Per EMV Book 2: concatenation of VALUE fields from ODA records in AFL order + AIP
+    # AFL marks SFI 2 records 1-2 for ODA (ODA count = 2):
+    #   - SFI 2 Record 1: 8F (CAPK Index), 92 (Issuer PK Remainder), 9F32 (Issuer PK Exp), 9F47 (ICC PK Exp)
     #   - SFI 2 Record 2: 90 (Issuer Certificate)
-    #   - SFI 2 Record 3: 92 (Issuer PK Remainder)
     #   - AIP value (because 9F4A=82 says to include tag 82)
     local static_data_auth=""
 
     if [[ -z "$STATIC_DATA_AUTH" ]]; then
-        # Build SDA from actual certificate files
-        # Record 1: 8F 01 92 9F32 01 03 9F4A 01 82
-        local record1="8F01929F3201039F4A0182"
+        # SFI 2 Record 1 value: 8F(01)F1 + 92(len)remainder + 9F32(01)03 + 9F47(01)03
+        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
+        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
+        local record1="8F01${DEFAULT_CAPK_INDEX}"
+        if (( issuer_rem_size > 0 )); then
+            record1+=$(printf '92%02X' $issuer_rem_size)
+            record1+="$issuer_rem_hex"
+        fi
+        record1+="9F3201039F470103"
 
-        # Record 2: Issuer Certificate with TLV encoding (90 82 01 00 + 256 bytes)
+        # SFI 2 Record 2 value: 90(len)issuer_cert
         local issuer_cert_hex=$(xxd -p "${issuer_dir}/issuer_certificate.bin" | tr -d '\n')
         local issuer_cert_size=$((${#issuer_cert_hex} / 2))
         local record2=""
-        if (( issuer_cert_size > 255 )); then
-            # Length encoding: 82 XX XX for > 255 bytes
-            record2=$(printf '9082%04X' $issuer_cert_size)
-        elif (( issuer_cert_size >= 128 )); then
-            # Length encoding: 81 XX for 128-255 bytes
+        if (( issuer_cert_size >= 128 )); then
             record2=$(printf '9081%02X' $issuer_cert_size)
         else
             record2=$(printf '90%02X' $issuer_cert_size)
         fi
         record2+="$issuer_cert_hex"
 
-        # Record 3: Issuer Remainder with TLV encoding (92 XX + remainder bytes)
-        local issuer_rem_hex=$(xxd -p "${issuer_dir}/issuer_remainder.bin" | tr -d '\n')
-        local issuer_rem_size=$((${#issuer_rem_hex} / 2))
-        local record3=""
-        if (( issuer_rem_size > 0 )); then
-            record3=$(printf '92%02X' $issuer_rem_size)
-            record3+="$issuer_rem_hex"
-        fi
-
-        # AIP value (tag 82 value)
+        # AIP value (tag 82 value, because 9F4A=82)
         local aip="3D01"
 
-        static_data_auth="${record1}${record2}${record3}${aip}"
+        static_data_auth="${record1}${record2}${aip}"
     else
         static_data_auth="$STATIC_DATA_AUTH"
     fi
