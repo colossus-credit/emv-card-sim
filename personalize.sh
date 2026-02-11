@@ -713,7 +713,7 @@ personalize_card() {
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 80020003089F279F369F269F10"
     # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
@@ -732,8 +732,10 @@ personalize_card() {
     gp_cmd+=" -a 8003021C02008E"
     # SFI3/REC3: 5F30,9F08,9F42,9F44,9F49 (all 2-byte tags, len=0A)
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
-    # SFI3/REC4: 9F46 (2-byte tag, len=02)
+    # SFI3/REC4: 9F46 (ICC PK Cert, len=02)
     gp_cmd+=" -a 8003041C029F46"
+    # SFI3/REC5: 9F48 (ICC PK Remainder, len=02) - must be in non-ODA SFI to avoid ICC cert hash mismatch
+    gp_cmd+=" -a 8003051C029F48"
 
     # Continue with remaining tags (single batch for proper data storage)
     gp_cmd+=" -a 80019F36020001"
@@ -749,10 +751,10 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F0702FF0000"
-    # AIP: 3D01 (DDA+CDA supported, cardholder verification, issuer auth, terminal risk management)
-    gp_cmd+=" -a 80010082023D01"
-    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (2 ODA), SFI3 rec1-4 (0 ODA)
-    gp_cmd+=" -a 800100940C080202001001020218010400"
+    # AIP: 3C01 (DDA supported, cardholder verification, issuer auth, terminal risk management)
+    gp_cmd+=" -a 80010082023C01"
+    # AFL: SFI1 rec2 (0 ODA), SFI2 rec1-2 (2 ODA), SFI3 rec1-5 (0 ODA)
+    gp_cmd+=" -a 800100940C080202001001020218010500"
     # 9F4A = Static Data Auth Tag List: 82 (AIP) - Visa style single byte
     gp_cmd+=" -a 80019F4A0182"
     # 9F1F = Track 1 Discretionary Data (19 bytes of zeros)
@@ -798,7 +800,7 @@ personalize_card() {
     gp_cmd+=" -a 8004000202007700"
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 80020003089F279F369F269F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     gp_cmd+=" -a 8003020C0600575F209F1F"
@@ -808,6 +810,7 @@ personalize_card() {
     gp_cmd+=" -a 8003021C02008E"
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
     gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003051C029F48"
     gp_cmd+=" -a 80019F36020001"
     gp_cmd+=" -a 8001008407${full_contactless_aid}"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
@@ -821,8 +824,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F0702FF0000"
-    gp_cmd+=" -a 80010082023D01"
-    gp_cmd+=" -a 800100940C080202001001020218010400"
+    gp_cmd+=" -a 80010082023C01"
+    gp_cmd+=" -a 800100940C080202001001020218010500"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
     gp_cmd+=" -a 80015F30020201"
@@ -970,7 +973,7 @@ personalize_payapp_small() {
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 80020003089F279F369F269F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     # SFI 1 Record 2: 57, 5F20, 9F1F (no certs)
@@ -984,8 +987,8 @@ personalize_payapp_small() {
     # NOTE: SFI 2 (cert records) and SFI 3 Record 4 (ICC cert) templates moved to personalize_payapp_large
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023D01"
-    gp_cmd+=" -a 800100940C080202001001020218010400"
+    gp_cmd+=" -a 80010082023C01"
+    gp_cmd+=" -a 800100940C080202001001020218010500"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1166,6 +1169,8 @@ personalize_payapp_large() {
     gp_cmd+=" -a 80030214020090"
     # SFI 3 Record 4: 9F46 (ICC PK Cert)
     gp_cmd+=" -a 8003041C029F46"
+    # SFI 3 Record 5: 9F48 (ICC PK Remainder) - non-ODA to avoid ICC cert hash mismatch
+    gp_cmd+=" -a 8003051C029F48"
 
     if $T0_MODE; then
         # T=0 mode: use chunked transfer for ALL large data (no extended APDUs)
@@ -1285,7 +1290,7 @@ personalize_payapp_contactless_small() {
     # Templates
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 800200030A9F279F369F269F109F4B"
+    gp_cmd+=" -a 80020003089F279F369F269F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     gp_cmd+=" -a 8003020C0600575F209F1F"
@@ -1294,8 +1299,8 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 8003031C0A5F309F089F429F449F49"
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    gp_cmd+=" -a 80010082023D01"
-    gp_cmd+=" -a 800100940C080202001001020218010400"
+    gp_cmd+=" -a 80010082023C01"
+    gp_cmd+=" -a 800100940C080202001001020218010500"
 
     # Other small tags
     gp_cmd+=" -a 80019F36020001"
@@ -1374,6 +1379,7 @@ personalize_payapp_contactless_large() {
     gp_cmd+=" -a 8003011408008F00929F329F47"
     gp_cmd+=" -a 80030214020090"
     gp_cmd+=" -a 8003041C029F46"
+    gp_cmd+=" -a 8003051C029F48"
 
     if $T0_MODE; then
         # T=0 mode: use chunked transfer
