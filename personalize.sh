@@ -671,6 +671,12 @@ personalize_card() {
     local issuer_rem_size=$(wc -c < "$ISSUER_REM" | tr -d ' ')
     local issuer_rem_len=$(printf '%02X' $issuer_rem_size)
 
+    # EC private key (P-256, 32 bytes)
+    local icc_ec_priv_hex=""
+    if [[ -f "${KEYS_DIR}/icc/icc_ec_private.bin" ]]; then
+        icc_ec_priv_hex=$(xxd -p "${KEYS_DIR}/icc/icc_ec_private.bin" | tr -d '\n')
+    fi
+
     # Build APDU list
     gp_cmd+=" -a 00A404000E${pse_aid}"
     gp_cmd+=" -a 8005000000"
@@ -701,6 +707,10 @@ personalize_card() {
     gp_cmd+=" -a 80040003020001"
     gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
     gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+    # EC private key (setting 0x000B, 32 bytes)
+    if [[ -n "$icc_ec_priv_hex" ]]; then
+        gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+    fi
     gp_cmd+=" -a 8001008F0192"
     gp_cmd+=" -a 80019F320103"
     gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
@@ -765,8 +775,8 @@ personalize_card() {
     gp_cmd+=" -a 80019F42020840"
     # 9F44 = Application Currency Exponent
     gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (9F37 04 = Unpredictable Number)
-    gp_cmd+=" -a 80019F49039F3704"
+    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
+    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     # CVM List (20 bytes - Visa format)
@@ -789,6 +799,10 @@ personalize_card() {
     gp_cmd+=" -a 80040003020001"
     gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
     gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+    # EC private key (setting 0x000B, 32 bytes)
+    if [[ -n "$icc_ec_priv_hex" ]]; then
+        gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+    fi
     gp_cmd+=" -a 8001008F0192"
     gp_cmd+=" -a 80019F320103"
     gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
@@ -831,7 +845,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    gp_cmd+=" -a 80019F49039F3704"
+    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
+    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
@@ -1009,7 +1024,8 @@ personalize_payapp_small() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    gp_cmd+=" -a 80019F49039F3704"
+    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
+    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
@@ -1159,6 +1175,12 @@ personalize_payapp_large() {
     local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
     local issuer_cert_size=$(wc -c < "$ISSUER_CERT" | tr -d ' ')
 
+    # EC private key (P-256, 32 bytes)
+    local icc_ec_priv_hex=""
+    if [[ -f "${KEYS_DIR}/icc/icc_ec_private.bin" ]]; then
+        icc_ec_priv_hex=$(xxd -p "${KEYS_DIR}/icc/icc_ec_private.bin" | tr -d '\n')
+    fi
+
     # Select payment app
     gp_cmd+=" -a 00A4040007${full_aid}"
 
@@ -1183,6 +1205,11 @@ personalize_payapp_large() {
         # RSA private exponent - use chunked settings (80 0A 00 05)
         local exp_apdus=$(generate_chunked_settings_apdus "0005" "$icc_priv_exp")
         gp_cmd+="$exp_apdus"
+
+        # EC private key (setting 0x000B, 32 bytes - fits in single short APDU)
+        if [[ -n "$icc_ec_priv_hex" ]]; then
+            gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+        fi
 
         # Issuer certificate (tag 90) - use chunked EMV tag (80 09)
         local issuer_apdus=$(generate_chunked_apdus "0090" "$issuer_cert_hex")
@@ -1224,6 +1251,10 @@ personalize_payapp_large() {
         # Large APDUs: RSA key and certificates
         gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
         gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+        # EC private key (setting 0x000B, 32 bytes)
+        if [[ -n "$icc_ec_priv_hex" ]]; then
+            gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+        fi
         gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
         gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     fi
@@ -1321,7 +1352,8 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    gp_cmd+=" -a 80019F49039F3704"
+    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
+    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
@@ -1372,6 +1404,12 @@ personalize_payapp_contactless_large() {
     local issuer_cert_hex=$(xxd -p "$ISSUER_CERT" | tr -d '\n')
     local issuer_cert_size=$(wc -c < "$ISSUER_CERT" | tr -d ' ')
 
+    # EC private key (P-256, 32 bytes)
+    local icc_ec_priv_hex=""
+    if [[ -f "${KEYS_DIR}/icc/icc_ec_private.bin" ]]; then
+        icc_ec_priv_hex=$(xxd -p "${KEYS_DIR}/icc/icc_ec_private.bin" | tr -d '\n')
+    fi
+
     # Select payment app
     gp_cmd+=" -a 00A4040007${full_aid}"
 
@@ -1390,6 +1428,11 @@ personalize_payapp_contactless_large() {
 
         local exp_apdus=$(generate_chunked_settings_apdus "0005" "$icc_priv_exp")
         gp_cmd+="$exp_apdus"
+
+        # EC private key (setting 0x000B, 32 bytes - fits in single short APDU)
+        if [[ -n "$icc_ec_priv_hex" ]]; then
+            gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+        fi
 
         local issuer_apdus=$(generate_chunked_apdus "0090" "$issuer_cert_hex")
         gp_cmd+="$issuer_apdus"
@@ -1428,6 +1471,10 @@ personalize_payapp_contactless_large() {
 
         gp_cmd+=" -a 80040004${icc_mod_len}${icc_mod_hex}"
         gp_cmd+=" -a 80040005${icc_priv_len}${icc_priv_exp}"
+        # EC private key (setting 0x000B, 32 bytes)
+        if [[ -n "$icc_ec_priv_hex" ]]; then
+            gp_cmd+=" -a 8004000B20${icc_ec_priv_hex}"
+        fi
         gp_cmd+=" -a 80010090${issuer_cert_lc}${issuer_cert_hex}"
         gp_cmd+=" -a 80019F46${icc_cert_lc}${icc_cert_hex}"
     fi
