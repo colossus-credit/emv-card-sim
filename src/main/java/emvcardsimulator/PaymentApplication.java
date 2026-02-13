@@ -26,6 +26,8 @@ public class PaymentApplication extends EmvApplet {
     private MessageDigest shaMessageDigest;
     private byte[] challenge;
     private byte[] tag9f4cDynamicNumber;
+    private byte[] tag9f69CardAuthData;  // fDDA: version(1) + card UN(4) + CTQ(2) = 7 bytes
+    private byte[] ecdsaSigBuffer;       // fDDA: ECDSA DER signature buffer (max 72 bytes)
 
     private RSAPrivateKey rsaPrivateKey = null;
     private short rsaPrivateKeyByteSize = 0;
@@ -380,6 +382,8 @@ public class PaymentApplication extends EmvApplet {
         challenge = JCSystem.makeTransientByteArray((short) 8, JCSystem.CLEAR_ON_DESELECT);
 
         tag9f4cDynamicNumber = JCSystem.makeTransientByteArray((short) 3, JCSystem.CLEAR_ON_DESELECT);
+        tag9f69CardAuthData = JCSystem.makeTransientByteArray((short) 7, JCSystem.CLEAR_ON_DESELECT);
+        ecdsaSigBuffer = JCSystem.makeTransientByteArray((short) 72, JCSystem.CLEAR_ON_DESELECT);
 
         // Storage for CDOL1 data - transient so it's cleared on deselect
         storedCdol1Data = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
@@ -1005,8 +1009,9 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Process GPO in qVSDC mode - return all transaction data in GPO response.
-     * Response includes: 82, 57, 5F20, 5F34, 9F10, 9F26, 9F27, 9F36, 9F6C, 9F6E
-     * No AFL - terminal should not do READ RECORD.
+     * fDDA piggyback: ECDSA P-256 signature in 9F4B over fDDA Table C-1 data.
+     * fDDA will fail (terminal expects RSA), CTQ bit 6 forces online.
+     * ECDSA signature rides through DE55 for on-chain verification.
      */
     private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
         short offset = 0;
@@ -1018,8 +1023,33 @@ public class PaymentApplication extends EmvApplet {
         short cdolOffset = (short) (ISO7816.OFFSET_CDATA + 2);
         generateApplicationCryptogram(buf, cdolOffset, pdolLen);
 
-        // Build response in tmpBuffer
-        // 82 AIP (2 bytes) - 20 00 for qVSDC (SDA not supported, no CDA in GPO)
+        // --- ECDSA fDDA piggyback ---
+        // Generate random ICC Dynamic Number (9F4C)
+        short iccDynNumLen = (short) tag9f4cDynamicNumber.length;
+        arrayRandomFill(tag9f4cDynamicNumber);
+        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) iccDynNumLen);
+
+        // Build 9F69 Card Authentication Related Data: fDDA v01 + card random (4 bytes) + CTQ (2 bytes)
+        tag9f69CardAuthData[0] = (byte) 0x01; // fDDA version 01
+        arrayRandomFill4(tag9f69CardAuthData, (short) 1); // card unpredictable number (4 bytes)
+        tag9f69CardAuthData[5] = (byte) 0xA0; // CTQ byte 1: online cryptogram required + go online if ODA fails
+        tag9f69CardAuthData[6] = (byte) 0x00; // CTQ byte 2
+        EmvTag.setTag((short) 0x9F69, tag9f69CardAuthData, (short) 0, (short) 7);
+
+        // ECDSA sign per fDDA Table C-1: 9F4C || UN(9F37) || Amount(9F02) || Currency(5F2A) || 9F69
+        // PDOL layout: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4)
+        // Offsets:      0      4         10              16         18      23          25      28      29
+        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
+        ecdsaSignature.update(tag9f4cDynamicNumber, (short) 0, iccDynNumLen); // 9F4C
+        ecdsaSignature.update(buf, (short) (cdolOffset + 29), (short) 4);    // UN (9F37)
+        ecdsaSignature.update(buf, (short) (cdolOffset + 4), (short) 6);     // Amount (9F02)
+        ecdsaSignature.update(buf, (short) (cdolOffset + 23), (short) 2);    // Currency (5F2A)
+        short sigLen = ecdsaSignature.sign(tag9f69CardAuthData, (short) 0, (short) 7, ecdsaSigBuffer, (short) 0); // 9F69
+
+        // --- Build GPO response in tmpBuffer ---
+        offset = 0;
+
+        // 82 AIP (2 bytes) - 20 00 for qVSDC with fDDA
         tmpBuffer[offset++] = (byte) 0x82;
         tmpBuffer[offset++] = (byte) 0x02;
         tmpBuffer[offset++] = (byte) 0x20;
@@ -1051,7 +1081,7 @@ public class PaymentApplication extends EmvApplet {
             offset = psnTag.copyDataToArray(tmpBuffer, offset);
         }
 
-        // 9F10 Issuer Application Data (IAD) - 7 bytes
+        // 9F10 Issuer Application Data (IAD)
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         if (iadTag != null && iadTag.getLength() > 0) {
             tmpBuffer[offset++] = (byte) 0x9F;
@@ -1084,11 +1114,32 @@ public class PaymentApplication extends EmvApplet {
             offset = atcTag.copyDataToArray(tmpBuffer, offset);
         }
 
-        // 9F6C CTQ (Card Transaction Qualifiers) - 00 00
+        // 9F4B ECDSA Signature (fDDA piggyback, ~70-72 bytes DER)
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x4B;
+        tmpBuffer[offset++] = (byte) (sigLen & 0xFF);
+        Util.arrayCopy(ecdsaSigBuffer, (short) 0, tmpBuffer, offset, sigLen);
+        offset += sigLen;
+
+        // 9F4C ICC Dynamic Number
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x4C;
+        tmpBuffer[offset++] = (byte) (iccDynNumLen & 0xFF);
+        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, offset, iccDynNumLen);
+        offset += iccDynNumLen;
+
+        // 9F69 Card Authentication Related Data (7 bytes)
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x69;
+        tmpBuffer[offset++] = (byte) 0x07;
+        Util.arrayCopy(tag9f69CardAuthData, (short) 0, tmpBuffer, offset, (short) 7);
+        offset += 7;
+
+        // 9F6C CTQ (Card Transaction Qualifiers) - A0 00: online required + go online if ODA fails
         tmpBuffer[offset++] = (byte) 0x9F;
         tmpBuffer[offset++] = (byte) 0x6C;
         tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0x00;
+        tmpBuffer[offset++] = (byte) 0xA0;
         tmpBuffer[offset++] = (byte) 0x00;
 
         // 9F6E Form Factor Indicator - 20 70 00 00 (card)
@@ -1194,6 +1245,13 @@ public class PaymentApplication extends EmvApplet {
         randomData.generateData(dst, (short) 0, (short) dst.length);
         if (!useRandom) {
             Util.arrayFillNonAtomic(dst, (short) 0, (short) dst.length, (byte) 0xAB);
+        }
+    }
+
+    private void arrayRandomFill4(byte[] dst, short offset) {
+        randomData.generateData(dst, offset, (short) 4);
+        if (!useRandom) {
+            Util.arrayFillNonAtomic(dst, offset, (short) 4, (byte) 0xAB);
         }
     }
 
