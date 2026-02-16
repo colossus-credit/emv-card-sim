@@ -801,7 +801,7 @@ personalize_card() {
     # CTQ (Card Transaction Qualifiers) - required for contactless
     # Byte 1: 80 = Online cryptogram required (typical for ARQC transactions)
     # Byte 2: 00 = No special processing flags
-    gp_cmd+=" -a 80019F6C02A000"
+    gp_cmd+=" -a 80019F6C028000"
 
     # Contactless Payment app personalization (same data, different AID)
     gp_cmd+=" -a 00A4040007${full_contactless_aid}"
@@ -854,8 +854,8 @@ personalize_card() {
     gp_cmd+=" -a 80015F2503240101"
     gp_cmd+=" -a 80015F28020840"
     gp_cmd+=" -a 80019F0702FF0000"
-    # AIP: 2000 for qVSDC with fDDA (byte 1 bit 6 = DDA supported)
-    gp_cmd+=" -a 80010082022000"
+    # AIP: 0000 for qVSDC online-only (no ODA)
+    gp_cmd+=" -a 80010082020000"
     gp_cmd+=" -a 800100940C080202001001020218010500"
     gp_cmd+=" -a 80019F4A0182"
     gp_cmd+=" -a 80019F1F1300000000000000000000000000000000000000"
@@ -871,7 +871,7 @@ personalize_card() {
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
-    gp_cmd+=" -a 80019F6C02A000"
+    gp_cmd+=" -a 80019F6C028000"
 
     log_info "Sending personalization APDUs..."
 
@@ -1059,7 +1059,7 @@ personalize_payapp_small() {
     # CTQ (Card Transaction Qualifiers) - required for contactless
     # Byte 1: 80 = Online cryptogram required (typical for ARQC transactions)
     # Byte 2: 00 = No special processing flags
-    gp_cmd+=" -a 80019F6C02A000"
+    gp_cmd+=" -a 80019F6C028000"
 
     # Small certificate-related tags
     gp_cmd+=" -a 8001008F0192"
@@ -1371,8 +1371,8 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 8003041C029F46"
 
     # Small EMV tags - CRITICAL: AIP and AFL
-    # AIP: 2000 for qVSDC with fDDA (byte 1 bit 6 = DDA supported)
-    gp_cmd+=" -a 80010082022000"
+    # AIP: 0000 for qVSDC online-only (no ODA)
+    gp_cmd+=" -a 80010082020000"
     gp_cmd+=" -a 800100940C080202001001020218010500"
 
     # Other small tags
@@ -1407,7 +1407,7 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80019F0E050000000000"
     gp_cmd+=" -a 80019F0F05FC68FC9800"
     gp_cmd+=" -a 80019F100706010A03A4A002"
-    gp_cmd+=" -a 80019F6C02A000"
+    gp_cmd+=" -a 80019F6C028000"
 
     # Small certificate-related tags
     gp_cmd+=" -a 8001008F0192"
