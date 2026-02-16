@@ -27,7 +27,8 @@ public class PaymentApplication extends EmvApplet {
     private byte[] challenge;
     private byte[] tag9f4cDynamicNumber;
     private byte[] tag9f69CardAuthData;  // fDDA: version(1) + card UN(4) + CTQ(2) = 7 bytes
-    private byte[] ecdsaSigBuffer;       // fDDA: ECDSA DER signature buffer (max 72 bytes)
+    private byte[] ecdsaSigBuffer;       // ECDSA DER signature buffer (max 72 bytes)
+    private byte[] ecdsaRawSig;          // ECDSA raw r||s (64 bytes) for contactless
 
     private RSAPrivateKey rsaPrivateKey = null;
     private short rsaPrivateKeyByteSize = 0;
@@ -384,6 +385,7 @@ public class PaymentApplication extends EmvApplet {
         tag9f4cDynamicNumber = JCSystem.makeTransientByteArray((short) 3, JCSystem.CLEAR_ON_DESELECT);
         tag9f69CardAuthData = JCSystem.makeTransientByteArray((short) 7, JCSystem.CLEAR_ON_DESELECT);
         ecdsaSigBuffer = JCSystem.makeTransientByteArray((short) 72, JCSystem.CLEAR_ON_DESELECT);
+        ecdsaRawSig = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
 
         // Storage for CDOL1 data - transient so it's cleared on deselect
         storedCdol1Data = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
@@ -1009,9 +1011,8 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Process GPO in qVSDC mode - return all transaction data in GPO response.
-     * fDDA piggyback: ECDSA P-256 signature in 9F4B over fDDA Table C-1 data.
-     * fDDA will fail (terminal expects RSA), CTQ bit 6 forces online.
-     * ECDSA signature rides through DE55 for on-chain verification.
+     * ECDSA P-256 over UN||Amount||Currency||ATC, raw r||s split into 9F10 (IAD) + 9F7C (CED).
+     * No ODA (AIP=0000), online-only (CTQ=8000).
      */
     private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
         short offset = 0;
@@ -1023,36 +1024,28 @@ public class PaymentApplication extends EmvApplet {
         short cdolOffset = (short) (ISO7816.OFFSET_CDATA + 2);
         generateApplicationCryptogram(buf, cdolOffset, pdolLen);
 
-        // --- ECDSA fDDA piggyback ---
-        // Generate random ICC Dynamic Number (9F4C)
-        short iccDynNumLen = (short) tag9f4cDynamicNumber.length;
-        arrayRandomFill(tag9f4cDynamicNumber);
-        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) iccDynNumLen);
-
-        // Build 9F69 Card Authentication Related Data: fDDA v01 + card random (4 bytes) + CTQ (2 bytes)
-        tag9f69CardAuthData[0] = (byte) 0x01; // fDDA version 01
-        arrayRandomFill4(tag9f69CardAuthData, (short) 1); // card unpredictable number (4 bytes)
-        tag9f69CardAuthData[5] = (byte) 0xA0; // CTQ byte 1: online cryptogram required + go online if ODA fails
-        tag9f69CardAuthData[6] = (byte) 0x00; // CTQ byte 2
-        EmvTag.setTag((short) 0x9F69, tag9f69CardAuthData, (short) 0, (short) 7);
-
-        // ECDSA sign per fDDA Table C-1: 9F4C || UN(9F37) || Amount(9F02) || Currency(5F2A) || 9F69
+        // --- ECDSA signing over DE55 data ---
+        // Signed data: UN(9F37,4) || Amount(9F02,6) || Currency(5F2A,2) || ATC(9F36,2) = 14 bytes
+        // All available in DE55 for on-chain verification
         // PDOL layout: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4)
         // Offsets:      0      4         10              16         18      23          25      28      29
+        EmvTag atcForSig = EmvTag.findTag((short) 0x9F36);
         ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(tag9f4cDynamicNumber, (short) 0, iccDynNumLen); // 9F4C
         ecdsaSignature.update(buf, (short) (cdolOffset + 29), (short) 4);    // UN (9F37)
         ecdsaSignature.update(buf, (short) (cdolOffset + 4), (short) 6);     // Amount (9F02)
         ecdsaSignature.update(buf, (short) (cdolOffset + 23), (short) 2);    // Currency (5F2A)
-        short sigLen = ecdsaSignature.sign(tag9f69CardAuthData, (short) 0, (short) 7, ecdsaSigBuffer, (short) 0); // 9F69
+        short sigLen = ecdsaSignature.sign(atcForSig.getData(), (short) 0, (short) 2, ecdsaSigBuffer, (short) 0); // ATC (9F36)
+
+        // Strip DER → raw r||s (64 bytes): r goes in 9F10 (IAD), s goes in 9F7C (CED)
+        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
 
         // --- Build GPO response in tmpBuffer ---
         offset = 0;
 
-        // 82 AIP (2 bytes) - 20 00 for qVSDC with fDDA
+        // 82 AIP (2 bytes) - 00 00: no ODA, online only
         tmpBuffer[offset++] = (byte) 0x82;
         tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0x20;
+        tmpBuffer[offset++] = (byte) 0x00;
         tmpBuffer[offset++] = (byte) 0x00;
 
         // 57 Track 2 Equivalent Data
@@ -1081,14 +1074,12 @@ public class PaymentApplication extends EmvApplet {
             offset = psnTag.copyDataToArray(tmpBuffer, offset);
         }
 
-        // 9F10 Issuer Application Data (IAD)
-        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
-        if (iadTag != null && iadTag.getLength() > 0) {
-            tmpBuffer[offset++] = (byte) 0x9F;
-            tmpBuffer[offset++] = (byte) 0x10;
-            tmpBuffer[offset++] = (byte) (iadTag.getLength() & 0xFF);
-            offset = iadTag.copyDataToArray(tmpBuffer, offset);
-        }
+        // 9F10 Issuer Application Data (IAD) = ECDSA r component (32 bytes)
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x10;
+        tmpBuffer[offset++] = (byte) 0x20; // 32 bytes
+        Util.arrayCopy(ecdsaRawSig, (short) 0, tmpBuffer, offset, (short) 32);
+        offset += 32;
 
         // 9F26 Application Cryptogram (8 bytes)
         EmvTag acTag = EmvTag.findTag((short) 0x9F26);
@@ -1114,32 +1105,18 @@ public class PaymentApplication extends EmvApplet {
             offset = atcTag.copyDataToArray(tmpBuffer, offset);
         }
 
-        // 9F4B ECDSA Signature (fDDA piggyback, ~70-72 bytes DER)
+        // 9F7C Customer Exclusive Data (CED) = ECDSA s component (32 bytes)
         tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x4B;
-        tmpBuffer[offset++] = (byte) (sigLen & 0xFF);
-        Util.arrayCopy(ecdsaSigBuffer, (short) 0, tmpBuffer, offset, sigLen);
-        offset += sigLen;
+        tmpBuffer[offset++] = (byte) 0x7C;
+        tmpBuffer[offset++] = (byte) 0x20; // 32 bytes
+        Util.arrayCopy(ecdsaRawSig, (short) 32, tmpBuffer, offset, (short) 32);
+        offset += 32;
 
-        // 9F4C ICC Dynamic Number
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x4C;
-        tmpBuffer[offset++] = (byte) (iccDynNumLen & 0xFF);
-        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, offset, iccDynNumLen);
-        offset += iccDynNumLen;
-
-        // 9F69 Card Authentication Related Data (7 bytes)
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x69;
-        tmpBuffer[offset++] = (byte) 0x07;
-        Util.arrayCopy(tag9f69CardAuthData, (short) 0, tmpBuffer, offset, (short) 7);
-        offset += 7;
-
-        // 9F6C CTQ (Card Transaction Qualifiers) - A0 00: online required + go online if ODA fails
+        // 9F6C CTQ (Card Transaction Qualifiers) - 80 00: online required
         tmpBuffer[offset++] = (byte) 0x9F;
         tmpBuffer[offset++] = (byte) 0x6C;
         tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0xA0;
+        tmpBuffer[offset++] = (byte) 0x80;
         tmpBuffer[offset++] = (byte) 0x00;
 
         // 9F6E Form Factor Indicator - 20 70 00 00 (card)
@@ -1253,6 +1230,26 @@ public class PaymentApplication extends EmvApplet {
         if (!useRandom) {
             Util.arrayFillNonAtomic(dst, offset, (short) 4, (byte) 0xAB);
         }
+    }
+
+    // Strip DER encoding from ECDSA signature, extract raw r||s (64 bytes) into dst
+    // DER format: 30 <len> 02 <rlen> <r...> 02 <slen> <s...>
+    private void derToRawSig(byte[] der, short derOff, short derLen, byte[] dst, short dstOff) {
+        Util.arrayFillNonAtomic(dst, dstOff, (short) 64, (byte) 0x00);
+        short pos = (short) (derOff + 2); // skip 30 <len>
+        // r component
+        pos++; // skip 02
+        short rLen = (short) (der[pos++] & 0xFF);
+        short rPad = (rLen > 32) ? (short) (rLen - 32) : (short) 0;
+        short rDstOff = (rLen < 32) ? (short) (dstOff + 32 - rLen) : dstOff;
+        Util.arrayCopy(der, (short) (pos + rPad), dst, rDstOff, (short) (rLen - rPad));
+        pos += rLen;
+        // s component
+        pos++; // skip 02
+        short sLen = (short) (der[pos++] & 0xFF);
+        short sPad = (sLen > 32) ? (short) (sLen - 32) : (short) 0;
+        short sDstOff = (sLen < 32) ? (short) (dstOff + 64 - sLen) : (short) (dstOff + 32);
+        Util.arrayCopy(der, (short) (pos + sPad), dst, sDstOff, (short) (sLen - sPad));
     }
 
     private void processGetChallenge(APDU apdu, byte[] buf) {
