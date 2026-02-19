@@ -592,6 +592,17 @@ public class PaymentApplication extends EmvApplet {
     private void generateApplicationCryptogram(byte[] buf, short cdolOffset, short cdolLen) {
         shaMessageDigest.reset();
 
+        // Parse CDOL and store values as tags for response template
+        // CDOL1: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)
+        if (cdolLen >= 13) {
+            // Extract TVR (offset 8, 5 bytes)
+            EmvTag.setTag((short) 0x95, buf, (short)(cdolOffset + 8), (byte) 5);
+        }
+        if (cdolLen >= 29) {
+            // Extract UN (offset 25, 4 bytes)
+            EmvTag.setTag((short) 0x9F37, buf, (short)(cdolOffset + 25), (byte) 4);
+        }
+
         // Include ATC in hash
         EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
         if (atcTag != null) {
@@ -1003,8 +1014,8 @@ public class PaymentApplication extends EmvApplet {
             EmvApplet.logAndThrow(ISO7816.SW_INCORRECT_P1P2);
         }
 
-        // ECDSA P-256 signing (no EMV SDAD structure — raw signature for on-chain verification)
-        // Signed data: ICC Dynamic Number (9F4C) || DDOL data (Unpredictable Number from APDU)
+        // ECDSA P-256 signing (original working DDA flow)
+        // Signed data: ICC Dynamic Number (3 bytes) || DDOL data (58 bytes) = ~61 bytes
         // ALG_ECDSA_SHA_256 handles SHA-256 hashing internally, outputs DER-encoded signature
 
         // Generate random ICC Dynamic Number
