@@ -723,7 +723,7 @@ personalize_card() {
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 80020003089F279F369F269F10"
+    gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
@@ -814,7 +814,7 @@ personalize_card() {
     gp_cmd+=" -a 8004000202007700"
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 80020003089F279F369F269F10"
+    gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     gp_cmd+=" -a 8003020C0600575F209F1F"
@@ -988,7 +988,7 @@ personalize_payapp_small() {
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 80020003089F279F369F269F10"
+    gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     # SFI 1 Record 2: 57, 5F20, 9F1F (no certs)
@@ -1321,7 +1321,7 @@ personalize_payapp_contactless_small() {
     # Templates
     gp_cmd+=" -a 800200010600829F6C0094"
     gp_cmd+=" -a 80020002029F4B"
-    gp_cmd+=" -a 80020003089F279F369F269F10"
+    gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
     gp_cmd+=" -a 8003020C0600575F209F1F"

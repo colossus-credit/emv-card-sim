@@ -547,6 +547,12 @@ public class PaymentApplication extends EmvApplet {
             offset = acTag.copyToArray(tmpBuffer, offset);
         }
 
+        // 9F4B (ECDSA Signature) - variable length (if set by INTERNAL AUTHENTICATE)
+        EmvTag sdadTag = EmvTag.findTag((short) 0x9F4B);
+        if (sdadTag != null && sdadTag.getLength() > 0) {
+            offset = sdadTag.copyToArray(tmpBuffer, offset);
+        }
+
         // 9F10 (IAD) - variable length
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         if (iadTag != null) {
