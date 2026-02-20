@@ -33,6 +33,7 @@ public class PaymentApplication extends EmvApplet {
     private Signature ecdsaSignature = null;
     private byte[] pinCode = null;
     private boolean useRandom = true;
+    private short iccDnCounter = 0; // Counter for ICC_DN when random fails
 
     // P-256 (secp256r1) domain parameters
     private static final byte[] EC_P256_P = {
@@ -1015,7 +1016,7 @@ public class PaymentApplication extends EmvApplet {
         }
 
         // ECDSA P-256 signing (original working DDA flow)
-        // Signed data: ICC Dynamic Number (3 bytes) || DDOL data (58 bytes) = ~61 bytes
+        // Signed data: ICC Dynamic Number (3 bytes) || DDOL data (33 bytes) = 36 bytes
         // ALG_ECDSA_SHA_256 handles SHA-256 hashing internally, outputs DER-encoded signature
 
         // Generate random ICC Dynamic Number
@@ -1028,10 +1029,18 @@ public class PaymentApplication extends EmvApplet {
         // Get DDOL data length from LC
         short LC = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
 
-        // Sign: feed ICC Dynamic Number first, then DDOL data (Unpredictable Number)
+        // CRITICAL FIX: Build complete signed data (ICC_DN + DDOL) in one buffer
+        // Then sign it all at once. The original code used update() + sign() which
+        // may not concatenate data as expected in all JavaCard implementations.
+        short totalLen = (short)(iccDynNumLen + LC);
+        short signedDataOffset = (short) 100; // Use offset 100 in tmpBuffer for signed data
+        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, signedDataOffset, iccDynNumLen);
+        Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, tmpBuffer, (short)(signedDataOffset + iccDynNumLen), LC);
+
+        // Sign the complete message (ICC_DN + DDOL = 36 bytes total)
+        // Output signature to tmpBuffer[0] (DER-encoded, ~70-72 bytes)
         ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(tag9f4cDynamicNumber, (short) 0, iccDynNumLen);
-        short sigLen = ecdsaSignature.sign(buf, ISO7816.OFFSET_CDATA, LC, tmpBuffer, (short) 0);
+        short sigLen = ecdsaSignature.sign(tmpBuffer, signedDataOffset, totalLen, tmpBuffer, (short) 0);
 
         // Store ECDSA signature in tag 9F4B (DER-encoded, ~70-72 bytes)
         EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 0, sigLen);
@@ -1098,6 +1107,15 @@ public class PaymentApplication extends EmvApplet {
         randomData.generateData(dst, (short) 0, (short) dst.length);
         if (!useRandom) {
             Util.arrayFillNonAtomic(dst, (short) 0, (short) dst.length, (byte) 0xAB);
+        }
+
+        // WORKAROUND: If random generator returns all zeros (broken on some cards),
+        // use a counter instead. Check if first 3 bytes are zero.
+        if (dst.length == 3 && dst[0] == 0 && dst[1] == 0 && dst[2] == 0) {
+            iccDnCounter++;
+            dst[0] = (byte) ((iccDnCounter >> 8) & 0xFF);
+            dst[1] = (byte) (iccDnCounter & 0xFF);
+            dst[2] = (byte) 0x11; // Static byte to avoid all-zeros
         }
     }
 

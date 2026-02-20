@@ -398,8 +398,8 @@ EOF
     # Generate EC P-256 key pair for ECDSA DDA signing
     log_info "Generating ICC EC key pair (P-256/secp256r1)..."
     openssl ecparam -genkey -name prime256v1 -noout -out "${output_dir}/icc_ec_private.pem" 2>/dev/null
-    # Extract raw 32-byte private key scalar
-    openssl ec -in "${output_dir}/icc_ec_private.pem" -outform DER 2>/dev/null | tail -c 32 > "${output_dir}/icc_ec_private.bin"
+    # Extract raw 32-byte private key scalar (NOT the last 32 bytes, which is public key Y!)
+    openssl ec -in "${output_dir}/icc_ec_private.pem" -text -noout 2>/dev/null | grep -A 3 "priv:" | tail -n +2 | tr -d ' :\n' | xxd -r -p > "${output_dir}/icc_ec_private.bin"
     openssl ec -in "${output_dir}/icc_ec_private.pem" -pubout -out "${output_dir}/icc_ec_public.pem" 2>/dev/null
     log_info "ICC EC key pair generated (private: icc_ec_private.bin, public: icc_ec_public.pem)"
 

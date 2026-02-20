@@ -722,7 +722,7 @@ personalize_card() {
     gp_cmd+=" -a 8004000202007700"
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
-    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 80020002029F4C9F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     # FCI template: 50 (label), 87 (priority) - NO 9F38 (PDOL) so card accepts empty GPO
     gp_cmd+=" -a 800200050400500087"
@@ -775,10 +775,17 @@ personalize_card() {
     gp_cmd+=" -a 80019F42020840"
     # 9F44 = Application Currency Exponent
     gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
-    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    # 9F49 = DDOL (what card uses to build signed data - same as CDOL)
+    # Card signs: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 36 bytes
+    # DDOL descriptor: 9F0206 + 9F3704 + 9F1C08 + 9F160F = 12 bytes (0x0C)
+    gp_cmd+=" -a 80019F490C9F02069F37049F1C089F160F"
+    # 8C = CDOL1 (what terminal sends)
+    # Terminal sends: Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 33 bytes
+    # CDOL descriptor: same as DDOL = 12 bytes (0x0C)
+    gp_cmd+=" -a 8001008C0C9F02069F37049F1C089F160F"
+    # 8D = CDOL2 (with auth response code prepended: 8A02 + CDOL)
+    # Descriptor length: 2 + 12 = 14 bytes (0x0E)
+    gp_cmd+=" -a 8001008D0E8A029F02069F37049F1C089F160F"
     # CVM List (20 bytes - Visa format)
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
     # IAC-Default: conditions that default to online
@@ -813,7 +820,7 @@ personalize_card() {
     gp_cmd+=" -a 8004000102123400"
     gp_cmd+=" -a 8004000202007700"
     gp_cmd+=" -a 800200010600829F6C0094"
-    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 80020002029F4C9F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
@@ -845,10 +852,17 @@ personalize_card() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
-    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    # 9F49 = DDOL (what card uses to build signed data - same as CDOL)
+    # Card signs: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 36 bytes
+    # DDOL descriptor: 9F0206 + 9F3704 + 9F1C08 + 9F160F = 12 bytes (0x0C)
+    gp_cmd+=" -a 80019F490C9F02069F37049F1C089F160F"
+    # 8C = CDOL1 (what terminal sends)
+    # Terminal sends: Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 33 bytes
+    # CDOL descriptor: same as DDOL = 12 bytes (0x0C)
+    gp_cmd+=" -a 8001008C0C9F02069F37049F1C089F160F"
+    # 8D = CDOL2 (with auth response code prepended: 8A02 + CDOL)
+    # Descriptor length: 2 + 12 = 14 bytes (0x0E)
+    gp_cmd+=" -a 8001008D0E8A029F02069F37049F1C089F160F"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
@@ -987,7 +1001,7 @@ personalize_payapp_small() {
     # Templates - only non-certificate related ones
     # GPO response template: AIP (82), CTQ (9F6C), AFL (94) - CTQ required for contactless
     gp_cmd+=" -a 800200010600829F6C0094"
-    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 80020002029F4C9F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
@@ -1024,10 +1038,17 @@ personalize_payapp_small() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
-    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    # 9F49 = DDOL (what card uses to build signed data - same as CDOL)
+    # Card signs: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 36 bytes
+    # DDOL descriptor: 9F0206 + 9F3704 + 9F1C08 + 9F160F = 12 bytes (0x0C)
+    gp_cmd+=" -a 80019F490C9F02069F37049F1C089F160F"
+    # 8C = CDOL1 (what terminal sends)
+    # Terminal sends: Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 33 bytes
+    # CDOL descriptor: same as DDOL = 12 bytes (0x0C)
+    gp_cmd+=" -a 8001008C0C9F02069F37049F1C089F160F"
+    # 8D = CDOL2 (with auth response code prepended: 8A02 + CDOL)
+    # Descriptor length: 2 + 12 = 14 bytes (0x0E)
+    gp_cmd+=" -a 8001008D0E8A029F02069F37049F1C089F160F"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
@@ -1320,7 +1341,7 @@ personalize_payapp_contactless_small() {
 
     # Templates
     gp_cmd+=" -a 800200010600829F6C0094"
-    gp_cmd+=" -a 80020002029F4B"
+    gp_cmd+=" -a 80020002029F4C9F4B"
     gp_cmd+=" -a 800200030A9F279F369F269F4B9F10"
     gp_cmd+=" -a 800200050400500087"
     gp_cmd+=" -a 8002000404008400A5"
@@ -1352,10 +1373,17 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 80015F30020201"
     gp_cmd+=" -a 80019F42020840"
     gp_cmd+=" -a 80019F440102"
-    # 9F49 = DDOL (matches CDOL1: Amount, Amount Other, Country, TVR, Currency, Date, Txn Type, UN, Terminal ID, Merchant ID, Acquirer ID)
-    gp_cmd+=" -a 80019F491E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008C1E9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
-    gp_cmd+=" -a 8001008D208A029F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106"
+    # 9F49 = DDOL (what card uses to build signed data - same as CDOL)
+    # Card signs: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 36 bytes
+    # DDOL descriptor: 9F0206 + 9F3704 + 9F1C08 + 9F160F = 12 bytes (0x0C)
+    gp_cmd+=" -a 80019F490C9F02069F37049F1C089F160F"
+    # 8C = CDOL1 (what terminal sends)
+    # Terminal sends: Amount(6) + UN(4) + TerminalID(8) + MerchantID(15) = 33 bytes
+    # CDOL descriptor: same as DDOL = 12 bytes (0x0C)
+    gp_cmd+=" -a 8001008C0C9F02069F37049F1C089F160F"
+    # 8D = CDOL2 (with auth response code prepended: 8A02 + CDOL)
+    # Descriptor length: 2 + 12 = 14 bytes (0x0E)
+    gp_cmd+=" -a 8001008D0E8A029F02069F37049F1C089F160F"
     gp_cmd+=" -a 8001008E0A00000000000000001F00"
     gp_cmd+=" -a 80019F0D05FC688C9800"
     gp_cmd+=" -a 80019F0E050000000000"
