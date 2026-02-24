@@ -447,6 +447,21 @@ public class ColossusPaymentApplicationTest {
             "RSA-2048 exponent should succeed");
     }
 
+    private void setupEcKey() throws CardException {
+        // EC P-256 private key scalar (32 bytes) - from keys/icc/icc_ec_private.bin
+        byte[] ecKeyCmd = new byte[] {
+            (byte) 0x80, (byte) 0x04, (byte) 0x00, (byte) 0x0B,  // SET_SETTINGS, setting 0x000B
+            (byte) 0x20,  // LC = 32 bytes
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91, (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
+            (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34, (byte) 0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, (byte) 0x64, (byte) 0x32, (byte) 0xA7, (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
+            (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00, (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
+        };
+        ResponseAPDU response = SmartCard.transmitCommand(ecKeyCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "EC P-256 key should be set successfully");
+    }
+
     private void setupColossusCdol() throws CardException {
         // Set CDOL1 - Colossus custom structure
         // CLA INS P1 P2 LC [30 bytes of CDOL definition]
@@ -571,6 +586,7 @@ public class ColossusPaymentApplicationTest {
     public void testTransactionDataHashDiagnostic() throws CardException {
         setupColossusCard();
         setupRsa2048Key();
+        setupEcKey();
         enableCdaMode();
         setupColossusCdol();
         setupColossusCardData();
@@ -602,7 +618,7 @@ public class ColossusPaymentApplicationTest {
         });
 
         // Need to call GPO first to store PDOL data
-        // PDOL format: 9F66(4)+9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4) = 33 bytes
+        // PDOL format: 9F66(4)+9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)+9F1C(8)+9F16(15) = 56 bytes
         byte[] pdolData = new byte[] {
             // 9F66 - Terminal Transaction Qualifiers (4 bytes)
             (byte) 0xB6, (byte) 0x20, (byte) 0xC0, (byte) 0x00,
@@ -621,7 +637,14 @@ public class ColossusPaymentApplicationTest {
             // 9C - Transaction Type (1 byte)
             (byte) 0x00,
             // 9F37 - Unpredictable Number (4 bytes)
-            (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, (byte) 0x01
+            (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, (byte) 0x01,
+            // 9F1C - Terminal ID (8 bytes)
+            (byte) 0x54, (byte) 0x45, (byte) 0x52, (byte) 0x4D,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // 9F16 - Merchant ID (15 bytes)
+            (byte) 0x4D, (byte) 0x45, (byte) 0x52, (byte) 0x43, (byte) 0x48,
+            (byte) 0x41, (byte) 0x4E, (byte) 0x54, (byte) 0x30, (byte) 0x30,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31
         };
 
         // GPO command: 80 A8 00 00 [Lc] 83 [len] [pdol_data]
@@ -736,6 +759,7 @@ public class ColossusPaymentApplicationTest {
     public void testSdadValidation() throws Exception {
         setupColossusCard();
         setupRsa2048Key();
+        setupEcKey();
         enableCdaMode();
         setupColossusCdol();
         setupColossusCardData();
@@ -766,7 +790,7 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
         });
 
-        // GPO with PDOL data
+        // GPO with PDOL data (56 bytes)
         byte[] pdolData = new byte[] {
             (byte) 0xB6, (byte) 0x20, (byte) 0xC0, (byte) 0x00,  // 9F66 TTQ
             (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x01, (byte) 0x00,  // 9F02
@@ -776,7 +800,14 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x08, (byte) 0x40,  // 5F2A
             (byte) 0x25, (byte) 0x01, (byte) 0x22,  // 9A
             (byte) 0x00,  // 9C
-            (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, (byte) 0x01  // 9F37 UN
+            (byte) 0xAB, (byte) 0xCD, (byte) 0xEF, (byte) 0x01,  // 9F37 UN
+            // 9F1C - Terminal ID (8 bytes)
+            (byte) 0x54, (byte) 0x45, (byte) 0x52, (byte) 0x4D,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // 9F16 - Merchant ID (15 bytes)
+            (byte) 0x4D, (byte) 0x45, (byte) 0x52, (byte) 0x43, (byte) 0x48,
+            (byte) 0x41, (byte) 0x4E, (byte) 0x54, (byte) 0x30, (byte) 0x30,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31
         };
 
         byte[] gpoCmd = new byte[5 + 2 + pdolData.length];

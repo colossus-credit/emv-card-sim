@@ -1024,17 +1024,24 @@ public class PaymentApplication extends EmvApplet {
         short cdolOffset = (short) (ISO7816.OFFSET_CDATA + 2);
         generateApplicationCryptogram(buf, cdolOffset, pdolLen);
 
-        // --- ECDSA signing over DE55 data ---
-        // Signed data: UN(9F37,4) || Amount(9F02,6) || Currency(5F2A,2) || ATC(9F36,2) = 14 bytes
-        // All available in DE55 for on-chain verification
-        // PDOL layout: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4)
-        // Offsets:      0      4         10              16         18      23          25      28      29
-        EmvTag atcForSig = EmvTag.findTag((short) 0x9F36);
+        // --- ECDSA signing over DE55 data (matches contact DDA format) ---
+        // Signed data: ICC_DN(3) || Amount(6) || UN(4) || TerminalID(8) || MerchantID(15) = 36 bytes
+        // New PDOL layout: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4) TerminalID(8) MerchantID(15)
+        // Offsets:          0      4         10              16         18      23          25      28      29     33             41
+
+        // ICC Dynamic Number — zeroed out (not used for contactless, UN provides freshness)
+        Util.arrayFillNonAtomic(tag9f4cDynamicNumber, (short) 0, (short) 3, (byte) 0x00);
+        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) tag9f4cDynamicNumber.length);
+
+        // Build 36-byte signed message at tmpBuffer[100]: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15)
+        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 100, (short) 3);    // ICC_DN
+        Util.arrayCopy(buf, (short) (cdolOffset + 4), tmpBuffer, (short) 103, (short) 6);      // Amount
+        Util.arrayCopy(buf, (short) (cdolOffset + 29), tmpBuffer, (short) 109, (short) 4);     // UN
+        Util.arrayCopy(buf, (short) (cdolOffset + 33), tmpBuffer, (short) 113, (short) 8);     // TerminalID
+        Util.arrayCopy(buf, (short) (cdolOffset + 41), tmpBuffer, (short) 121, (short) 15);    // MerchantID
+
         ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(buf, (short) (cdolOffset + 29), (short) 4);    // UN (9F37)
-        ecdsaSignature.update(buf, (short) (cdolOffset + 4), (short) 6);     // Amount (9F02)
-        ecdsaSignature.update(buf, (short) (cdolOffset + 23), (short) 2);    // Currency (5F2A)
-        short sigLen = ecdsaSignature.sign(atcForSig.getData(), (short) 0, (short) 2, ecdsaSigBuffer, (short) 0); // ATC (9F36)
+        short sigLen = ecdsaSignature.sign(tmpBuffer, (short) 100, (short) 36, ecdsaSigBuffer, (short) 0);
 
         // Strip DER → raw r||s (64 bytes): r goes in 9F10 (IAD), s goes in 9F7C (CED)
         derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
@@ -1104,6 +1111,13 @@ public class PaymentApplication extends EmvApplet {
             tmpBuffer[offset++] = (byte) 0x02;
             offset = atcTag.copyDataToArray(tmpBuffer, offset);
         }
+
+        // 9F4C ICC Dynamic Number (3 bytes) - for bundler to reconstruct signed message
+        tmpBuffer[offset++] = (byte) 0x9F;
+        tmpBuffer[offset++] = (byte) 0x4C;
+        tmpBuffer[offset++] = (byte) 0x03;
+        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, offset, (short) 3);
+        offset += 3;
 
         // 9F7C Customer Exclusive Data (CED) = ECDSA s component (32 bytes)
         tmpBuffer[offset++] = (byte) 0x9F;

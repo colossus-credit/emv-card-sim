@@ -841,8 +841,8 @@ personalize_card() {
     gp_cmd+=" -a 8001008407${full_contactless_aid}"
     # 9F12 Application Preferred Name (reuse preferred_name from PPSE section)
     gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
-    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
-    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
+    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4), TerminalID(8), MerchantID(15)
+    gp_cmd+=" -a 80019F381E9F66049F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
     gp_cmd+=" -a 80015F340101"
@@ -1380,8 +1380,8 @@ personalize_payapp_contactless_small() {
     gp_cmd+=" -a 8001008407${full_aid}"
     # 9F12 Application Preferred Name
     gp_cmd+=" -a 80019F12${preferred_name_len}${preferred_name_hex}"
-    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4)
-    gp_cmd+=" -a 80019F38189F66049F02069F03069F1A0295055F2A029A039C019F3704"
+    # PDOL: TTQ(4), Amount(6), AmountOther(6), Country(2), TVR(5), Currency(2), Date(3), Type(1), UN(4), TerminalID(8), MerchantID(15)
+    gp_cmd+=" -a 80019F381E9F66049F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F"
     gp_cmd+=" -a 8001005A${pan_len_hex}${pan_hex}"
     gp_cmd+=" -a 80015F2403${DEFAULT_EXPIRY}"
     gp_cmd+=" -a 80015F340101"
