@@ -1918,7 +1918,172 @@ public class ColossusPaymentApplicationTest {
             "GENERATE AC should return cryptogram response");
         System.out.println("  GENERATE AC: OK, response = " + response.getData().length + " bytes");
 
-        System.out.println("\n=== STORE DATA end-to-end transaction PASSED ===");
+        System.out.println("\n=== STORE DATA end-to-end contact transaction PASSED ===");
+    }
+
+    @Test
+    @DisplayName("End-to-end: personalize via STORE DATA then run contactless qVSDC transaction")
+    public void testStoreDataEndToEndContactless() throws CardException {
+        // SELECT + factory reset
+        setupColossusCard();
+
+        // --- Personalize via STORE DATA ---
+
+        // AID
+        assertStoreData(0x00, 0x84, new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        }, "AID (84)");
+
+        // PAN
+        assertStoreData(0x00, 0x5A, new byte[] {
+            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
+            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
+        }, "PAN (5A)");
+
+        // Track 2 (required for qVSDC GPO response)
+        assertStoreData(0x00, 0x57, new byte[] {
+            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
+            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78,
+            (byte) 0xD2, (byte) 0x71, (byte) 0x22, (byte) 0x01,
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            (byte) 0x00, (byte) 0x0F
+        }, "Track 2 (57)");
+
+        // ATC
+        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
+
+        // AIP — 00 00 for qVSDC (no ODA)
+        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x00, (byte) 0x00 }, "AIP (82)");
+
+        // CDOL1 (needed for AC generation inside qVSDC GPO)
+        assertStoreData(0x00, 0x8C, new byte[] {
+            (byte) 0x9F, (byte) 0x02, (byte) 0x06,
+            (byte) 0x9F, (byte) 0x03, (byte) 0x06,
+            (byte) 0x9F, (byte) 0x1A, (byte) 0x02,
+            (byte) 0x95, (byte) 0x05,
+            (byte) 0x5F, (byte) 0x2A, (byte) 0x02,
+            (byte) 0x9A, (byte) 0x03,
+            (byte) 0x9C, (byte) 0x01,
+            (byte) 0x9F, (byte) 0x37, (byte) 0x04,
+            (byte) 0x9F, (byte) 0x1C, (byte) 0x08,
+            (byte) 0x9F, (byte) 0x16, (byte) 0x0F,
+            (byte) 0x9F, (byte) 0x01, (byte) 0x06
+        }, "CDOL1 (8C)");
+
+        // EC private key via STORE DATA settings DGI A00B (32 bytes)
+        assertStoreData(0xA0, 0x0B, new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
+            (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
+            (byte) 0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, (byte) 0x64, (byte) 0x32, (byte) 0xA7,
+            (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
+            (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
+            (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
+        }, "EC private key (A00B)");
+
+        // Response template = tag 77
+        assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
+
+        // Flags = randomness enabled
+        assertStoreData(0xA0, 0x03, new byte[] { (byte) 0x00, (byte) 0x01 }, "Flags");
+
+        // FCI templates (needed for SELECT)
+        assertStoreData(0xB0, 0x05, new byte[] {
+            (byte) 0x00, (byte) 0x50, (byte) 0x00, (byte) 0x87
+        }, "FCI A5 template");
+        assertStoreData(0xB0, 0x04, new byte[] {
+            (byte) 0x00, (byte) 0x84, (byte) 0x00, (byte) 0xA5
+        }, "FCI 6F template");
+
+        // App label + priority
+        assertStoreData(0x00, 0x50, new byte[] {
+            (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
+            (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
+        }, "App label (50)");
+        assertStoreData(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
+
+        // --- Run contactless transaction ---
+
+        // 1. SELECT
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xA4, (byte) 0x04, (byte) 0x00,
+            (byte) 0x06,
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
+        System.out.println("  SELECT: OK");
+
+        // 2. GPO with contactless PDOL (56 bytes → triggers qVSDC mode)
+        // PDOL: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4) TerminalID(8) MerchantID(15)
+        byte[] pdolData = new byte[] {
+            // TTQ (Terminal Transaction Qualifiers)
+            (byte) 0x36, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            // Amount Authorised
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00,
+            // Amount Other
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            // Terminal Country Code (USA)
+            (byte) 0x08, (byte) 0x40,
+            // TVR
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            // Currency Code (USD)
+            (byte) 0x08, (byte) 0x40,
+            // Date
+            (byte) 0x26, (byte) 0x04, (byte) 0x02,
+            // Transaction Type
+            (byte) 0x00,
+            // Unpredictable Number
+            (byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF,
+            // Terminal ID
+            (byte) 0x54, (byte) 0x45, (byte) 0x52, (byte) 0x4D,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // Merchant ID
+            (byte) 0x4D, (byte) 0x45, (byte) 0x52, (byte) 0x43, (byte) 0x48,
+            (byte) 0x41, (byte) 0x4E, (byte) 0x54, (byte) 0x30, (byte) 0x30,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31
+        };
+
+        // GPO command: 80 A8 00 00 LC 83 LEN [PDOL data]
+        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[2] = (byte) 0x00;
+        gpoCmd[3] = (byte) 0x00;
+        gpoCmd[4] = (byte) (2 + pdolData.length);  // LC
+        gpoCmd[5] = (byte) 0x83;                    // command template tag
+        gpoCmd[6] = (byte) pdolData.length;          // PDOL length
+        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+
+        response = SmartCard.transmitCommand(gpoCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "qVSDC GPO should succeed");
+        assertTrue(response.getData().length > 50,
+            "qVSDC GPO should return full response with AIP, Track2, ATC, AC, IAD(r), CED(s)");
+
+        // Verify response contains expected tags
+        byte[] gpoResponse = response.getData();
+        System.out.println("  qVSDC GPO: OK, response = " + gpoResponse.length + " bytes");
+
+        // Look for 9F10 (IAD = ECDSA r, 32 bytes) and 9F7C (CED = ECDSA s, 32 bytes)
+        boolean found9F10 = false;
+        boolean found9F7C = false;
+        for (int i = 0; i < gpoResponse.length - 2; i++) {
+            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x10) {
+                found9F10 = true;
+                assertEquals(0x20, gpoResponse[i + 2] & 0xFF, "IAD (9F10) should be 32 bytes (ECDSA r)");
+                System.out.println("  Found 9F10 (ECDSA r): 32 bytes");
+            }
+            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x7C) {
+                found9F7C = true;
+                assertEquals(0x20, gpoResponse[i + 2] & 0xFF, "CED (9F7C) should be 32 bytes (ECDSA s)");
+                System.out.println("  Found 9F7C (ECDSA s): 32 bytes");
+            }
+        }
+        assertTrue(found9F10, "qVSDC response must contain 9F10 (ECDSA r component)");
+        assertTrue(found9F7C, "qVSDC response must contain 9F7C (ECDSA s component)");
+
+        System.out.println("\n=== STORE DATA end-to-end contactless qVSDC transaction PASSED ===");
     }
 }
 
