@@ -541,7 +541,8 @@ public class PaymentApplication extends EmvApplet {
         byte referenceControlParameter = buf[ISO7816.OFFSET_P1];
         byte requestCryptogramType = (byte) ((short) (referenceControlParameter >> ((byte) 6)) << ((byte) 6));
         // Check if CDA is requested (P1 bit 4 = 0x10)
-        boolean cdaRequested = ((referenceControlParameter & (byte) 0x10) != 0);
+        // CDA requested when P1 bits 5-4 = '10' (0x10). Reject RFU '11' (0x18).
+        boolean cdaRequested = ((referenceControlParameter & (byte) 0x18) == (byte) 0x10);
 
         byte responseCryptogramType = (byte) 0x40;
         switch (requestCryptogramType) {
@@ -1128,11 +1129,11 @@ public class PaymentApplication extends EmvApplet {
         // --- Build GPO response in tmpBuffer ---
         offset = 0;
 
-        // 82 AIP (2 bytes) - 00 00: no ODA, online only
+        // 82 AIP (2 bytes) - 00 40: no ODA, contactless transaction indicator set (C-3 byte 2 bit 6)
         tmpBuffer[offset++] = (byte) 0x82;
         tmpBuffer[offset++] = (byte) 0x02;
         tmpBuffer[offset++] = (byte) 0x00;
-        tmpBuffer[offset++] = (byte) 0x00;
+        tmpBuffer[offset++] = (byte) 0x40;
 
         // 57 Track 2 Equivalent Data
         EmvTag track2Tag = EmvTag.findTag((short) 0x0057);

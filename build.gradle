@@ -165,6 +165,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     testImplementation 'com.klinec:jcardsim:latest.release'
+    testImplementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     implementation 'com.klinec:jcardsim:latest.release'
     javacardAntTask 'com.github.martinpaljak:ant-javacard:latest.release'
 }

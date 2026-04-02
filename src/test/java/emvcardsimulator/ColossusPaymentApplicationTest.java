@@ -15,6 +15,13 @@ import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.MessageDigest;
 import java.security.spec.RSAPublicKeySpec;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECPrivateKeySpec;
+import java.security.spec.ECPoint;
+import java.security.spec.ECPublicKeySpec;
+import java.security.interfaces.ECPublicKey;
+import java.security.KeyPairGenerator;
+import java.security.Signature;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -1923,7 +1930,7 @@ public class ColossusPaymentApplicationTest {
 
     @Test
     @DisplayName("End-to-end: personalize via STORE DATA then run contactless qVSDC transaction")
-    public void testStoreDataEndToEndContactless() throws CardException {
+    public void testStoreDataEndToEndContactless() throws Exception {
         // SELECT + factory reset
         setupColossusCard();
 
@@ -2083,7 +2090,113 @@ public class ColossusPaymentApplicationTest {
         assertTrue(found9F10, "qVSDC response must contain 9F10 (ECDSA r component)");
         assertTrue(found9F7C, "qVSDC response must contain 9F7C (ECDSA s component)");
 
+        // --- Verify ECDSA signature ---
+        // Extract r (from 9F10) and s (from 9F7C) from response
+        byte[] sigR = null;
+        byte[] sigS = null;
+        for (int i = 0; i < gpoResponse.length - 2; i++) {
+            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x10 && gpoResponse[i + 2] == 0x20) {
+                sigR = Arrays.copyOfRange(gpoResponse, i + 3, i + 3 + 32);
+            }
+            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x7C && gpoResponse[i + 2] == 0x20) {
+                sigS = Arrays.copyOfRange(gpoResponse, i + 3, i + 3 + 32);
+            }
+        }
+        assertNotNull(sigR, "Could not extract r from 9F10");
+        assertNotNull(sigS, "Could not extract s from 9F7C");
+
+        // Reconstruct DER-encoded signature from raw r||s
+        byte[] derSig = rawToDerSignature(sigR, sigS);
+
+        // Derive public key from the private key scalar we loaded
+        byte[] ecPrivKeyBytes = new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
+            (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
+            (byte) 0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, (byte) 0x64, (byte) 0x32, (byte) 0xA7,
+            (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
+            (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
+            (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
+        };
+
+        // Generate public key from private scalar using EC key agreement
+        java.security.KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+        kpg.initialize(new ECGenParameterSpec("secp256r1"));
+        java.security.KeyPair dummyPair = kpg.generateKeyPair();
+        java.security.spec.ECParameterSpec ecSpec = ((ECPublicKey) dummyPair.getPublic()).getParams();
+
+        BigInteger privateScalar = new BigInteger(1, ecPrivKeyBytes);
+        ECPrivateKeySpec privSpec = new ECPrivateKeySpec(privateScalar, ecSpec);
+        KeyFactory kf = KeyFactory.getInstance("EC");
+        java.security.PrivateKey privKey = kf.generatePrivate(privSpec);
+
+        // Reconstruct the signed message: ICC_DN(3, zeroed) || Amount(6) || UN(4) || TerminalID(8) || MerchantID(15)
+        byte[] signedMessage = new byte[36];
+        // ICC_DN = 00 00 00 (zeroed)
+        // Amount from PDOL offset 4, length 6
+        System.arraycopy(pdolData, 4, signedMessage, 3, 6);    // Amount
+        System.arraycopy(pdolData, 29, signedMessage, 9, 4);   // UN
+        System.arraycopy(pdolData, 33, signedMessage, 13, 8);  // TerminalID
+        System.arraycopy(pdolData, 41, signedMessage, 21, 15); // MerchantID
+
+        // Derive public key from private scalar: Q = d * G
+        org.bouncycastle.jce.spec.ECNamedCurveParameterSpec bcSpec =
+            org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256r1");
+        org.bouncycastle.math.ec.ECPoint qPoint = bcSpec.getG().multiply(privateScalar).normalize();
+        ECPoint pubPoint = new ECPoint(
+            qPoint.getAffineXCoord().toBigInteger(),
+            qPoint.getAffineYCoord().toBigInteger());
+        ECPublicKeySpec pubSpec = new ECPublicKeySpec(pubPoint, ecSpec);
+        java.security.PublicKey pubKey = kf.generatePublic(pubSpec);
+
+        // Verify card's ECDSA signature over the signed message
+        Signature verifier = Signature.getInstance("SHA256withECDSA");
+        verifier.initVerify(pubKey);
+        verifier.update(signedMessage);
+        boolean valid = verifier.verify(derSig);
+        assertTrue(valid, "ECDSA signature from card must verify against public key");
+        System.out.println("  ECDSA signature VERIFIED against public key");
+
         System.out.println("\n=== STORE DATA end-to-end contactless qVSDC transaction PASSED ===");
+    }
+
+    /**
+     * Convert raw r||s (64 bytes) to DER-encoded ECDSA signature.
+     */
+    private byte[] rawToDerSignature(byte[] r, byte[] s) {
+        // Ensure r and s are positive (prepend 0x00 if high bit set)
+        byte[] rDer = toUnsignedDerInteger(r);
+        byte[] sDer = toUnsignedDerInteger(s);
+
+        // DER: 30 <len> 02 <rlen> <r> 02 <slen> <s>
+        int seqLen = 2 + rDer.length + 2 + sDer.length;
+        byte[] der = new byte[2 + seqLen];
+        int idx = 0;
+        der[idx++] = 0x30;
+        der[idx++] = (byte) seqLen;
+        der[idx++] = 0x02;
+        der[idx++] = (byte) rDer.length;
+        System.arraycopy(rDer, 0, der, idx, rDer.length);
+        idx += rDer.length;
+        der[idx++] = 0x02;
+        der[idx++] = (byte) sDer.length;
+        System.arraycopy(sDer, 0, der, idx, sDer.length);
+        return der;
+    }
+
+    private byte[] toUnsignedDerInteger(byte[] val) {
+        // Strip leading zeros
+        int start = 0;
+        while (start < val.length - 1 && val[start] == 0) { start++; }
+        // If high bit set, prepend 0x00
+        if ((val[start] & 0x80) != 0) {
+            byte[] result = new byte[val.length - start + 1];
+            result[0] = 0x00;
+            System.arraycopy(val, start, result, 1, val.length - start);
+            return result;
+        }
+        return Arrays.copyOfRange(val, start, val.length);
     }
 }
 
