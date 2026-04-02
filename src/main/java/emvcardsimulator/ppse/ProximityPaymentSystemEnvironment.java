@@ -7,6 +7,8 @@ import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
 import javacard.framework.Util;
 
+import emvcardsimulator.BuildConfig;
+
 /**
  * PPSE (Proximity Payment System Environment) for contactless EMV.
  * Responds to SELECT 2PAY.SYS.DDF01 and returns directory entries.
@@ -23,6 +25,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
 
     // Temp buffer
     private byte[] tmpBuffer;
+
 
     public static void install(byte[] buffer, short offset, byte length) {
         (new ProximityPaymentSystemEnvironment()).register();
@@ -53,21 +56,26 @@ public class ProximityPaymentSystemEnvironment extends Applet {
 
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
-        switch (cmd) {
-            case (short) 0x8001:  // SET_TAG - store directory entry
-                processSetDirectoryEntry(apdu, buf);
-                break;
-            case (short) 0x8002:  // SET_FCI - store complete FCI
-                processSetFci(apdu, buf);
-                break;
-            case (short) 0x8005:  // FACTORY_RESET
-                fciLength = 0;
-                directoryEntryLength = 0;
-                ISOException.throwIt(ISO7816.SW_NO_ERROR);
-                break;
-            default:
-                ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
+        // Dev-only admin/personalization commands
+        if (!BuildConfig.PRODUCTION) {
+            switch (cmd) {
+                case (short) 0x8001:  // SET_TAG - store directory entry
+                    processSetDirectoryEntry(apdu, buf);
+                    return;
+                case (short) 0x8002:  // SET_FCI - store complete FCI
+                    processSetFci(apdu, buf);
+                    return;
+                case (short) 0x8005:  // FACTORY_RESET
+                    fciLength = 0;
+                    directoryEntryLength = 0;
+                    ISOException.throwIt(ISO7816.SW_NO_ERROR);
+                    return;
+                default:
+                    break;
+            }
         }
+
+        ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
     }
 
     private void processSelect(APDU apdu, byte[] buf) {

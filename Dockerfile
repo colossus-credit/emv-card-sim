@@ -19,12 +19,18 @@ COPY src ./src
 
 # build and test the application
 RUN gradle build \
-# build multiple JavaCard applications for different versions
-    && gradle -Pjc_version=3.0.5 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/3_0_5 && mv /tmp/build/*.cap /tmp/javacard_build/3_0_5/ \
-    && gradle -Pjc_version=3.0.4 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/3_0_4 && mv /tmp/build/*.cap /tmp/javacard_build/3_0_4/ \
-    && gradle -Pjc_version=3.0.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/3_0_1 && mv /tmp/build/*.cap /tmp/javacard_build/3_0_1/ \
-    && gradle -Pjc_version=2.2.2 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/2_2_2 && mv /tmp/build/*.cap /tmp/javacard_build/2_2_2/ \
-    && gradle -Pjc_version=2.2.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/2_2_1 && mv /tmp/build/*.cap /tmp/javacard_build/2_2_1/ \
+# build dev JavaCard applications for different versions
+    && gradle -Pjc_version=3.0.5 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/dev/3_0_5 && mv /tmp/build/card/*.cap /tmp/javacard_build/dev/3_0_5/ \
+    && gradle -Pjc_version=3.0.4 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/dev/3_0_4 && mv /tmp/build/card/*.cap /tmp/javacard_build/dev/3_0_4/ \
+    && gradle -Pjc_version=3.0.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/dev/3_0_1 && mv /tmp/build/card/*.cap /tmp/javacard_build/dev/3_0_1/ \
+    && gradle -Pjc_version=2.2.2 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/dev/2_2_2 && mv /tmp/build/card/*.cap /tmp/javacard_build/dev/2_2_2/ \
+    && gradle -Pjc_version=2.2.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/dev/2_2_1 && mv /tmp/build/card/*.cap /tmp/javacard_build/dev/2_2_1/ \
+# build production JavaCard applications (admin commands stripped)
+    && gradle -Pbuild_type=production -Pjc_version=3.0.5 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/production/3_0_5 && mv /tmp/build/card/*.cap /tmp/javacard_build/production/3_0_5/ \
+    && gradle -Pbuild_type=production -Pjc_version=3.0.4 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/production/3_0_4 && mv /tmp/build/card/*.cap /tmp/javacard_build/production/3_0_4/ \
+    && gradle -Pbuild_type=production -Pjc_version=3.0.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/production/3_0_1 && mv /tmp/build/card/*.cap /tmp/javacard_build/production/3_0_1/ \
+    && gradle -Pbuild_type=production -Pjc_version=2.2.2 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/production/2_2_2 && mv /tmp/build/card/*.cap /tmp/javacard_build/production/2_2_2/ \
+    && gradle -Pbuild_type=production -Pjc_version=2.2.1 --console=verbose clean cap --info && mkdir --parents /tmp/javacard_build/production/2_2_1 && mv /tmp/build/card/*.cap /tmp/javacard_build/production/2_2_1/ \
     && tar cvzf javacard_build.tar.gz javacard_build
 
 CMD exit

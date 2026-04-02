@@ -525,6 +525,9 @@ public class PaymentApplication extends EmvApplet {
             // Response contains: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (IAD)
             sendGenerateAcResponseNoCda(apdu, buf);
         }
+
+        // Scrub tmpBuffer — crypto intermediates must not linger
+        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, (short) tmpBuffer.length, (byte) 0x00);
     }
 
     /**
@@ -1174,6 +1177,9 @@ public class PaymentApplication extends EmvApplet {
         // Store ECDSA signature in tag 9F4B (DER-encoded, ~70-72 bytes)
         EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 0, sigLen);
 
+        // Scrub tmpBuffer — signature intermediates must not linger
+        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, (short) tmpBuffer.length, (byte) 0x00);
+
         sendResponseTemplate(apdu, buf, responseTemplateDda);
     }
     
@@ -1228,6 +1234,9 @@ public class PaymentApplication extends EmvApplet {
         } else {
             EmvApplet.logAndThrow(ISO7816.SW_INCORRECT_P1P2);
         }
+
+        // Scrub tmpBuffer — decrypted PIN data must not linger
+        Util.arrayFillNonAtomic(tmpBuffer, (short) 0, (short) tmpBuffer.length, (byte) 0x00);
 
         EmvApplet.logAndThrow(ISO7816.SW_NO_ERROR);
     }
@@ -1368,59 +1377,65 @@ public class PaymentApplication extends EmvApplet {
             case CMD_SELECT:
                 processSelect(apdu, buf);
                 return;
-            case CMD_SET_SETTINGS:
-                processSetSettings(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG:
-                processSetEmvTag(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG_FUZZ:
-                processSetEmvTagFuzz(apdu, buf);
-                return;
-            case CMD_SET_TAG_TEMPLATE:
-                processSetTagTemplate(apdu, buf);
-                return;
-            case CMD_SET_READ_RECORD_TEMPLATE:
-                processSetReadRecordTemplate(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG_CHUNKED:
-                processSetEmvTagChunked(apdu, buf);
-                return;
-            case CMD_SET_SETTINGS_CHUNKED:
-                processSetSettingsChunked(apdu, buf);
-                return;
-            case CMD_FACTORY_RESET:
-                factoryReset(apdu, buf);
-                return;
-            case CMD_FUZZ_RESET:
-                fuzzReset(apdu, buf);
-                return;
-            case CMD_LOG_CONSUME:
-                consumeLogs(apdu, buf);
-                return;
-            case CMD_LIST_TAGS:
-                listStoredTags(apdu, buf);
-                return;
-            case CMD_DIAGNOSTIC_61XX:
-                // DIAGNOSTIC: Test if JCRE passes 61xx through correctly
-                // No data needed - just throw 61xx directly
-                // Store some dummy data for GET RESPONSE
-                tmpBuffer[0] = (byte) 0xAA;
-                tmpBuffer[1] = (byte) 0xBB;
-                tmpBuffer[2] = (byte) 0xCC;
-                pendingResponseOffset = (short) 0;
-                pendingResponseLength = (short) 3;
-                // Throw 61xx - should return SW=6103 if JCRE works correctly
-                ISOException.throwIt((short) 0x6103);
-                return;
             default:
                 break;
+        }
+
+        // Dev-only admin/personalization commands
+        if (!BuildConfig.PRODUCTION) {
+            switch (cmd) {
+                case CMD_SET_SETTINGS:
+                    processSetSettings(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG:
+                    processSetEmvTag(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG_FUZZ:
+                    processSetEmvTagFuzz(apdu, buf);
+                    return;
+                case CMD_SET_TAG_TEMPLATE:
+                    processSetTagTemplate(apdu, buf);
+                    return;
+                case CMD_SET_READ_RECORD_TEMPLATE:
+                    processSetReadRecordTemplate(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG_CHUNKED:
+                    processSetEmvTagChunked(apdu, buf);
+                    return;
+                case CMD_SET_SETTINGS_CHUNKED:
+                    processSetSettingsChunked(apdu, buf);
+                    return;
+                case CMD_FACTORY_RESET:
+                    factoryReset(apdu, buf);
+                    return;
+                case CMD_FUZZ_RESET:
+                    fuzzReset(apdu, buf);
+                    return;
+                case CMD_LOG_CONSUME:
+                    consumeLogs(apdu, buf);
+                    return;
+                case CMD_LIST_TAGS:
+                    listStoredTags(apdu, buf);
+                    return;
+                case CMD_DIAGNOSTIC_61XX:
+                    // DIAGNOSTIC: Test if JCRE passes 61xx through correctly
+                    tmpBuffer[0] = (byte) 0xAA;
+                    tmpBuffer[1] = (byte) 0xBB;
+                    tmpBuffer[2] = (byte) 0xCC;
+                    pendingResponseOffset = (short) 0;
+                    pendingResponseLength = (short) 3;
+                    ISOException.throwIt((short) 0x6103);
+                    return;
+                default:
+                    break;
+            }
         }
 
         if (selectingApplet()) {
             return;
         }
 
+        // EMV runtime commands — always available
         switch (cmd) {
             case CMD_READ_RECORD:
                 processReadRecord(apdu, buf);

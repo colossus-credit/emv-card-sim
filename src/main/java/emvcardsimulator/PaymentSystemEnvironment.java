@@ -170,38 +170,47 @@ public class PaymentSystemEnvironment extends EmvApplet {
             case CMD_SELECT:
                 processSelect(apdu, buf);
                 return;
-            case CMD_SET_SETTINGS:
-                processSetSettings(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG:
-                processSetEmvTag(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG_FUZZ:
-                processSetEmvTagFuzz(apdu, buf);
-                return;
-            case CMD_SET_TAG_TEMPLATE:
-                processSetTagTemplate(apdu, buf);
-                return;
-            case CMD_SET_READ_RECORD_TEMPLATE:
-                processSetReadRecordTemplate(apdu, buf);
-                return;
-            case CMD_FACTORY_RESET:
-                factoryReset(apdu, buf);
-                return;
-            case CMD_FUZZ_RESET:
-                fuzzReset(apdu, buf);
-                return;
-            case CMD_LOG_CONSUME:
-                consumeLogs(apdu, buf);
-                return;
             default:
                 break;
+        }
+
+        // Dev-only admin/personalization commands
+        if (!BuildConfig.PRODUCTION) {
+            switch (cmd) {
+                case CMD_SET_SETTINGS:
+                    processSetSettings(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG:
+                    processSetEmvTag(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG_FUZZ:
+                    processSetEmvTagFuzz(apdu, buf);
+                    return;
+                case CMD_SET_TAG_TEMPLATE:
+                    processSetTagTemplate(apdu, buf);
+                    return;
+                case CMD_SET_READ_RECORD_TEMPLATE:
+                    processSetReadRecordTemplate(apdu, buf);
+                    return;
+                case CMD_FACTORY_RESET:
+                    factoryReset(apdu, buf);
+                    return;
+                case CMD_FUZZ_RESET:
+                    fuzzReset(apdu, buf);
+                    return;
+                case CMD_LOG_CONSUME:
+                    consumeLogs(apdu, buf);
+                    return;
+                default:
+                    break;
+            }
         }
 
         if (selectingApplet()) {
             return;
         }
 
+        // EMV runtime commands — always available
         switch (cmd) {
             case CMD_READ_RECORD:
                 processReadRecord(apdu, buf);

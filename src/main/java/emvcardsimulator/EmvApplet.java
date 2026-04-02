@@ -82,6 +82,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         ISOException.throwIt(responseTrailer);
     }
 
+
     protected EmvTag emvTags;
     protected ReadRecord readRecords;
 

@@ -2,9 +2,9 @@ name: Snyk Container
 
 on:
   push:
-    branches: [ master ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ master ]
+    branches: [ '**' ]
   schedule:
     - cron: '0 14 1 * *'
   # Allows you to run this workflow manually from the Actions tab
