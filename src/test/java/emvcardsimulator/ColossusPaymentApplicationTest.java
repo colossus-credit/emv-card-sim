@@ -1737,5 +1737,188 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_WRONG_LENGTH, (short) response.getSW(),
             "STORE DATA with data too short should return 6700");
     }
+
+    // ========================================================================
+    // End-to-End: Personalize via STORE DATA, then run transaction
+    // ========================================================================
+
+    /**
+     * Build a STORE DATA APDU: 00 E2 00 00 LC [DGI(2)] [LEN(1)] [DATA...]
+     */
+    private byte[] buildStoreData(int dgiHigh, int dgiLow, byte[] data) {
+        int payloadLen = 2 + 1 + data.length;  // DGI + len + data
+        byte[] cmd = new byte[5 + payloadLen];
+        cmd[0] = (byte) 0x00;
+        cmd[1] = (byte) 0xE2;
+        cmd[2] = (byte) 0x00;
+        cmd[3] = (byte) 0x00;
+        cmd[4] = (byte) payloadLen;
+        cmd[5] = (byte) dgiHigh;
+        cmd[6] = (byte) dgiLow;
+        cmd[7] = (byte) data.length;
+        System.arraycopy(data, 0, cmd, 8, data.length);
+        return cmd;
+    }
+
+    /**
+     * Build a STORE DATA APDU for extended length data (>127 bytes).
+     * Uses BER length encoding: 81 LL for 128-255 bytes.
+     */
+    private byte[] buildStoreDataExtended(int dgiHigh, int dgiLow, byte[] data) {
+        if (data.length <= 127) {
+            return buildStoreData(dgiHigh, dgiLow, data);
+        }
+        // BER length: 81 LL
+        int payloadLen = 2 + 2 + data.length;  // DGI + 81+len + data
+        byte[] cmd = new byte[5 + payloadLen];
+        cmd[0] = (byte) 0x00;
+        cmd[1] = (byte) 0xE2;
+        cmd[2] = (byte) 0x00;
+        cmd[3] = (byte) 0x00;
+        cmd[4] = (byte) payloadLen;
+        cmd[5] = (byte) dgiHigh;
+        cmd[6] = (byte) dgiLow;
+        cmd[7] = (byte) 0x81;
+        cmd[8] = (byte) data.length;
+        System.arraycopy(data, 0, cmd, 9, data.length);
+        return cmd;
+    }
+
+    private void assertStoreData(int dgiHigh, int dgiLow, byte[] data, String desc) throws CardException {
+        ResponseAPDU response = SmartCard.transmitCommand(buildStoreDataExtended(dgiHigh, dgiLow, data));
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "STORE DATA " + desc + " should succeed");
+    }
+
+    @Test
+    @DisplayName("End-to-end: personalize via STORE DATA then run ARQC transaction")
+    public void testStoreDataEndToEndTransaction() throws CardException {
+        // SELECT + factory reset (using dev commands for reset only)
+        setupColossusCard();
+
+        // --- Personalize entirely via STORE DATA ---
+
+        // AID (tag 84)
+        assertStoreData(0x00, 0x84, new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        }, "AID (84)");
+
+        // PAN (tag 5A)
+        assertStoreData(0x00, 0x5A, new byte[] {
+            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
+            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
+        }, "PAN (5A)");
+
+        // ATC (tag 9F36)
+        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
+
+        // AIP (tag 82) — no CDA for this test
+        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x3C, (byte) 0x00 }, "AIP (82)");
+
+        // IAD (tag 9F10)
+        assertStoreData(0x9F, 0x10, new byte[] {
+            (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
+        }, "IAD (9F10)");
+
+        // CDOL1 (tag 8C)
+        assertStoreData(0x00, 0x8C, new byte[] {
+            (byte) 0x9F, (byte) 0x02, (byte) 0x06,  // Amount
+            (byte) 0x9F, (byte) 0x03, (byte) 0x06,  // Amount Other
+            (byte) 0x9F, (byte) 0x1A, (byte) 0x02,  // Country
+            (byte) 0x95, (byte) 0x05,                // TVR
+            (byte) 0x5F, (byte) 0x2A, (byte) 0x02,  // Currency
+            (byte) 0x9A, (byte) 0x03,                // Date
+            (byte) 0x9C, (byte) 0x01,                // Type
+            (byte) 0x9F, (byte) 0x37, (byte) 0x04,  // UN
+            (byte) 0x9F, (byte) 0x1C, (byte) 0x08,  // Terminal ID
+            (byte) 0x9F, (byte) 0x16, (byte) 0x0F,  // Merchant ID
+            (byte) 0x9F, (byte) 0x01, (byte) 0x06   // Acquirer ID
+        }, "CDOL1 (8C)");
+
+        // Response template tag (settings A002) = 0x0077
+        assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
+
+        // Flags (settings A003) = enable randomness
+        assertStoreData(0xA0, 0x03, new byte[] { (byte) 0x00, (byte) 0x01 }, "Flags");
+
+        // GenAC response template (B003): 9F27, 9F36, 9F26, 9F10
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, (byte) 0x27,
+            (byte) 0x9F, (byte) 0x36,
+            (byte) 0x9F, (byte) 0x26,
+            (byte) 0x9F, (byte) 0x10
+        }, "GenAC template (B003)");
+
+        // GPO response template (B001): AIP (82), AFL (94)
+        assertStoreData(0xB0, 0x01, new byte[] {
+            (byte) 0x00, (byte) 0x82, (byte) 0x00, (byte) 0x94
+        }, "GPO template (B001)");
+
+        // FCI templates
+        assertStoreData(0xB0, 0x05, new byte[] {
+            (byte) 0x00, (byte) 0x50, (byte) 0x00, (byte) 0x87
+        }, "FCI A5 template (B005)");
+        assertStoreData(0xB0, 0x04, new byte[] {
+            (byte) 0x00, (byte) 0x84, (byte) 0x00, (byte) 0xA5
+        }, "FCI 6F template (B004)");
+
+        // App label (tag 50)
+        assertStoreData(0x00, 0x50, new byte[] {
+            (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
+            (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
+        }, "App label (50)");
+
+        // Priority (tag 87)
+        assertStoreData(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
+
+        // AFL (tag 94) — no records for this minimal test
+        assertStoreData(0x00, 0x94, new byte[] {
+            (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
+        }, "AFL (94)");
+
+        // --- Run transaction ---
+
+        // 1. SELECT
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xA4, (byte) 0x04, (byte) 0x00,
+            (byte) 0x06,
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "SELECT after STORE DATA personalization should succeed");
+        assertTrue(response.getData().length > 0,
+            "SELECT should return FCI data");
+        System.out.println("  SELECT: OK, FCI = " + response.getData().length + " bytes");
+
+        // 2. GPO (empty PDOL)
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02, (byte) 0x83, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GPO should succeed");
+        assertTrue(response.getData().length > 0,
+            "GPO should return AIP+AFL");
+        System.out.println("  GPO: OK, response = " + response.getData().length + " bytes");
+
+        // 3. GENERATE AC (ARQC, no CDA)
+        byte[] cdolData = createColossusCdolData();
+        byte[] genAcCmd = new byte[5 + cdolData.length];
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80;  // ARQC, no CDA
+        genAcCmd[3] = (byte) 0x00;
+        genAcCmd[4] = (byte) cdolData.length;
+        System.arraycopy(cdolData, 0, genAcCmd, 5, cdolData.length);
+
+        response = SmartCard.transmitCommand(genAcCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GENERATE AC should succeed after STORE DATA personalization");
+        assertTrue(response.getData().length > 0,
+            "GENERATE AC should return cryptogram response");
+        System.out.println("  GENERATE AC: OK, response = " + response.getData().length + " bytes");
+
+        System.out.println("\n=== STORE DATA end-to-end transaction PASSED ===");
+    }
 }
 
