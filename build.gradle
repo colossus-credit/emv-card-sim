@@ -109,6 +109,17 @@ task buildSimulatorLibrary(type: Exec) {
     description "Build Rust simulator library"
     workingDir 'src/test/rust/simulator'
 
+    // Skip if cargo is not available (CI environment without Rust)
+    onlyIf {
+        try {
+            def result = "${cmd_shell} ${cmd_shell_option} 'cargo --version'".execute()
+            result.waitFor()
+            return result.exitValue() == 0
+        } catch (Exception e) {
+            return false
+        }
+    }
+
     commandLine "${cmd_shell}", "${cmd_shell_option}", 'cargo build'
 }
 
