@@ -32,6 +32,7 @@ jobs:
           image: emvcard-builder
           args: --file=Dockerfile
       - name: Upload result to GitHub Code Scanning
+        if: hashFiles('snyk.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: snyk.sarif
