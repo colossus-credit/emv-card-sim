@@ -139,6 +139,7 @@ public class PaymentSystemEnvironment extends EmvApplet {
             case (byte)0x03:  // SET_READ_RECORD_TEMPLATE
             case (byte)0x04:  // SET_SETTINGS
             case (byte)0x06:  // SET_EMV_TAG_FUZZ
+            case (byte)0xE2:  // STORE DATA (GP personalization)
                 hasCommandData = true;
                 break;
             default:
@@ -169,6 +170,9 @@ public class PaymentSystemEnvironment extends EmvApplet {
         switch (cmd) {
             case CMD_SELECT:
                 processSelect(apdu, buf);
+                return;
+            case CMD_STORE_DATA:
+                processStoreData(apdu, buf);
                 return;
             default:
                 break;

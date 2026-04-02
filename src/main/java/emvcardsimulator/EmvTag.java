@@ -14,10 +14,10 @@ public class EmvTag {
     private byte[] data;
     private short  length;
 
-    public byte fuzzOffset      = (byte) 0x00;
-    public byte fuzzLength      = (byte) 0x00;
-    public byte fuzzFlags       = (byte) 0x00;
-    public byte fuzzOccurrence  = (byte) 0x00;
+    byte fuzzOffset      = (byte) 0x00;
+    byte fuzzLength      = (byte) 0x00;
+    byte fuzzFlags       = (byte) 0x00;
+    byte fuzzOccurrence  = (byte) 0x00;
 
     protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];

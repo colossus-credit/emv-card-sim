@@ -1686,5 +1686,56 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_RECORD_NOT_FOUND, (short) response.getSW(),
             "READ RECORD for non-existent record should return 6A83");
     }
+
+    // ========================================================================
+    // STORE DATA (INS 0xE2) Tests
+    // ========================================================================
+
+    @Test
+    @DisplayName("STORE DATA: set EMV tag via DGI")
+    public void testStoreDataEmvTag() throws CardException {
+        setupColossusCard();
+        // STORE DATA with DGI=005A (PAN tag), length=08, data=6767676712345678
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x0B,  // LC = 2 (DGI) + 1 (len) + 8 (data)
+            (byte) 0x00, (byte) 0x5A,  // DGI = tag 5A (PAN)
+            (byte) 0x08,               // length
+            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
+            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "STORE DATA with EMV tag DGI should succeed");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: reject invalid DGI")
+    public void testStoreDataInvalidDgi() throws CardException {
+        setupColossusCard();
+        // STORE DATA with DGI=0000 (invalid)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x04,
+            (byte) 0x00, (byte) 0x00,  // DGI = 0x0000 (invalid)
+            (byte) 0x01,               // length
+            (byte) 0xAA
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "STORE DATA with DGI 0x0000 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: reject data too short")
+    public void testStoreDataTooShort() throws CardException {
+        setupColossusCard();
+        // STORE DATA with only 2 bytes (need at least 3: DGI + length)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02,
+            (byte) 0x00, (byte) 0x5A
+        });
+        assertEquals(ISO7816.SW_WRONG_LENGTH, (short) response.getSW(),
+            "STORE DATA with data too short should return 6700");
+    }
 }
 

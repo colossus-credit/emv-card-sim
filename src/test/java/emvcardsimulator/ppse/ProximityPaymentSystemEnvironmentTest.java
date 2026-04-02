@@ -170,4 +170,66 @@ public class ProximityPaymentSystemEnvironmentTest {
         assertEquals(ISO7816.SW_WRONG_LENGTH, (short) response.getSW(),
             "SET_FCI with LC>128 should return 6700");
     }
+
+    // ========================================================================
+    // STORE DATA (INS 0xE2) Tests
+    // ========================================================================
+
+    @Test
+    @DisplayName("STORE DATA: set directory entry via DGI D001")
+    public void testStoreDataDirectoryEntry() throws CardException {
+        selectPpse();
+        factoryReset();
+
+        // Directory entry: 4F 07 A0000000041010 50 04 56495341 87 01 01
+        byte[] dirEntry = new byte[] {
+            (byte) 0x4F, (byte) 0x07,
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x04, (byte) 0x10, (byte) 0x10,
+            (byte) 0x50, (byte) 0x04,
+            (byte) 0x56, (byte) 0x49, (byte) 0x53, (byte) 0x41,
+            (byte) 0x87, (byte) 0x01, (byte) 0x01
+        };
+
+        // STORE DATA: DGI=D001, len=dirEntry.length, data=dirEntry
+        byte[] storeCmd = new byte[5 + 3 + dirEntry.length];
+        storeCmd[0] = (byte) 0x00;
+        storeCmd[1] = (byte) 0xE2;
+        storeCmd[2] = (byte) 0x00;
+        storeCmd[3] = (byte) 0x00;
+        storeCmd[4] = (byte) (3 + dirEntry.length);  // LC
+        storeCmd[5] = (byte) 0xD0;  // DGI high
+        storeCmd[6] = (byte) 0x01;  // DGI low
+        storeCmd[7] = (byte) dirEntry.length;  // BER length
+        System.arraycopy(dirEntry, 0, storeCmd, 8, dirEntry.length);
+
+        ResponseAPDU response = SmartCard.transmitCommand(storeCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "STORE DATA with DGI D001 should succeed");
+
+        // Verify: SELECT should now return FCI with the directory entry
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xA4, (byte) 0x04, (byte) 0x00,
+            (byte) 0x0E,
+            (byte) 0x32, (byte) 0x50, (byte) 0x41, (byte) 0x59, (byte) 0x2E,
+            (byte) 0x53, (byte) 0x59, (byte) 0x53, (byte) 0x2E,
+            (byte) 0x44, (byte) 0x44, (byte) 0x46, (byte) 0x30, (byte) 0x31
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "SELECT after STORE DATA should return FCI");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: reject invalid DGI on PPSE")
+    public void testStoreDataInvalidDgi() throws CardException {
+        selectPpse();
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x04,
+            (byte) 0xFF, (byte) 0xFF,  // invalid DGI
+            (byte) 0x01,
+            (byte) 0xAA
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "STORE DATA with invalid DGI should return 6A86");
+    }
 }

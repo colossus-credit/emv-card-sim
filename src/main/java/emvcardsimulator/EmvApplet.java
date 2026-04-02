@@ -63,9 +63,14 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected static final short CMD_GENERATE_AC = (short) 0x80AE;
     protected static final short CMD_EXTERNAL_AUTHENTICATE = (short) 0x0082;
     protected static final short CMD_GET_RESPONSE = (short) 0x00C0;
+    protected static final short CMD_STORE_DATA = (short) 0x00E2;
 
-    public static RandomData randomData;
-    public static byte[] tmpBuffer;
+    // DGI ranges for STORE DATA
+    protected static final short DGI_TAG_TEMPLATE_BASE = (short) 0xB001;
+    protected static final short DGI_READ_RECORD_BASE  = (short) 0xC001;
+
+    protected static RandomData randomData;
+    protected static byte[] tmpBuffer;
 
     // For GET RESPONSE chaining of large responses
     protected static short pendingResponseOffset = 0;
@@ -365,6 +370,99 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
+    }
+
+    /**
+     * Process GP STORE DATA (INS 0xE2) for personalization.
+     * Data format: [DGI (2 bytes)] [Length (1-3 bytes)] [Data...]
+     * DGI ranges:
+     *   0x0001-0x9FFF = EMV tag (DGI is the tag ID)
+     *   0xB001-0xB006 = Tag template (low byte = template ID)
+     *   0xC001+       = Read record template (DGI used as record ID)
+     * Subclasses override processStoreDataSettings() for applet-specific DGIs (keys, PIN, etc.)
+     */
+    protected void processStoreData(APDU apdu, byte[] buf) {
+        short dataOffset = apdu.getOffsetCdata();
+        short dataLen = apdu.getIncomingLength();
+        if (dataLen == 0) {
+            dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataOffset = ISO7816.OFFSET_CDATA;
+        }
+
+        if (dataLen < 3) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+
+        // Parse DGI (2 bytes)
+        short dgi = Util.getShort(buf, dataOffset);
+        short dgiDataOffset = (short) (dataOffset + 2);
+
+        // Parse length (1 or 3 bytes BER)
+        short dgiDataLen;
+        if ((buf[dgiDataOffset] & 0xFF) == 0x81) {
+            dgiDataLen = (short) (buf[(short) (dgiDataOffset + 1)] & 0x00FF);
+            dgiDataOffset += 2;
+        } else if ((buf[dgiDataOffset] & 0xFF) == 0x82) {
+            dgiDataLen = Util.getShort(buf, (short) (dgiDataOffset + 1));
+            dgiDataOffset += 3;
+        } else {
+            dgiDataLen = (short) (buf[dgiDataOffset] & 0x00FF);
+            dgiDataOffset += 1;
+        }
+
+        // Route by DGI range (using unsigned high byte to avoid signed short issues)
+        short dgiHigh = (short) ((dgi >> 8) & 0x00FF);
+
+        if (dgiHigh == (short) 0x00B0 && (dgi & 0x00FF) >= 0x01 && (dgi & 0x00FF) <= 0x06) {
+            // Tag template: 0xB001-0xB006, low byte = template ID
+            short templateId = (short) (dgi & 0x00FF);
+            TagTemplate template = getTagTemplate(templateId);
+            if (template == null) {
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            }
+            JCSystem.beginTransaction();
+            template.setData(buf, dgiDataOffset, (byte) dgiDataLen);
+            JCSystem.commitTransaction();
+        } else if (dgiHigh == (short) 0x00C0) {
+            // Read record template: 0xC0xx
+            JCSystem.beginTransaction();
+            ReadRecord.setRecord(dgi, buf, dgiDataOffset, (byte) dgiDataLen);
+            JCSystem.commitTransaction();
+        } else if (dgiHigh == (short) 0x00A0) {
+            // Applet-specific settings: 0xA0xx — subclass handles
+            processStoreDataSettings(dgi, buf, dgiDataOffset, dgiDataLen);
+        } else if (dgi != (short) 0x0000) {
+            // Everything else (non-zero) is an EMV tag: DGI = tag ID
+            JCSystem.beginTransaction();
+            EmvTag.setTag(dgi, buf, dgiDataOffset, dgiDataLen);
+            JCSystem.commitTransaction();
+        } else {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
+    }
+
+    /**
+     * Override in subclasses to handle applet-specific STORE DATA settings DGIs (0xA0xx range).
+     */
+    protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
+        ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+    }
+
+    /**
+     * Get tag template by ID (1-6). Used by STORE DATA and processSetTagTemplate.
+     */
+    protected TagTemplate getTagTemplate(short templateId) {
+        switch (templateId) {
+            case 0x0001: return responseTemplateGetProcessingOptions;
+            case 0x0002: return responseTemplateDda;
+            case 0x0003: return responseTemplateGenerateAc;
+            case 0x0004: return tag6fFci;
+            case 0x0005: return tagA5Fci;
+            case 0x0006: return tagBf0cFci;
+            default: return null;
+        }
     }
 
     protected void sendResponseTemplate(APDU apdu, byte[] buf, TagTemplate template) {

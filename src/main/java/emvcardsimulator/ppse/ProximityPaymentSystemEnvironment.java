@@ -50,11 +50,17 @@ public class ProximityPaymentSystemEnvironment extends Applet {
         byte ins = buf[ISO7816.OFFSET_INS];
 
         // Receive data for commands that have it
-        if (ins == (byte)0x01 || ins == (byte)0x02) {
+        if (ins == (byte)0x01 || ins == (byte)0x02 || ins == (byte)0xE2) {
             apdu.setIncomingAndReceive();
         }
 
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
+
+        // GP STORE DATA — always available (production personalization)
+        if (cmd == (short) 0x00E2) {
+            processStoreDataPpse(apdu, buf);
+            return;
+        }
 
         // Dev-only admin/personalization commands
         if (!BuildConfig.PRODUCTION) {
@@ -189,6 +195,48 @@ public class ProximityPaymentSystemEnvironment extends Applet {
 
         Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, fciData, (short) 0, len);
         fciLength = len;
+
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
+    }
+
+    /**
+     * Process GP STORE DATA (INS 0xE2) for PPSE personalization.
+     * DGI D001 = directory entry, DGI D002 = complete FCI.
+     */
+    private void processStoreDataPpse(APDU apdu, byte[] buf) {
+        short dataOffset = ISO7816.OFFSET_CDATA;
+        short dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+
+        if (dataLen < 3) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+
+        // Parse DGI (2 bytes)
+        short dgi = Util.getShort(buf, dataOffset);
+        short dgiDataOffset = (short) (dataOffset + 2);
+
+        // Parse length (1 byte)
+        short dgiDataLen = (short) (buf[dgiDataOffset] & 0x00FF);
+        dgiDataOffset += 1;
+
+        switch (dgi) {
+            case (short) 0xD001:  // Directory entry
+                if (dgiDataLen > 64) {
+                    ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+                }
+                Util.arrayCopy(buf, dgiDataOffset, directoryEntry, (short) 0, dgiDataLen);
+                directoryEntryLength = dgiDataLen;
+                break;
+            case (short) 0xD002:  // Complete FCI
+                if (dgiDataLen > 128) {
+                    ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+                }
+                Util.arrayCopy(buf, dgiDataOffset, fciData, (short) 0, dgiDataLen);
+                fciLength = dgiDataLen;
+                break;
+            default:
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }

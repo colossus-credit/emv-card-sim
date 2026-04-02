@@ -5,16 +5,16 @@ import javacard.framework.Util;
 
 public class ApduLog {
 
-    public ApduLog next;
-    protected ApduLog previous;
-    public static ApduLog head = null;
-    public static ApduLog tail = null;
+    ApduLog next;
+    ApduLog previous;
+    private static ApduLog head = null;
+    static ApduLog tail = null;
 
     private byte[] data;
     private byte   length;
 
-    public static short maxCount = 20;
-    public static short count = 0;
+    private static short maxCount = 20;
+    private static short count = 0;
 
     protected ApduLog(byte[] src, short srcOffset, byte length) {
         data = new byte[(short) (length & 0x00FF)];

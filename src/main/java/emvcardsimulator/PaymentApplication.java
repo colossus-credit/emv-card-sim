@@ -375,6 +375,82 @@ public class PaymentApplication extends EmvApplet {
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
 
+    /**
+     * Handle applet-specific STORE DATA settings (DGI 0xA0xx range).
+     * Maps DGI low byte to the same settings IDs used by processSetSettings.
+     */
+    protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
+        short settingsId = (short) (dgi & 0x00FF);
+        switch (settingsId) {
+            // A001: PIN code
+            case 0x0001:
+                Util.arrayCopy(buf, offset, pinCode, (short) 0, length);
+                break;
+            // A002: Response template tag
+            case 0x0002:
+                responseTemplateTag = Util.getShort(buf, offset);
+                break;
+            // A003: Flags
+            case 0x0003:
+                short flags = Util.getShort(buf, offset);
+                useRandom = ((flags & (1 << 0)) != 0);
+                break;
+            // A004: RSA private key modulus
+            case 0x0004:
+                rsaPrivateKeyByteSize = length;
+                short keyLength = (short) (rsaPrivateKeyByteSize * 8);
+                switch (keyLength) {
+                    case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
+                    case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
+                    case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
+                    case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
+                    case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
+                    default: ISOException.throwIt((short) 0x6A80);
+                }
+                try {
+                    rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
+                    rsaPrivateKey.clearKey();
+                    rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+            // A005: RSA private key exponent
+            case 0x0005:
+                if (rsaPrivateKey == null) {
+                    ISOException.throwIt((short) 0x6985);
+                }
+                try {
+                    rsaPrivateKey.setExponent(buf, offset, length);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+            // A006: Fallback read record
+            case 0x0006:
+                defaultReadRecord = new byte[length];
+                Util.arrayCopy(buf, offset, defaultReadRecord, (short) 0, length);
+                break;
+            // A00B: EC private key scalar
+            case 0x000B:
+                if (ecPrivateKey == null) {
+                    ISOException.throwIt((short) 0x6985);
+                }
+                try {
+                    ecPrivateKey.setS(buf, offset, length);
+                } catch (CryptoException e) {
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+            default:
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+    }
+
     protected PaymentApplication(byte[] buffer, short offset, byte length) {
         super();
 
@@ -1329,6 +1405,7 @@ public class PaymentApplication extends EmvApplet {
             case (byte)0x06:  // SET_EMV_TAG_FUZZ
             case (byte)0x09:  // SET_EMV_TAG_CHUNKED
             case (byte)0x0A:  // SET_SETTINGS_CHUNKED
+            case (byte)0xE2:  // STORE DATA (GP personalization)
                 hasCommandData = true;
                 break;
             default:
@@ -1376,6 +1453,9 @@ public class PaymentApplication extends EmvApplet {
         switch (cmd) {
             case CMD_SELECT:
                 processSelect(apdu, buf);
+                return;
+            case CMD_STORE_DATA:
+                processStoreData(apdu, buf);
                 return;
             default:
                 break;
