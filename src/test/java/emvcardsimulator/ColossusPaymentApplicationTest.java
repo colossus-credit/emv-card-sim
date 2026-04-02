@@ -1504,5 +1504,187 @@ public class ColossusPaymentApplicationTest {
 
         System.out.println("\n=== TEST PASSED: Full 291+ byte response received ===");
     }
+
+    // ========================================================================
+    // Negative / Security Boundary Tests
+    // ========================================================================
+
+    @Test
+    @DisplayName("Reject unsupported INS byte")
+    public void testUnsupportedInstruction() throws CardException {
+        setupColossusCard();
+        // INS 0xFF is not a valid EMV command
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xFF, (byte) 0x00, (byte) 0x00, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INS_NOT_SUPPORTED, (short) response.getSW(),
+            "Unknown INS should return 6D00");
+    }
+
+    @Test
+    @DisplayName("Reject VERIFY PIN with invalid P1P2")
+    public void testVerifyPinInvalidP1P2() throws CardException {
+        setupColossusCard();
+        // VERIFY PIN with P1P2=0xFFFF (invalid, must be 0x0080 or 0x0088)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0x20, (byte) 0xFF, (byte) 0xFF, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "VERIFY PIN with invalid P1P2 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("Reject VERIFY PIN with wrong LC length")
+    public void testVerifyPinWrongLength() throws CardException {
+        setupColossusCard();
+        // Set a PIN first
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x04, (byte) 0x00, (byte) 0x01,
+            (byte) 0x02, (byte) 0x12, (byte) 0x34
+        });
+        // VERIFY PIN plaintext (P1P2=0080) with LC=4 (should be 8)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0x20, (byte) 0x00, (byte) 0x80,
+            (byte) 0x04, (byte) 0x24, (byte) 0x12, (byte) 0x34, (byte) 0xFF
+        });
+        assertEquals(ISO7816.SW_DATA_INVALID, (short) response.getSW(),
+            "VERIFY PIN with wrong LC should return 6984");
+    }
+
+    @Test
+    @DisplayName("Reject wrong PIN value")
+    public void testVerifyPinWrongValue() throws CardException {
+        setupColossusCard();
+        // Set PIN to 1234
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x04, (byte) 0x00, (byte) 0x01,
+            (byte) 0x02, (byte) 0x12, (byte) 0x34
+        });
+        // VERIFY with wrong PIN 9999 (plaintext format: 24 9999 FFFFFFFFFF)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0x20, (byte) 0x00, (byte) 0x80,
+            (byte) 0x08, (byte) 0x24, (byte) 0x99, (byte) 0x99,
+            (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF
+        });
+        assertEquals((short) 0x63C3, (short) response.getSW(),
+            "Wrong PIN should return 63C3 (3 tries remaining)");
+    }
+
+    @Test
+    @DisplayName("Reject GPO with wrong P1P2")
+    public void testGpoWrongP1P2() throws CardException {
+        setupColossusCard();
+        // GPO with P1P2=0x0101 (must be 0x0000)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x01, (byte) 0x01,
+            (byte) 0x02, (byte) 0x83, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "GPO with wrong P1P2 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("Reject GPO with missing command template tag")
+    public void testGpoMissingTemplateTag() throws CardException {
+        setupColossusCard();
+        // GPO with tag 0x84 instead of 0x83
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02, (byte) 0x84, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_DATA_INVALID, (short) response.getSW(),
+            "GPO without tag 83 should return 6984");
+    }
+
+    @Test
+    @DisplayName("Reject GPO with LC too short")
+    public void testGpoLcTooShort() throws CardException {
+        setupColossusCard();
+        // GPO with LC=1 (minimum is 2: tag + length)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x01, (byte) 0x83
+        });
+        assertEquals(ISO7816.SW_DATA_INVALID, (short) response.getSW(),
+            "GPO with LC<2 should return 6984");
+    }
+
+    @Test
+    @DisplayName("Reject GENERATE AC with invalid cryptogram type")
+    public void testGenerateAcInvalidCryptogramType() throws CardException {
+        setupColossusCard();
+        // P1=0xC0 — bits [7:6] = 11, which is not a valid cryptogram type
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xAE, (byte) 0xC0, (byte) 0x00,
+            (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "GENERATE AC with invalid cryptogram type should return 6A86");
+    }
+
+    @Test
+    @DisplayName("Reject CDA request when no RSA key loaded")
+    public void testGenerateAcCdaWithoutKey() throws CardException {
+        setupColossusCard();
+        // No RSA key loaded — request ARQC+CDA (P1=0x90, bit 4 set for CDA)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xAE, (byte) 0x90, (byte) 0x00,
+            (byte) 0x00
+        });
+        assertEquals((short) 0x6985, (short) response.getSW(),
+            "CDA without RSA key should return 6985");
+    }
+
+    @Test
+    @DisplayName("Reject DDA with wrong P1P2")
+    public void testDdaWrongP1P2() throws CardException {
+        setupColossusCard();
+        // INTERNAL AUTHENTICATE with P1P2=0x0101 (must be 0x0000)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0x88, (byte) 0x01, (byte) 0x01,
+            (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "DDA with wrong P1P2 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("Reject GET CHALLENGE with wrong P1P2")
+    public void testGetChallengeWrongP1P2() throws CardException {
+        setupColossusCard();
+        // GET CHALLENGE with P1P2=0x0101 (must be 0x0000)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0x84, (byte) 0x01, (byte) 0x01,
+            (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "GET CHALLENGE with wrong P1P2 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("Reject GET RESPONSE when no pending data")
+    public void testGetResponseNoPendingData() throws CardException {
+        setupColossusCard();
+        // GET RESPONSE with no prior large response
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xC0, (byte) 0x00, (byte) 0x00,
+            (byte) 0x00
+        });
+        assertEquals((short) 0x6985, (short) response.getSW(),
+            "GET RESPONSE without pending data should return 6985");
+    }
+
+    @Test
+    @DisplayName("Reject READ RECORD for non-existent record")
+    public void testReadRecordNotFound() throws CardException {
+        setupColossusCard();
+        // READ RECORD SFI=1, record 99 — doesn't exist
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x63, (byte) 0x0C,
+            (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_RECORD_NOT_FOUND, (short) response.getSW(),
+            "READ RECORD for non-existent record should return 6A83");
+    }
 }
 
