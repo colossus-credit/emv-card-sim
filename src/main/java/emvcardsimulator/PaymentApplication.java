@@ -33,6 +33,7 @@ public class PaymentApplication extends EmvApplet {
     private RSAPrivateKey rsaPrivateKey = null;
     private short rsaPrivateKeyByteSize = 0;
     private ECPrivateKey ecPrivateKey = null;
+    private boolean ecPrivateKeyLoaded = false;
     private Signature ecdsaSignature = null;
     private byte[] pinCode = null;
     private boolean useRandom = true;
@@ -364,6 +365,7 @@ public class PaymentApplication extends EmvApplet {
                         ecLen = (lcByte == 0) ? (short) 256 : lcByte;
                     }
                     ecPrivateKey.setS(buf, ecDataOffset, ecLen);
+                    ecPrivateKeyLoaded = true;
                 } catch (CryptoException e) {
                     ISOException.throwIt((short) 0x6A81); // Function not supported
                 }
@@ -442,6 +444,7 @@ public class PaymentApplication extends EmvApplet {
                 }
                 try {
                     ecPrivateKey.setS(buf, offset, length);
+                    ecPrivateKeyLoaded = true;
                 } catch (CryptoException e) {
                     ISOException.throwIt((short) 0x6A81);
                 }
@@ -492,6 +495,13 @@ public class PaymentApplication extends EmvApplet {
         ecPrivateKey.setR(EC_P256_N, (short) 0, (short) EC_P256_N.length);
         ecPrivateKey.setK((short) 1);
         ecdsaSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
+    }
+
+    protected void factoryReset() {
+        super.factoryReset();
+        ecPrivateKeyLoaded = false;
+        rsaPrivateKey = null;
+        rsaPrivateKeyByteSize = 0;
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
@@ -1095,6 +1105,11 @@ public class PaymentApplication extends EmvApplet {
      * No ODA (AIP=0000), online-only (CTQ=8000).
      */
     private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
+        // EC key scalar must be loaded for ECDSA signing
+        if (!ecPrivateKeyLoaded) {
+            EmvApplet.logAndThrow(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+        }
+
         short offset = 0;
 
         // Increment ATC

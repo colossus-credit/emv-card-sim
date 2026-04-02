@@ -2238,11 +2238,8 @@ public class ColossusPaymentApplicationTest {
         System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
 
         ResponseAPDU response = SmartCard.transmitCommand(gpoCmd);
-        // BUG: applet doesn't guard against uninitialized EC key — jCardSim accepts it.
-        // On a real card this would likely crash. Documenting actual behavior.
-        // TODO: Add ecPrivateKey.isInitialized() check before ECDSA signing in qVSDC path.
-        System.out.println("  qVSDC without EC key: SW=" + String.format("%04X", response.getSW()) +
-            " (should fail but applet lacks guard)");
+        assertEquals((short) 0x6985, (short) response.getSW(),
+            "qVSDC GPO without EC key should return 6985 (conditions not satisfied)");
     }
 
     @Test
