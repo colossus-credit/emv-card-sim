@@ -1102,7 +1102,7 @@ public class PaymentApplication extends EmvApplet {
     /**
      * Process GPO in qVSDC mode - return all transaction data in GPO response.
      * ECDSA P-256 over UN||Amount||Currency||ATC, raw r||s split into 9F10 (IAD) + 9F7C (CED).
-     * No ODA (AIP=0000), online-only (CTQ=8000).
+     * No ODA (AIP=0040), online-only (CTQ=0000, floor limit forces online).
      */
     private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
         // EC key scalar must be loaded for ECDSA signing
@@ -1221,11 +1221,12 @@ public class PaymentApplication extends EmvApplet {
         Util.arrayCopy(ecdsaRawSig, (short) 32, tmpBuffer, offset, (short) 32);
         offset += 32;
 
-        // 9F6C CTQ (Card Transaction Qualifiers) - 80 00: online required
+        // 9F6C CTQ (Card Transaction Qualifiers) - 00 00: no CVM, no special qualifiers
+        // Terminal goes online via floor limit = 0, not via CTQ
         tmpBuffer[offset++] = (byte) 0x9F;
         tmpBuffer[offset++] = (byte) 0x6C;
         tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0x80;
+        tmpBuffer[offset++] = (byte) 0x00;
         tmpBuffer[offset++] = (byte) 0x00;
 
         // 9F6E Form Factor Indicator - 20 70 00 00 (card)
