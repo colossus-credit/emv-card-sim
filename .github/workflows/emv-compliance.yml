@@ -1,0 +1,60 @@
+name: EMV Spec Compliance Report
+
+on:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  compliance-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Checkout EMV specs (private)
+        uses: actions/checkout@v4
+        with:
+          repository: colossus-credit/emv-specs
+          token: ${{ secrets.SPECS_PAT }}
+          path: .emv-specs
+
+      - name: Generate compliance report
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are reviewing a pull request to an EMV JavaCard applet simulator.
+            EMV specification PDFs are available at .emv-specs/ for reference.
+
+            Your task:
+            1. Read the PR diff (git diff origin/master...HEAD)
+            2. Identify which EMV spec sections are relevant to the changed code
+            3. Check the changes against the specs for correctness
+
+            Output format — a markdown compliance report:
+            ## EMV Spec Compliance Report
+
+            ### Changes Reviewed
+            - List each changed file and what it does
+
+            ### Spec References
+            - For each change, cite the relevant spec and section number
+            - e.g., "Book 3 §6.5.5 — Cardholder Verification processing"
+
+            ### Compliance Status
+            - For each spec-relevant change, state PASS or FLAG
+            - PASS: change aligns with the spec
+            - FLAG: possible deviation — explain what the code does vs what the spec requires
+
+            ### Summary
+            - Overall compliance assessment (1-2 sentences)
+
+            IMPORTANT RULES:
+            - Reference specs by name and section number ONLY
+            - Do NOT quote spec text verbatim — the report is public
+            - Do NOT include raw PDF content in the output
+            - Keep the report concise and actionable
