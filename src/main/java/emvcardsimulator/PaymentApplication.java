@@ -607,9 +607,12 @@ public class PaymentApplication extends EmvApplet {
             // CDA explicitly requested but key not available
             // Return 6985 (Conditions of use not satisfied) for CDA failure
             EmvApplet.logAndThrow((short) 0x6985);
+        } else if (ecPrivateKeyLoaded) {
+            // ECDSA signing: sign ICC_DN || CDOL data, split r/s into 9F10/9F7C
+            generateEcdsaForGenAc(buf, cdolLen);
+            sendGenerateAcResponseEcdsa(apdu, buf);
         } else {
-            // CDA not applicable - build response without 9F4B
-            // Response contains: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (IAD)
+            // No CDA, no ECDSA - plain response with 9F27, 9F36, 9F26, 9F10
             sendGenerateAcResponseNoCda(apdu, buf);
         }
 
@@ -666,6 +669,94 @@ public class PaymentApplication extends EmvApplet {
         }
 
         // Copy content
+        Util.arrayCopy(tmpBuffer, (short) 0, buf, responseOffset, contentLen);
+        responseOffset += contentLen;
+
+        short totalLen = (short) (responseOffset - ISO7816.OFFSET_CDATA);
+        ApduLog.addLogEntry(buf, ISO7816.OFFSET_CDATA, (byte) (totalLen & 0xFF));
+        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, totalLen);
+    }
+
+    /**
+     * Generate ECDSA P-256 signature over ICC_DN || CDOL data during GENERATE AC.
+     * Signs the full CDOL data as provided by the terminal, prepended with ICC Dynamic Number.
+     * Raw r component stored in tag 9F10 (IAD), s in tag 9F7C (CED), ICC_DN in 9F4C.
+     */
+    private void generateEcdsaForGenAc(byte[] buf, short cdolLen) {
+        // Generate random ICC Dynamic Number (3 bytes)
+        arrayRandomFill(tag9f4cDynamicNumber);
+        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) tag9f4cDynamicNumber.length);
+
+        // Sign: ICC_DN(3) || CDOL data (cdolLen bytes from GENERATE AC command)
+        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
+        ecdsaSignature.update(tag9f4cDynamicNumber, (short) 0, (short) tag9f4cDynamicNumber.length);
+        short sigLen = ecdsaSignature.sign(buf, ISO7816.OFFSET_CDATA, cdolLen, ecdsaSigBuffer, (short) 0);
+
+        // Strip DER → raw r||s (64 bytes)
+        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
+
+        // Store r in 9F10 (IAD), s in 9F7C (CED)
+        EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
+        EmvTag.setTag((short) 0x9F7C, ecdsaRawSig, (short) 32, (short) 32);
+    }
+
+    /**
+     * Build GENERATE AC response with ECDSA signature tags.
+     * Response tag 77: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (r), 9F7C (s), 9F4C (ICC_DN)
+     */
+    private void sendGenerateAcResponseEcdsa(APDU apdu, byte[] buf) {
+        short offset = (short) 0;
+
+        // 9F27 (CID)
+        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
+        if (cidTag != null) {
+            offset = cidTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F36 (ATC)
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) {
+            offset = atcTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F26 (AC)
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        if (acTag != null) {
+            offset = acTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F10 (IAD = ECDSA r, 32 bytes)
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        if (iadTag != null) {
+            offset = iadTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F7C (CED = ECDSA s, 32 bytes)
+        EmvTag cedTag = EmvTag.findTag((short) 0x9F7C);
+        if (cedTag != null) {
+            offset = cedTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // 9F4C (ICC Dynamic Number, 3 bytes)
+        EmvTag dnTag = EmvTag.findTag((short) 0x9F4C);
+        if (dnTag != null) {
+            offset = dnTag.copyToArray(tmpBuffer, offset);
+        }
+
+        // Build tag 77 template wrapper
+        short contentLen = offset;
+        short responseOffset = (short) 0;
+
+        buf[ISO7816.OFFSET_CDATA] = (byte) 0x77;
+        responseOffset = (short) (ISO7816.OFFSET_CDATA + 1);
+
+        if (contentLen > (short) 127) {
+            buf[responseOffset++] = (byte) 0x81;
+            buf[responseOffset++] = (byte) (contentLen & 0xFF);
+        } else {
+            buf[responseOffset++] = (byte) contentLen;
+        }
+
         Util.arrayCopy(tmpBuffer, (short) 0, buf, responseOffset, contentLen);
         responseOffset += contentLen;
 
@@ -1085,163 +1176,14 @@ public class PaymentApplication extends EmvApplet {
             storedPdolLength = 0;
         }
 
-        // Check if we should use qVSDC mode (return everything in GPO) or contact mode (return AIP+AFL)
-        // qVSDC mode is triggered when PDOL contains TTQ (9F66) - contactless transaction
-        // For now, check if PDOL length matches contactless PDOL (33 bytes with TTQ)
-        boolean qvsdcMode = (pdolLen >= 4); // Has at least TTQ data
-
-        if (qvsdcMode) {
-            // Visa qVSDC: Return all data in GPO response, no READ RECORD needed
-            processGetProcessingOptionsQvsdc(apdu, buf, pdolLen);
-        } else {
-            // Contact mode: Return AIP + AFL, terminal will do READ RECORD
-            sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
-        }
+        // Full EMV mode for both contact and contactless:
+        // Return AIP + AFL, terminal will do READ RECORD then GENERATE AC
+        sendResponseTemplate(apdu, buf, responseTemplateGetProcessingOptions);
     }
 
-    /**
-     * Process GPO in qVSDC mode - return all transaction data in GPO response.
-     * ECDSA P-256 over UN||Amount||Currency||ATC, raw r||s split into 9F10 (IAD) + 9F7C (CED).
-     * No ODA (AIP=0040), online-only (CTQ=0000, floor limit forces online).
+    /* qVSDC removed — full EMV mode for all contactless transactions.
+     * ECDSA signing now happens in processGenerateAc() via generateEcdsaForGenAc().
      */
-    private void processGetProcessingOptionsQvsdc(APDU apdu, byte[] buf, short pdolLen) {
-        // EC key scalar must be loaded for ECDSA signing
-        if (!ecPrivateKeyLoaded) {
-            EmvApplet.logAndThrow(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-        }
-
-        short offset = 0;
-
-        // Increment ATC
-        incrementApplicationTransactionCounter();
-
-        // Generate ARQC from PDOL data
-        short cdolOffset = (short) (ISO7816.OFFSET_CDATA + 2);
-        generateApplicationCryptogram(buf, cdolOffset, pdolLen);
-
-        // --- ECDSA signing over DE55 data (matches contact DDA format) ---
-        // Signed data: ICC_DN(3) || Amount(6) || UN(4) || TerminalID(8) || MerchantID(15) = 36 bytes
-        // New PDOL layout: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4) TerminalID(8) MerchantID(15)
-        // Offsets:          0      4         10              16         18      23          25      28      29     33             41
-
-        // ICC Dynamic Number — zeroed out (not used for contactless, UN provides freshness)
-        Util.arrayFillNonAtomic(tag9f4cDynamicNumber, (short) 0, (short) 3, (byte) 0x00);
-        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) tag9f4cDynamicNumber.length);
-
-        // Build 36-byte signed message at tmpBuffer[100]: ICC_DN(3) + Amount(6) + UN(4) + TerminalID(8) + MerchantID(15)
-        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, (short) 100, (short) 3);    // ICC_DN
-        Util.arrayCopy(buf, (short) (cdolOffset + 4), tmpBuffer, (short) 103, (short) 6);      // Amount
-        Util.arrayCopy(buf, (short) (cdolOffset + 29), tmpBuffer, (short) 109, (short) 4);     // UN
-        Util.arrayCopy(buf, (short) (cdolOffset + 33), tmpBuffer, (short) 113, (short) 8);     // TerminalID
-        Util.arrayCopy(buf, (short) (cdolOffset + 41), tmpBuffer, (short) 121, (short) 15);    // MerchantID
-
-        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        short sigLen = ecdsaSignature.sign(tmpBuffer, (short) 100, (short) 36, ecdsaSigBuffer, (short) 0);
-
-        // Strip DER → raw r||s (64 bytes): r goes in 9F10 (IAD), s goes in 9F7C (CED)
-        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
-
-        // --- Build GPO response in tmpBuffer ---
-        offset = 0;
-
-        // 82 AIP (2 bytes) - 00 40: no ODA, contactless transaction indicator set (C-3 byte 2 bit 6)
-        tmpBuffer[offset++] = (byte) 0x82;
-        tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0x00;
-        tmpBuffer[offset++] = (byte) 0x40;
-
-        // 57 Track 2 Equivalent Data
-        EmvTag track2Tag = EmvTag.findTag((short) 0x0057);
-        if (track2Tag != null && track2Tag.getLength() > 0) {
-            tmpBuffer[offset++] = (byte) 0x57;
-            tmpBuffer[offset++] = (byte) (track2Tag.getLength() & 0xFF);
-            offset = track2Tag.copyDataToArray(tmpBuffer, offset);
-        }
-
-        // 5F20 Cardholder Name
-        EmvTag nameTag = EmvTag.findTag((short) 0x5F20);
-        if (nameTag != null && nameTag.getLength() > 0) {
-            tmpBuffer[offset++] = (byte) 0x5F;
-            tmpBuffer[offset++] = (byte) 0x20;
-            tmpBuffer[offset++] = (byte) (nameTag.getLength() & 0xFF);
-            offset = nameTag.copyDataToArray(tmpBuffer, offset);
-        }
-
-        // 5F34 PAN Sequence Number
-        EmvTag psnTag = EmvTag.findTag((short) 0x5F34);
-        if (psnTag != null && psnTag.getLength() > 0) {
-            tmpBuffer[offset++] = (byte) 0x5F;
-            tmpBuffer[offset++] = (byte) 0x34;
-            tmpBuffer[offset++] = (byte) (psnTag.getLength() & 0xFF);
-            offset = psnTag.copyDataToArray(tmpBuffer, offset);
-        }
-
-        // 9F10 Issuer Application Data (IAD) = ECDSA r component (32 bytes)
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x10;
-        tmpBuffer[offset++] = (byte) 0x20; // 32 bytes
-        Util.arrayCopy(ecdsaRawSig, (short) 0, tmpBuffer, offset, (short) 32);
-        offset += 32;
-
-        // 9F26 Application Cryptogram (8 bytes)
-        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
-        if (acTag != null) {
-            tmpBuffer[offset++] = (byte) 0x9F;
-            tmpBuffer[offset++] = (byte) 0x26;
-            tmpBuffer[offset++] = (byte) 0x08;
-            offset = acTag.copyDataToArray(tmpBuffer, offset);
-        }
-
-        // 9F27 CID - ARQC = 0x80
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x27;
-        tmpBuffer[offset++] = (byte) 0x01;
-        tmpBuffer[offset++] = (byte) 0x80;
-
-        // 9F36 ATC
-        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
-        if (atcTag != null) {
-            tmpBuffer[offset++] = (byte) 0x9F;
-            tmpBuffer[offset++] = (byte) 0x36;
-            tmpBuffer[offset++] = (byte) 0x02;
-            offset = atcTag.copyDataToArray(tmpBuffer, offset);
-        }
-
-        // 9F4C ICC Dynamic Number (3 bytes) - for bundler to reconstruct signed message
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x4C;
-        tmpBuffer[offset++] = (byte) 0x03;
-        Util.arrayCopy(tag9f4cDynamicNumber, (short) 0, tmpBuffer, offset, (short) 3);
-        offset += 3;
-
-        // 9F7C Customer Exclusive Data (CED) = ECDSA s component (32 bytes)
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x7C;
-        tmpBuffer[offset++] = (byte) 0x20; // 32 bytes
-        Util.arrayCopy(ecdsaRawSig, (short) 32, tmpBuffer, offset, (short) 32);
-        offset += 32;
-
-        // 9F6C CTQ (Card Transaction Qualifiers) - 00 00: no CVM, no special qualifiers
-        // Terminal goes online via floor limit = 0, not via CTQ
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x6C;
-        tmpBuffer[offset++] = (byte) 0x02;
-        tmpBuffer[offset++] = (byte) 0x00;
-        tmpBuffer[offset++] = (byte) 0x00;
-
-        // 9F6E Form Factor Indicator - 20 70 00 00 (card)
-        tmpBuffer[offset++] = (byte) 0x9F;
-        tmpBuffer[offset++] = (byte) 0x6E;
-        tmpBuffer[offset++] = (byte) 0x04;
-        tmpBuffer[offset++] = (byte) 0x20;
-        tmpBuffer[offset++] = (byte) 0x70;
-        tmpBuffer[offset++] = (byte) 0x00;
-        tmpBuffer[offset++] = (byte) 0x00;
-
-        // Store as tag 77 and send
-        EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
-        sendResponse(apdu, buf, (short) 0x0077);
-    }
 
     private void processDynamicDataAuthentication(APDU apdu, byte[] buf) {
         if (Util.getShort(buf, ISO7816.OFFSET_P1) != (short) 0x0000) {

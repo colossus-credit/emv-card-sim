@@ -1929,45 +1929,33 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("End-to-end: personalize via STORE DATA then run contactless qVSDC transaction")
-    public void testStoreDataEndToEndContactless() throws Exception {
-        // SELECT + factory reset
+    @DisplayName("End-to-end: full EMV contactless flow with ECDSA in GENERATE AC")
+    public void testFullEmvContactlessWithEcdsaGenAc() throws Exception {
         setupColossusCard();
 
         // --- Personalize via STORE DATA ---
-
-        // AID
         assertStoreData(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID (84)");
-
-        // PAN
         assertStoreData(0x00, 0x5A, new byte[] {
             (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
             (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
         }, "PAN (5A)");
-
-        // Track 2 (required for qVSDC GPO response)
-        assertStoreData(0x00, 0x57, new byte[] {
-            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
-            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78,
-            (byte) 0xD2, (byte) 0x71, (byte) 0x22, (byte) 0x01,
-            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
-            (byte) 0x00, (byte) 0x0F
-        }, "Track 2 (57)");
-
-        // ATC
         assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
 
-        // AIP — 00 00 for qVSDC (no ODA)
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x00, (byte) 0x00 }, "AIP (82)");
+        // AIP = 0040 (no ODA, contactless indicator)
+        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x00, (byte) 0x40 }, "AIP (82)");
 
-        // CDOL1 (needed for AC generation inside qVSDC GPO)
+        // AFL: SFI1 rec1 (for READ RECORD)
+        assertStoreData(0x00, 0x94, new byte[] {
+            (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
+        }, "AFL (94)");
+
+        // CDOL1
         assertStoreData(0x00, 0x8C, new byte[] {
             (byte) 0x9F, (byte) 0x02, (byte) 0x06,
             (byte) 0x9F, (byte) 0x03, (byte) 0x06,
             (byte) 0x9F, (byte) 0x1A, (byte) 0x02,
-            (byte) 0x95, (byte) 0x05,
             (byte) 0x5F, (byte) 0x2A, (byte) 0x02,
             (byte) 0x9A, (byte) 0x03,
             (byte) 0x9C, (byte) 0x01,
@@ -1975,9 +1963,9 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x9F, (byte) 0x1C, (byte) 0x08,
             (byte) 0x9F, (byte) 0x16, (byte) 0x0F,
             (byte) 0x9F, (byte) 0x01, (byte) 0x06
-        }, "CDOL1 (8C)");
+        }, "CDOL1 (8C) — no TVR");
 
-        // EC private key via STORE DATA settings DGI A00B (32 bytes)
+        // EC private key
         assertStoreData(0xA0, 0x0B, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
@@ -1989,28 +1977,25 @@ public class ColossusPaymentApplicationTest {
             (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
         }, "EC private key (A00B)");
 
-        // Response template = tag 77
+        // Templates
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
-
-        // Flags = randomness enabled
         assertStoreData(0xA0, 0x03, new byte[] { (byte) 0x00, (byte) 0x01 }, "Flags");
-
-        // FCI templates (needed for SELECT)
+        assertStoreData(0xB0, 0x01, new byte[] {
+            (byte) 0x00, (byte) 0x82, (byte) 0x00, (byte) 0x94
+        }, "GPO template (AIP+AFL)");
         assertStoreData(0xB0, 0x05, new byte[] {
             (byte) 0x00, (byte) 0x50, (byte) 0x00, (byte) 0x87
         }, "FCI A5 template");
         assertStoreData(0xB0, 0x04, new byte[] {
             (byte) 0x00, (byte) 0x84, (byte) 0x00, (byte) 0xA5
         }, "FCI 6F template");
-
-        // App label + priority
         assertStoreData(0x00, 0x50, new byte[] {
             (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
             (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
         }, "App label (50)");
         assertStoreData(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
 
-        // --- Run contactless transaction ---
+        // --- Run full EMV contactless transaction ---
 
         // 1. SELECT
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
@@ -2021,23 +2006,27 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
         System.out.println("  SELECT: OK");
 
-        // 2. GPO with contactless PDOL (56 bytes → triggers qVSDC mode)
-        // PDOL: TTQ(4) Amount(6) AmountOther(6) Country(2) TVR(5) Currency(2) Date(3) Type(1) UN(4) TerminalID(8) MerchantID(15)
-        byte[] pdolData = new byte[] {
-            // TTQ (Terminal Transaction Qualifiers)
-            (byte) 0x36, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+        // 2. GPO (empty PDOL — full EMV mode returns AIP+AFL, not qVSDC all-in-one)
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02, (byte) 0x83, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
+        System.out.println("  GPO: OK, response = " + response.getData().length + " bytes (AIP+AFL)");
+
+        // 3. GENERATE AC with CDOL data (53 bytes matching CDOL1 without TVR)
+        // Amount(6) + AmountOther(6) + Country(2) + Currency(2) + Date(3) + Type(1) + UN(4) + TerminalID(8) + MerchantID(15) + AcquirerID(6) = 53 bytes
+        byte[] cdolData = new byte[] {
             // Amount Authorised
             (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00,
             // Amount Other
             (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
             // Terminal Country Code (USA)
             (byte) 0x08, (byte) 0x40,
-            // TVR
-            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
             // Currency Code (USD)
             (byte) 0x08, (byte) 0x40,
-            // Date
-            (byte) 0x26, (byte) 0x04, (byte) 0x02,
+            // Transaction Date
+            (byte) 0x26, (byte) 0x04, (byte) 0x03,
             // Transaction Type
             (byte) 0x00,
             // Unpredictable Number
@@ -2048,67 +2037,53 @@ public class ColossusPaymentApplicationTest {
             // Merchant ID
             (byte) 0x4D, (byte) 0x45, (byte) 0x52, (byte) 0x43, (byte) 0x48,
             (byte) 0x41, (byte) 0x4E, (byte) 0x54, (byte) 0x30, (byte) 0x30,
-            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // Acquirer ID
+            (byte) 0x00, (byte) 0x00, (byte) 0x01, (byte) 0x23, (byte) 0x45, (byte) 0x67
         };
 
-        // GPO command: 80 A8 00 00 LC 83 LEN [PDOL data]
-        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
-        gpoCmd[0] = (byte) 0x80;
-        gpoCmd[1] = (byte) 0xA8;
-        gpoCmd[2] = (byte) 0x00;
-        gpoCmd[3] = (byte) 0x00;
-        gpoCmd[4] = (byte) (2 + pdolData.length);  // LC
-        gpoCmd[5] = (byte) 0x83;                    // command template tag
-        gpoCmd[6] = (byte) pdolData.length;          // PDOL length
-        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        byte[] genAcCmd = new byte[5 + cdolData.length];
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80;  // ARQC, no CDA
+        genAcCmd[3] = (byte) 0x00;
+        genAcCmd[4] = (byte) cdolData.length;
+        System.arraycopy(cdolData, 0, genAcCmd, 5, cdolData.length);
 
-        response = SmartCard.transmitCommand(gpoCmd);
+        response = SmartCard.transmitCommand(genAcCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "qVSDC GPO should succeed");
-        assertTrue(response.getData().length > 50,
-            "qVSDC GPO should return full response with AIP, Track2, ATC, AC, IAD(r), CED(s)");
+            "GENERATE AC should succeed");
+        System.out.println("  GENERATE AC: OK, response = " + response.getData().length + " bytes");
 
-        // Verify response contains expected tags
-        byte[] gpoResponse = response.getData();
-        System.out.println("  qVSDC GPO: OK, response = " + gpoResponse.length + " bytes");
+        // 4. Verify ECDSA signature in response
+        byte[] genAcResponse = response.getData();
 
-        // Look for 9F10 (IAD = ECDSA r, 32 bytes) and 9F7C (CED = ECDSA s, 32 bytes)
-        boolean found9F10 = false;
-        boolean found9F7C = false;
-        for (int i = 0; i < gpoResponse.length - 2; i++) {
-            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x10) {
-                found9F10 = true;
-                assertEquals(0x20, gpoResponse[i + 2] & 0xFF, "IAD (9F10) should be 32 bytes (ECDSA r)");
+        // Extract r (9F10), s (9F7C), ICC_DN (9F4C)
+        byte[] sigR = null, sigS = null, iccDn = null;
+        for (int i = 0; i < genAcResponse.length - 2; i++) {
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x10 && genAcResponse[i + 2] == 0x20) {
+                sigR = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
                 System.out.println("  Found 9F10 (ECDSA r): 32 bytes");
             }
-            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x7C) {
-                found9F7C = true;
-                assertEquals(0x20, gpoResponse[i + 2] & 0xFF, "CED (9F7C) should be 32 bytes (ECDSA s)");
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x7C && genAcResponse[i + 2] == 0x20) {
+                sigS = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
                 System.out.println("  Found 9F7C (ECDSA s): 32 bytes");
             }
-        }
-        assertTrue(found9F10, "qVSDC response must contain 9F10 (ECDSA r component)");
-        assertTrue(found9F7C, "qVSDC response must contain 9F7C (ECDSA s component)");
-
-        // --- Verify ECDSA signature ---
-        // Extract r (from 9F10) and s (from 9F7C) from response
-        byte[] sigR = null;
-        byte[] sigS = null;
-        for (int i = 0; i < gpoResponse.length - 2; i++) {
-            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x10 && gpoResponse[i + 2] == 0x20) {
-                sigR = Arrays.copyOfRange(gpoResponse, i + 3, i + 3 + 32);
-            }
-            if (gpoResponse[i] == (byte) 0x9F && gpoResponse[i + 1] == (byte) 0x7C && gpoResponse[i + 2] == 0x20) {
-                sigS = Arrays.copyOfRange(gpoResponse, i + 3, i + 3 + 32);
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x4C && genAcResponse[i + 2] == 0x03) {
+                iccDn = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 3);
+                System.out.println("  Found 9F4C (ICC DN): 3 bytes");
             }
         }
-        assertNotNull(sigR, "Could not extract r from 9F10");
-        assertNotNull(sigS, "Could not extract s from 9F7C");
+        assertNotNull(sigR, "GENERATE AC response must contain 9F10 (r)");
+        assertNotNull(sigS, "GENERATE AC response must contain 9F7C (s)");
+        assertNotNull(iccDn, "GENERATE AC response must contain 9F4C (ICC DN)");
 
-        // Reconstruct DER-encoded signature from raw r||s
-        byte[] derSig = rawToDerSignature(sigR, sigS);
+        // Reconstruct signed message: ICC_DN(3) || CDOL data (53 bytes)
+        byte[] signedMessage = new byte[3 + cdolData.length];
+        System.arraycopy(iccDn, 0, signedMessage, 0, 3);
+        System.arraycopy(cdolData, 0, signedMessage, 3, cdolData.length);
 
-        // Derive public key from the private key scalar we loaded
+        // Derive public key
         byte[] ecPrivKeyBytes = new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
@@ -2120,27 +2095,14 @@ public class ColossusPaymentApplicationTest {
             (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
         };
 
-        // Generate public key from private scalar using EC key agreement
         java.security.KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
         kpg.initialize(new ECGenParameterSpec("secp256r1"));
         java.security.KeyPair dummyPair = kpg.generateKeyPair();
         java.security.spec.ECParameterSpec ecSpec = ((ECPublicKey) dummyPair.getPublic()).getParams();
 
         BigInteger privateScalar = new BigInteger(1, ecPrivKeyBytes);
-        ECPrivateKeySpec privSpec = new ECPrivateKeySpec(privateScalar, ecSpec);
         KeyFactory kf = KeyFactory.getInstance("EC");
-        java.security.PrivateKey privKey = kf.generatePrivate(privSpec);
 
-        // Reconstruct the signed message: ICC_DN(3, zeroed) || Amount(6) || UN(4) || TerminalID(8) || MerchantID(15)
-        byte[] signedMessage = new byte[36];
-        // ICC_DN = 00 00 00 (zeroed)
-        // Amount from PDOL offset 4, length 6
-        System.arraycopy(pdolData, 4, signedMessage, 3, 6);    // Amount
-        System.arraycopy(pdolData, 29, signedMessage, 9, 4);   // UN
-        System.arraycopy(pdolData, 33, signedMessage, 13, 8);  // TerminalID
-        System.arraycopy(pdolData, 41, signedMessage, 21, 15); // MerchantID
-
-        // Derive public key from private scalar: Q = d * G
         org.bouncycastle.jce.spec.ECNamedCurveParameterSpec bcSpec =
             org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256r1");
         org.bouncycastle.math.ec.ECPoint qPoint = bcSpec.getG().multiply(privateScalar).normalize();
@@ -2150,15 +2112,16 @@ public class ColossusPaymentApplicationTest {
         ECPublicKeySpec pubSpec = new ECPublicKeySpec(pubPoint, ecSpec);
         java.security.PublicKey pubKey = kf.generatePublic(pubSpec);
 
-        // Verify card's ECDSA signature over the signed message
+        // Verify ECDSA signature over ICC_DN || CDOL data
+        byte[] derSig = rawToDerSignature(sigR, sigS);
         Signature verifier = Signature.getInstance("SHA256withECDSA");
         verifier.initVerify(pubKey);
         verifier.update(signedMessage);
         boolean valid = verifier.verify(derSig);
-        assertTrue(valid, "ECDSA signature from card must verify against public key");
-        System.out.println("  ECDSA signature VERIFIED against public key");
+        assertTrue(valid, "ECDSA signature must verify: signed over ICC_DN || CDOL data");
+        System.out.println("  ECDSA signature VERIFIED over ICC_DN(" + iccDn.length + "B) || CDOL(" + cdolData.length + "B)");
 
-        System.out.println("\n=== STORE DATA end-to-end contactless qVSDC transaction PASSED ===");
+        System.out.println("\n=== Full EMV contactless with ECDSA in GENERATE AC PASSED ===");
     }
 
     /**
@@ -2204,42 +2167,51 @@ public class ColossusPaymentApplicationTest {
     // ========================================================================
 
     @Test
-    @DisplayName("qVSDC GPO without EC key loaded should fail")
-    public void testQvsdcWithoutEcKey() throws CardException {
+    @DisplayName("GENERATE AC without EC key falls back to plain response (no ECDSA)")
+    public void testGenerateAcWithoutEcKey() throws CardException {
         setupColossusCard();
 
         // Set minimal card data but NO EC key
         assertStoreData(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID");
-        assertStoreData(0x00, 0x5A, new byte[] {
-            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
-            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
-        }, "PAN");
         assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
-        assertStoreData(0x00, 0x8C, new byte[] {
-            (byte) 0x9F, (byte) 0x02, (byte) 0x06, (byte) 0x9F, (byte) 0x03, (byte) 0x06,
-            (byte) 0x9F, (byte) 0x1A, (byte) 0x02, (byte) 0x95, (byte) 0x05,
-            (byte) 0x5F, (byte) 0x2A, (byte) 0x02, (byte) 0x9A, (byte) 0x03,
-            (byte) 0x9C, (byte) 0x01, (byte) 0x9F, (byte) 0x37, (byte) 0x04,
-            (byte) 0x9F, (byte) 0x1C, (byte) 0x08, (byte) 0x9F, (byte) 0x16, (byte) 0x0F,
-            (byte) 0x9F, (byte) 0x01, (byte) 0x06
-        }, "CDOL1");
+        assertStoreData(0x9F, 0x10, new byte[] {
+            (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
+        }, "IAD (9F10)");
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, (byte) 0x27, (byte) 0x9F, (byte) 0x36,
+            (byte) 0x9F, (byte) 0x26, (byte) 0x9F, (byte) 0x10
+        }, "GenAC template");
 
-        // Send contactless GPO (PDOL >= 4 bytes triggers qVSDC)
-        byte[] pdolData = new byte[56];
-        pdolData[0] = (byte) 0x36; // TTQ
-        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
-        gpoCmd[0] = (byte) 0x80; gpoCmd[1] = (byte) 0xA8;
-        gpoCmd[2] = (byte) 0x00; gpoCmd[3] = (byte) 0x00;
-        gpoCmd[4] = (byte) (2 + pdolData.length);
-        gpoCmd[5] = (byte) 0x83; gpoCmd[6] = (byte) pdolData.length;
-        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        // GPO (empty PDOL)
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
+            (byte) 0x02, (byte) 0x83, (byte) 0x00
+        });
 
-        ResponseAPDU response = SmartCard.transmitCommand(gpoCmd);
-        assertEquals((short) 0x6985, (short) response.getSW(),
-            "qVSDC GPO without EC key should return 6985 (conditions not satisfied)");
+        // GENERATE AC — no EC key loaded, should fall back to plain response (no 9F7C)
+        byte[] cdolData = new byte[10];
+        byte[] genAcCmd = new byte[5 + cdolData.length];
+        genAcCmd[0] = (byte) 0x80; genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80; genAcCmd[3] = (byte) 0x00;
+        genAcCmd[4] = (byte) cdolData.length;
+
+        ResponseAPDU response = SmartCard.transmitCommand(genAcCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GENERATE AC without EC key should succeed with plain response");
+
+        // Verify NO 9F7C in response (no ECDSA)
+        byte[] data = response.getData();
+        boolean found9F7C = false;
+        for (int i = 0; i < data.length - 2; i++) {
+            if (data[i] == (byte) 0x9F && data[i + 1] == (byte) 0x7C) {
+                found9F7C = true;
+            }
+        }
+        assertTrue(!found9F7C, "Response without EC key should NOT contain 9F7C (ECDSA s)");
+        System.out.println("  GENERATE AC without EC key: plain response (no ECDSA)");
     }
 
     @Test
