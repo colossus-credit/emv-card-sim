@@ -191,7 +191,8 @@ preferred_name="${DEFAULT_APP_LABEL} CREDIT"
 preferred_name_hex=$(echo -n "$preferred_name" | xxd -p | tr -d '\n')
 preferred_name_len=$(printf '%02X' ${#preferred_name})
 full_contactless_aid_len=$(printf '%02X' $((${#FULL_CONTACTLESS_AID} / 2)))
-contactless_dir="4F${full_contactless_aid_len}${FULL_CONTACTLESS_AID}50${preferred_name_len}${preferred_name_hex}9F12${preferred_name_len}${preferred_name_hex}870101"
+# 9F2A = Kernel Identifier: 02 = Mastercard Kernel C-2 (has GENERATE AC with CDOL)
+contactless_dir="4F${full_contactless_aid_len}${FULL_CONTACTLESS_AID}50${preferred_name_len}${preferred_name_hex}9F12${preferred_name_len}${preferred_name_hex}8701019F2A0102"
 contactless_dir_len=$(printf '%02X' $((${#contactless_dir} / 2)))
 
 # ============================================================

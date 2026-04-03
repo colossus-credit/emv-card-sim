@@ -704,7 +704,8 @@ personalize_card() {
     local ppse_label_hex=$(echo -n "$ppse_label" | xxd -p | tr -d '\n')
     local ppse_label_len=$(printf '%02X' ${#ppse_label})
     # Directory entry: 4F(AID) + 50(label="VISA CREDIT") + 9F12(preferred name="VISA CREDIT") + 87(priority)
-    local contactless_dir_entry="4F${full_contactless_aid_len}${full_contactless_aid}50${ppse_label_len}${ppse_label_hex}9F12${ppse_label_len}${ppse_label_hex}870101"
+    # 9F2A = Kernel Identifier: 02 = Mastercard Kernel C-2 (has GENERATE AC with CDOL)
+    local contactless_dir_entry="4F${full_contactless_aid_len}${full_contactless_aid}50${ppse_label_len}${ppse_label_hex}9F12${ppse_label_len}${ppse_label_hex}8701019F2A0102"
     local contactless_dir_entry_len=$(printf '%02X' $((${#contactless_dir_entry} / 2)))
     gp_cmd+=" -a 00A404000E${ppse_aid}"
     gp_cmd+=" -a 8005000000"
