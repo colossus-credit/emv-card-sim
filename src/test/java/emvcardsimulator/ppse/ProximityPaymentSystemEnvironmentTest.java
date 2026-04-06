@@ -67,8 +67,8 @@ public class ProximityPaymentSystemEnvironmentTest {
             (byte) 0x44, (byte) 0x44, (byte) 0x46, (byte) 0x30, (byte) 0x31
         });
         // No FCI data configured after reset — returns FILE_NOT_FOUND
-        assertEquals(ISO7816.SW_FILE_NOT_FOUND, (short) response.getSW(),
-            "SELECT PPSE with no data should return 6A82");
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "SELECT PPSE with no data should return 9000 (allows STORE DATA personalization)");
     }
 
     @Test
@@ -127,7 +127,7 @@ public class ProximityPaymentSystemEnvironmentTest {
     }
 
     @Test
-    @DisplayName("SELECT PPSE with no data configured returns FILE_NOT_FOUND")
+    @DisplayName("SELECT PPSE with no data configured returns 9000 (allows personalization)")
     public void testSelectNoData() throws CardException {
         selectPpse();
         factoryReset();
@@ -138,8 +138,8 @@ public class ProximityPaymentSystemEnvironmentTest {
             (byte) 0x53, (byte) 0x59, (byte) 0x53, (byte) 0x2E,
             (byte) 0x44, (byte) 0x44, (byte) 0x46, (byte) 0x30, (byte) 0x31
         });
-        assertEquals(ISO7816.SW_FILE_NOT_FOUND, (short) response.getSW(),
-            "PPSE with no FCI or directory data should return 6A82");
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "PPSE with no data should return 9000 (allows STORE DATA personalization)");
     }
 
     @Test

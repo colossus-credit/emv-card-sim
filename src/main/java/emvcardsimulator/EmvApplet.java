@@ -449,7 +449,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             // CPS standard: 8000 = keys, 8010 = PIN, 9010 = PIN data
             processStoreDataSettings(dgi, buf, offset, length);
         } else if (dgiHigh == (short) 0x00B0 && dgiLow >= 0x01 && dgiLow <= 0x06) {
-            // Tag template: 0xB001-0xB006, low byte = template ID
+            // App-specific: tag templates B001-B006, low byte = template ID
             TagTemplate template = getTagTemplate(dgiLow);
             if (template == null) {
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -458,7 +458,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             template.setData(buf, offset, (byte) length);
             JCSystem.commitTransaction();
         } else if (dgiHigh == (short) 0x00A0) {
-            // App-specific settings: 0xA0xx — subclass handles (legacy + CPS extensions)
+            // App-specific settings: A002 (response template), A003 (flags), A006 (fallback record)
             processStoreDataSettings(dgi, buf, offset, length);
         } else if (dgi != (short) 0x0000) {
             // Everything else (non-zero) = EMV tag: DGI is the tag ID

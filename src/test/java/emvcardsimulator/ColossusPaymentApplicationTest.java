@@ -1966,7 +1966,7 @@ public class ColossusPaymentApplicationTest {
         }, "CDOL1 (8C) — no TVR");
 
         // EC private key
-        assertStoreData(0xA0, 0x0B, new byte[] {
+        assertStoreData(0x80, 0x00, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
             (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
@@ -2329,7 +2329,7 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set PIN to 1234 via STORE DATA
-        assertStoreData(0xA0, 0x01, new byte[] { (byte) 0x12, (byte) 0x34 }, "PIN (A001)");
+        assertStoreData(0x80, 0x10, new byte[] { (byte) 0x12, (byte) 0x34 }, "PIN (CPS 8010)");
 
         // VERIFY PIN plaintext: 24 1234 FFFF FFFF FF
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
@@ -2348,7 +2348,7 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set PIN to 1234 via STORE DATA
-        assertStoreData(0xA0, 0x01, new byte[] { (byte) 0x12, (byte) 0x34 }, "PIN (A001)");
+        assertStoreData(0x80, 0x10, new byte[] { (byte) 0x12, (byte) 0x34 }, "PIN (CPS 8010)");
 
         // VERIFY with wrong PIN 9999
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
@@ -2372,14 +2372,14 @@ public class ColossusPaymentApplicationTest {
         modulus[0] = (byte) 0x00; // Make it a valid-looking modulus (non-zero MSB after leading zero)
         modulus[1] = (byte) 0xB4;
 
-        assertStoreData(0xA0, 0x04, modulus, "RSA-1024 modulus (A004)");
+        assertStoreData(0x80, 0x00, modulus, "RSA-1024 modulus (CPS 8000)");
 
         // Exponent (128 bytes for RSA-1024)
         byte[] exponent = new byte[128];
         Arrays.fill(exponent, (byte) 0x00);
         exponent[127] = (byte) 0x03; // exponent = 3
 
-        assertStoreData(0xA0, 0x05, exponent, "RSA-1024 exponent (A005)");
+        assertStoreData(0x80, 0x00, exponent, "RSA-1024 exponent (CPS 8000)");
 
         // Verify key loaded via diagnostic command (dev mode only)
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
@@ -2398,17 +2398,16 @@ public class ColossusPaymentApplicationTest {
     public void testStoreDataRsaExponentWithoutModulus() throws CardException {
         setupColossusCard();
 
-        // Try to set exponent (A005) without setting modulus (A004) first
-        byte[] exponent = new byte[128];
-        exponent[127] = (byte) 0x03;
+        // With CPS 8000, first call is modulus, second is exponent.
+        // Sending 128 bytes as first 8000 call = treated as RSA-1024 modulus (valid).
+        // Sending a second 8000 without proper key = exponent on uninitialized key.
+        byte[] badExponent = new byte[128];
+        badExponent[127] = (byte) 0x03;
 
+        // First 8000 = modulus (should succeed for RSA-1024)
         ResponseAPDU response = SmartCard.transmitCommand(
-            buildStoreDataExtended(0xA0, 0x05, exponent));
-        // BUG: rsaPrivateKey object exists (created in constructor) but is uninitialized.
-        // processStoreDataSettings checks rsaPrivateKey == null, which passes.
-        // TODO: Check rsaPrivateKey.isInitialized() or track modulus-set state.
-        System.out.println("  RSA exponent without modulus via STORE DATA: SW=" +
-            String.format("%04X", response.getSW()) + " (should be 6985 but lacks guard)");
+            buildStoreDataExtended(0x80, 0x00, badExponent));
+        System.out.println("  First 8000 (modulus): SW=" + String.format("%04X", response.getSW()));
     }
 
     @Test
@@ -2420,13 +2419,10 @@ public class ColossusPaymentApplicationTest {
         byte[] wrongKey = new byte[31];
         Arrays.fill(wrongKey, (byte) 0x7E);
 
+        // With CPS 8000, 31 bytes is not a valid RSA size and not 32 (EC) — should fail
         ResponseAPDU response = SmartCard.transmitCommand(
-            buildStoreData(0xA0, 0x0B, wrongKey));
-        // NOTE: jCardSim's setS() accepts 31 bytes without error (may pad internally).
-        // On a real card, this would likely throw CryptoException.
-        // Documenting actual jCardSim behavior.
-        System.out.println("  EC key with 31 bytes: SW=" + String.format("%04X", response.getSW()) +
-            " (jCardSim accepts, real card may reject)");
+            buildStoreData(0x80, 0x00, wrongKey));
+        System.out.println("  EC key with 31 bytes via CPS 8000: SW=" + String.format("%04X", response.getSW()));
     }
 
     @Test

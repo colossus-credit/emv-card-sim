@@ -157,8 +157,8 @@ public class ProximityPaymentSystemEnvironment extends Applet {
             Util.arrayCopy(tmpBuffer, (short) 0, buf, (short) 0, offset);
             apdu.setOutgoingAndSend((short) 0, offset);
         } else {
-            // No data configured
-            ISOException.throwIt(ISO7816.SW_FILE_NOT_FOUND);
+            // No data configured — return 9000 so STORE DATA can be sent for personalization
+            ISOException.throwIt(ISO7816.SW_NO_ERROR);
         }
     }
 
