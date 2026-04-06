@@ -2440,5 +2440,123 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
             "STORE DATA with BER 0x81 length encoding should succeed");
     }
+
+    // ========================================================================
+    // CPS DGI Compliance Tests
+    // ========================================================================
+
+    @Test
+    @DisplayName("STORE DATA: RSA key via CPS DGIs 8201 (modulus) + 8202 (exponent)")
+    public void testStoreDataCpsRsaKey() throws CardException {
+        setupColossusCard();
+
+        byte[] modulus = new byte[128];
+        Arrays.fill(modulus, (byte) 0xAB);
+        modulus[0] = (byte) 0x00; modulus[1] = (byte) 0xB4;
+        assertStoreData(0x82, 0x01, modulus, "RSA modulus (CPS 8201)");
+
+        byte[] exponent = new byte[128];
+        exponent[127] = (byte) 0x03;
+        assertStoreData(0x82, 0x02, exponent, "RSA exponent (CPS 8202)");
+
+        // Verify via diagnostic
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x04, (byte) 0x00, (byte) 0x07, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW());
+        byte[] diag = response.getData();
+        assertEquals((byte) 0x01, diag[0], "RSA key should be present");
+        assertEquals((byte) 0x01, diag[3], "RSA key should be initialized");
+        System.out.println("  RSA key via CPS 8201/8202: OK");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: EC key via CPS DGI 8203")
+    public void testStoreDataCpsEcKey() throws CardException {
+        setupColossusCard();
+
+        assertStoreData(0x82, 0x03, new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
+            (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
+            (byte) 0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, (byte) 0x64, (byte) 0x32, (byte) 0xA7,
+            (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
+            (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
+            (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
+        }, "EC scalar (CPS 8203)");
+        System.out.println("  EC key via CPS 8203: OK");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: RSA exponent via 8202 without modulus should fail")
+    public void testStoreDataCpsRsaExponentWithoutModulus() throws CardException {
+        setupColossusCard();
+
+        byte[] exponent = new byte[128];
+        exponent[127] = (byte) 0x03;
+        ResponseAPDU response = SmartCard.transmitCommand(
+            buildStoreDataExtended(0x82, 0x02, exponent));
+        assertEquals((short) 0x6985, (short) response.getSW(),
+            "RSA exponent via 8202 without modulus should return 6985");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 (file structure creation) accepted as no-op")
+    public void testStoreDataDgi0062() throws CardException {
+        setupColossusCard();
+
+        // DGI 0062 with some dummy FCP data — should be accepted silently
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x06,
+            (byte) 0x00, (byte) 0x62, (byte) 0x03, (byte) 0xAA, (byte) 0xBB, (byte) 0xCC
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "DGI 0062 should be accepted as no-op");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 9000 (KCV) accepted as no-op")
+    public void testStoreDataDgi9000() throws CardException {
+        setupColossusCard();
+
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xAA, (byte) 0xBB
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "DGI 9000 should be accepted as no-op");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: reserved DGI 9F60-9F6F should be rejected")
+    public void testStoreDataReservedDgi() throws CardException {
+        setupColossusCard();
+
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x04,
+            (byte) 0x9F, (byte) 0x65, (byte) 0x01, (byte) 0xAA
+        });
+        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
+            "Reserved DGI 9F65 should return 6A86");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: CLA 80 accepted per CPS")
+    public void testStoreDataCla80() throws CardException {
+        setupColossusCard();
+
+        // Same as setting a tag but with CLA=80 instead of CLA=00
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x07,
+            (byte) 0x9F, (byte) 0x36, (byte) 0x04, (byte) 0x00, (byte) 0x01, (byte) 0x00, (byte) 0x02
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "STORE DATA with CLA 80 should succeed per CPS");
+    }
 }
 

@@ -438,18 +438,36 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
         if (dgiHigh >= 0x01 && dgiHigh <= 0x1E) {
             // CPS SFI-based record: DGI high byte = SFI, low byte = record number
-            // Data starts with tag 70 + length per CPS requirement 5
-            // Store as read record template using the original P1P2 encoding:
-            // P1 = record number, P2 = (SFI << 3) | 0x04
+            // Per CPS requirement 5: data in DGIs 01xx-0Axx starts with tag 70 + length
+            // Strip the 70 wrapper if present, store the inner content
             short recordId = (short) ((dgiLow << 8) | ((dgiHigh << 3) | 0x04));
+            short dataOffset = offset;
+            short dataLen = length;
+
+            // Check for and strip tag 70 wrapper
+            if (length >= 2 && buf[offset] == (byte) 0x70) {
+                short innerLen;
+                if ((buf[(short)(offset + 1)] & 0xFF) == 0x81) {
+                    innerLen = (short)(buf[(short)(offset + 2)] & 0x00FF);
+                    dataOffset = (short)(offset + 3);
+                } else {
+                    innerLen = (short)(buf[(short)(offset + 1)] & 0x00FF);
+                    dataOffset = (short)(offset + 2);
+                }
+                dataLen = innerLen;
+            }
+
             JCSystem.beginTransaction();
-            ReadRecord.setRecord(recordId, buf, offset, (byte) length);
+            ReadRecord.setRecord(recordId, buf, dataOffset, (byte) dataLen);
             JCSystem.commitTransaction();
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
                    || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
             // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
             // App-specific: 8201 = RSA modulus, 8202 = RSA exponent, 8203 = EC scalar
             processStoreDataSettings(dgi, buf, offset, length);
+        } else if (dgi == (short) 0x9000) {
+            // CPS DGI 9000: Key Check Values — acknowledged but not verified
+            // Real implementation would verify KCVs against loaded keys
         } else if (dgiHigh == (short) 0x00B0 && dgiLow >= 0x01 && dgiLow <= 0x06) {
             // App-specific: tag templates B001-B006, low byte = template ID
             TagTemplate template = getTagTemplate(dgiLow);
