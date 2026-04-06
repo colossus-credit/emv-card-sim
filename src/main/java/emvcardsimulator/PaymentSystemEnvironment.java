@@ -165,14 +165,17 @@ public class PaymentSystemEnvironment extends EmvApplet {
         if (logLen > 255) logLen = 255;
         ApduLog.addLogEntry(buf, (short) 0, (byte) logLen);
 
+        // STORE DATA (INS E2) — accept CLA 00, 80, or 84 per CPS v2.0
+        if (buf[ISO7816.OFFSET_INS] == (byte) 0xE2) {
+            processStoreData(apdu, buf);
+            return;
+        }
+
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
         switch (cmd) {
             case CMD_SELECT:
                 processSelect(apdu, buf);
-                return;
-            case CMD_STORE_DATA:
-                processStoreData(apdu, buf);
                 return;
             default:
                 break;

@@ -382,75 +382,134 @@ public class PaymentApplication extends EmvApplet {
      * Maps DGI low byte to the same settings IDs used by processSetSettings.
      */
     protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
-        short settingsId = (short) (dgi & 0x00FF);
-        switch (settingsId) {
-            // A001: PIN code
-            case 0x0001:
+        // Route by full DGI for CPS standard DGIs, then by low byte for legacy A0xx
+        switch (dgi) {
+            // CPS 8000: Block cipher keys — parse sub-structure for RSA modulus/exponent/EC key
+            // Format: key data concatenated (modulus first, then exponent for RSA; scalar for EC)
+            // For now, treat as RSA modulus (first call) or exponent (second call)
+            case (short) 0x8000:
+                if (rsaPrivateKey == null || !rsaPrivateKey.isInitialized()) {
+                    // First 8000 = RSA modulus
+                    rsaPrivateKeyByteSize = length;
+                    short keyLength = (short) (rsaPrivateKeyByteSize * 8);
+                    switch (keyLength) {
+                        case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
+                        case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
+                        case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
+                        case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
+                        case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
+                        default:
+                            // Not an RSA key size — try EC key scalar (32 bytes)
+                            if (length == 32 && ecPrivateKey != null) {
+                                try {
+                                    ecPrivateKey.setS(buf, offset, length);
+                                    ecPrivateKeyLoaded = true;
+                                } catch (CryptoException e) {
+                                    ISOException.throwIt((short) 0x6A81);
+                                }
+                                return;
+                            }
+                            ISOException.throwIt((short) 0x6A80);
+                    }
+                    try {
+                        rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
+                        rsaPrivateKey.clearKey();
+                        rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
+                    } catch (CryptoException e) {
+                        rsaPrivateKey = null;
+                        rsaPrivateKeyByteSize = 0;
+                        ISOException.throwIt((short) 0x6A81);
+                    }
+                } else {
+                    // Second 8000 = RSA exponent
+                    try {
+                        rsaPrivateKey.setExponent(buf, offset, length);
+                    } catch (CryptoException e) {
+                        rsaPrivateKey = null;
+                        rsaPrivateKeyByteSize = 0;
+                        ISOException.throwIt((short) 0x6A81);
+                    }
+                }
+                break;
+
+            // CPS 8010: Offline PIN block
+            case (short) 0x8010:
                 Util.arrayCopy(buf, offset, pinCode, (short) 0, length);
                 break;
-            // A002: Response template tag
-            case 0x0002:
-                responseTemplateTag = Util.getShort(buf, offset);
-                break;
-            // A003: Flags
-            case 0x0003:
-                short flags = Util.getShort(buf, offset);
-                useRandom = ((flags & (1 << 0)) != 0);
-                break;
-            // A004: RSA private key modulus
-            case 0x0004:
-                rsaPrivateKeyByteSize = length;
-                short keyLength = (short) (rsaPrivateKeyByteSize * 8);
-                switch (keyLength) {
-                    case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
-                    case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
-                    case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
-                    case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
-                    case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
-                    default: ISOException.throwIt((short) 0x6A80);
-                }
-                try {
-                    rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
-                    rsaPrivateKey.clearKey();
-                    rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
-                } catch (CryptoException e) {
-                    rsaPrivateKey = null;
-                    rsaPrivateKeyByteSize = 0;
-                    ISOException.throwIt((short) 0x6A81);
-                }
-                break;
-            // A005: RSA private key exponent
-            case 0x0005:
-                if (rsaPrivateKey == null) {
-                    ISOException.throwIt((short) 0x6985);
-                }
-                try {
-                    rsaPrivateKey.setExponent(buf, offset, length);
-                } catch (CryptoException e) {
-                    rsaPrivateKey = null;
-                    rsaPrivateKeyByteSize = 0;
-                    ISOException.throwIt((short) 0x6A81);
-                }
-                break;
-            // A006: Fallback read record
-            case 0x0006:
-                defaultReadRecord = new byte[length];
-                Util.arrayCopy(buf, offset, defaultReadRecord, (short) 0, length);
-                break;
-            // A00B: EC private key scalar
-            case 0x000B:
-                if (ecPrivateKey == null) {
-                    ISOException.throwIt((short) 0x6985);
-                }
-                try {
-                    ecPrivateKey.setS(buf, offset, length);
-                    ecPrivateKeyLoaded = true;
-                } catch (CryptoException e) {
-                    ISOException.throwIt((short) 0x6A81);
-                }
-                break;
+
             default:
-                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+                // Legacy A0xx settings
+                short settingsId = (short) (dgi & 0x00FF);
+                switch (settingsId) {
+                    // A001: PIN code (legacy)
+                    case 0x0001:
+                        Util.arrayCopy(buf, offset, pinCode, (short) 0, length);
+                        break;
+                    // A002: Response template tag
+                    case 0x0002:
+                        responseTemplateTag = Util.getShort(buf, offset);
+                        break;
+                    // A003: Flags
+                    case 0x0003:
+                        short flags = Util.getShort(buf, offset);
+                        useRandom = ((flags & (1 << 0)) != 0);
+                        break;
+                    // A004: RSA private key modulus (legacy)
+                    case 0x0004:
+                        rsaPrivateKeyByteSize = length;
+                        short legacyKeyLen = (short) (rsaPrivateKeyByteSize * 8);
+                        switch (legacyKeyLen) {
+                            case (short) 1024: legacyKeyLen = KeyBuilder.LENGTH_RSA_1024; break;
+                            case (short) 1280: legacyKeyLen = KeyBuilder.LENGTH_RSA_1280; break;
+                            case (short) 1536: legacyKeyLen = KeyBuilder.LENGTH_RSA_1536; break;
+                            case (short) 1984: legacyKeyLen = KeyBuilder.LENGTH_RSA_1984; break;
+                            case (short) 2048: legacyKeyLen = KeyBuilder.LENGTH_RSA_2048; break;
+                            default: ISOException.throwIt((short) 0x6A80);
+                        }
+                        try {
+                            rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, legacyKeyLen, false);
+                            rsaPrivateKey.clearKey();
+                            rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
+                        } catch (CryptoException e) {
+                            rsaPrivateKey = null;
+                            rsaPrivateKeyByteSize = 0;
+                            ISOException.throwIt((short) 0x6A81);
+                        }
+                        break;
+                    // A005: RSA private key exponent (legacy)
+                    case 0x0005:
+                        if (rsaPrivateKey == null) {
+                            ISOException.throwIt((short) 0x6985);
+                        }
+                        try {
+                            rsaPrivateKey.setExponent(buf, offset, length);
+                        } catch (CryptoException e) {
+                            rsaPrivateKey = null;
+                            rsaPrivateKeyByteSize = 0;
+                            ISOException.throwIt((short) 0x6A81);
+                        }
+                        break;
+                    // A006: Fallback read record
+                    case 0x0006:
+                        defaultReadRecord = new byte[length];
+                        Util.arrayCopy(buf, offset, defaultReadRecord, (short) 0, length);
+                        break;
+                    // A00B: EC private key scalar (legacy)
+                    case 0x000B:
+                        if (ecPrivateKey == null) {
+                            ISOException.throwIt((short) 0x6985);
+                        }
+                        try {
+                            ecPrivateKey.setS(buf, offset, length);
+                            ecPrivateKeyLoaded = true;
+                        } catch (CryptoException e) {
+                            ISOException.throwIt((short) 0x6A81);
+                        }
+                        break;
+                    default:
+                        ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+                }
+                break;
         }
     }
 
@@ -1405,6 +1464,12 @@ public class PaymentApplication extends EmvApplet {
         if (logLen > 255) logLen = 255;
         ApduLog.addLogEntry(buf, (short) 0, (byte) logLen);
 
+        // STORE DATA (INS E2) — accept CLA 00, 80, or 84 per CPS v2.0
+        if (buf[ISO7816.OFFSET_INS] == (byte) 0xE2) {
+            processStoreData(apdu, buf);
+            return;
+        }
+
         // Get CLA+INS as command, but mask out the chaining bit (0x10) from CLA
         // This allows chained commands (CLA=0x90) to be recognized as regular commands (CLA=0x80)
         short cmd = (short)(((buf[ISO7816.OFFSET_CLA] & 0xEF) << 8) | (buf[ISO7816.OFFSET_INS] & 0xFF));
@@ -1412,9 +1477,6 @@ public class PaymentApplication extends EmvApplet {
         switch (cmd) {
             case CMD_SELECT:
                 processSelect(apdu, buf);
-                return;
-            case CMD_STORE_DATA:
-                processStoreData(apdu, buf);
                 return;
             default:
                 break;

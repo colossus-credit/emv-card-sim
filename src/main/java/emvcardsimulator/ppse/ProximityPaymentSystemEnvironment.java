@@ -54,13 +54,13 @@ public class ProximityPaymentSystemEnvironment extends Applet {
             apdu.setIncomingAndReceive();
         }
 
-        short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
-
-        // GP STORE DATA — always available (production personalization)
-        if (cmd == (short) 0x00E2) {
+        // STORE DATA (INS E2) — accept CLA 00, 80, or 84 per CPS v2.0
+        if (buf[ISO7816.OFFSET_INS] == (byte) 0xE2) {
             processStoreDataPpse(apdu, buf);
             return;
         }
+
+        short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
         // Dev-only admin/personalization commands
         if (!BuildConfig.PRODUCTION) {

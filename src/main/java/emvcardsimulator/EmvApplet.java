@@ -373,78 +373,107 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     }
 
     /**
-     * Process GP STORE DATA (INS 0xE2) for personalization.
-     * Data format: [DGI (2 bytes)] [Length (1-3 bytes)] [Data...]
-     * DGI ranges:
-     *   0x0001-0x9FFF = EMV tag (DGI is the tag ID)
-     *   0xB001-0xB006 = Tag template (low byte = template ID)
-     *   0xC001+       = Read record template (DGI used as record ID)
-     * Subclasses override processStoreDataSettings() for applet-specific DGIs (keys, PIN, etc.)
+     * Process GP STORE DATA (INS 0xE2) per CPS v2.0.
+     * Supports multiple DGIs per command. Data format per DGI:
+     *   [DGI (2 bytes)] [Length (1-3 bytes BER)] [Data...]
+     *
+     * CPS DGI routing:
+     *   0x0101-0x1Exx = SFI-based record (first byte=SFI, second=record#). Data starts with tag 70.
+     *   0x8000       = Block cipher keys (RSA/EC) — subclass handles
+     *   0x8010       = Offline PIN block — subclass handles
+     *   0x9010       = PIN related data — subclass handles
+     *   0xB001-0xB006 = Tag template (app-specific, low byte = template ID)
+     *   0xA0xx       = App-specific settings — subclass handles (legacy, non-CPS)
+     *   Other        = EMV tag (DGI = tag ID)
      */
     protected void processStoreData(APDU apdu, byte[] buf) {
         short dataOffset = apdu.getOffsetCdata();
-        short dataLen = apdu.getIncomingLength();
-        if (dataLen == 0) {
-            dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+        short totalLen = apdu.getIncomingLength();
+        if (totalLen == 0) {
+            totalLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
             dataOffset = ISO7816.OFFSET_CDATA;
         }
 
-        if (dataLen < 3) {
+        if (totalLen < 3) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
 
-        // Parse DGI (2 bytes)
-        short dgi = Util.getShort(buf, dataOffset);
-        short dgiDataOffset = (short) (dataOffset + 2);
+        short endOffset = (short) (dataOffset + totalLen);
 
-        // Parse length (1 or 3 bytes BER)
-        short dgiDataLen;
-        if ((buf[dgiDataOffset] & 0xFF) == 0x81) {
-            dgiDataLen = (short) (buf[(short) (dgiDataOffset + 1)] & 0x00FF);
-            dgiDataOffset += 2;
-        } else if ((buf[dgiDataOffset] & 0xFF) == 0x82) {
-            dgiDataLen = Util.getShort(buf, (short) (dgiDataOffset + 1));
-            dgiDataOffset += 3;
-        } else {
-            dgiDataLen = (short) (buf[dgiDataOffset] & 0x00FF);
-            dgiDataOffset += 1;
-        }
+        // Process multiple DGIs per command (CPS v2.0 Section 2.4)
+        while (dataOffset < endOffset) {
+            // Parse DGI (2 bytes)
+            short dgi = Util.getShort(buf, dataOffset);
+            dataOffset += 2;
 
-        // Route by DGI range (using unsigned high byte to avoid signed short issues)
-        short dgiHigh = (short) ((dgi >> 8) & 0x00FF);
-
-        if (dgiHigh == (short) 0x00B0 && (dgi & 0x00FF) >= 0x01 && (dgi & 0x00FF) <= 0x06) {
-            // Tag template: 0xB001-0xB006, low byte = template ID
-            short templateId = (short) (dgi & 0x00FF);
-            TagTemplate template = getTagTemplate(templateId);
-            if (template == null) {
-                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            // Parse length (1 or 3 bytes BER)
+            short dgiDataLen;
+            if ((buf[dataOffset] & 0xFF) == 0x81) {
+                dgiDataLen = (short) (buf[(short) (dataOffset + 1)] & 0x00FF);
+                dataOffset += 2;
+            } else if ((buf[dataOffset] & 0xFF) == 0x82) {
+                dgiDataLen = Util.getShort(buf, (short) (dataOffset + 1));
+                dataOffset += 3;
+            } else {
+                dgiDataLen = (short) (buf[dataOffset] & 0x00FF);
+                dataOffset += 1;
             }
-            JCSystem.beginTransaction();
-            template.setData(buf, dgiDataOffset, (byte) dgiDataLen);
-            JCSystem.commitTransaction();
-        } else if (dgiHigh == (short) 0x00C0) {
-            // Read record template: 0xC0xx
-            JCSystem.beginTransaction();
-            ReadRecord.setRecord(dgi, buf, dgiDataOffset, (byte) dgiDataLen);
-            JCSystem.commitTransaction();
-        } else if (dgiHigh == (short) 0x00A0) {
-            // Applet-specific settings: 0xA0xx — subclass handles
-            processStoreDataSettings(dgi, buf, dgiDataOffset, dgiDataLen);
-        } else if (dgi != (short) 0x0000) {
-            // Everything else (non-zero) is an EMV tag: DGI = tag ID
-            JCSystem.beginTransaction();
-            EmvTag.setTag(dgi, buf, dgiDataOffset, dgiDataLen);
-            JCSystem.commitTransaction();
-        } else {
-            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+
+            // Route this DGI
+            processOneDgi(dgi, buf, dataOffset, dgiDataLen);
+
+            // Advance to next DGI
+            dataOffset += dgiDataLen;
         }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
 
     /**
-     * Override in subclasses to handle applet-specific STORE DATA settings DGIs (0xA0xx range).
+     * Route a single DGI to the appropriate storage handler.
+     */
+    protected void processOneDgi(short dgi, byte[] buf, short offset, short length) {
+        short dgiHigh = (short) ((dgi >> 8) & 0x00FF);
+        short dgiLow = (short) (dgi & 0x00FF);
+
+        if (dgiHigh >= 0x01 && dgiHigh <= 0x1E) {
+            // CPS SFI-based record: DGI high byte = SFI, low byte = record number
+            // Data starts with tag 70 + length per CPS requirement 5
+            // Store as read record template using the original P1P2 encoding:
+            // P1 = record number, P2 = (SFI << 3) | 0x04
+            short recordId = (short) ((dgiLow << 8) | ((dgiHigh << 3) | 0x04));
+            JCSystem.beginTransaction();
+            ReadRecord.setRecord(recordId, buf, offset, (byte) length);
+            JCSystem.commitTransaction();
+        } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010) {
+            // CPS standard: 8000 = keys, 8010 = PIN, 9010 = PIN data
+            processStoreDataSettings(dgi, buf, offset, length);
+        } else if (dgiHigh == (short) 0x00B0 && dgiLow >= 0x01 && dgiLow <= 0x06) {
+            // Tag template: 0xB001-0xB006, low byte = template ID
+            TagTemplate template = getTagTemplate(dgiLow);
+            if (template == null) {
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            }
+            JCSystem.beginTransaction();
+            template.setData(buf, offset, (byte) length);
+            JCSystem.commitTransaction();
+        } else if (dgiHigh == (short) 0x00A0) {
+            // App-specific settings: 0xA0xx — subclass handles (legacy + CPS extensions)
+            processStoreDataSettings(dgi, buf, offset, length);
+        } else if (dgi != (short) 0x0000) {
+            // Everything else (non-zero) = EMV tag: DGI is the tag ID
+            JCSystem.beginTransaction();
+            EmvTag.setTag(dgi, buf, offset, length);
+            JCSystem.commitTransaction();
+        } else {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+    }
+
+    /**
+     * Override in subclasses to handle applet-specific STORE DATA DGIs.
+     * CPS standard: 8000 (keys), 8010 (PIN), 9010 (PIN data).
+     * Legacy: A0xx (app-specific settings).
      */
     protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
         ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
