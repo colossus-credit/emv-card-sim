@@ -87,8 +87,9 @@ def run_personalization(
 
     # 2. PPSE (contactless directory)
     log.info("=== Personalizing PPSE ===")
+    kernel_id = profile.get("kernel_identifier")
     personalize_ppse(card, contactless_aid=contactless_aid, label=label,
-                     preferred_name=preferred_name)
+                     preferred_name=preferred_name, kernel_identifier=kernel_id)
 
     # 3. Contact payment app
     log.info("=== Personalizing Contact Payment App (AID: %s) ===", contact_aid)

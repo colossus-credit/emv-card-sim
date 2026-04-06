@@ -310,6 +310,7 @@ def personalize_pse(
 def personalize_ppse(
     card: Card, *, contactless_aid: str, label: str,
     preferred_name: str | None = None,
+    kernel_identifier: str | None = None,
 ) -> None:
     """Personalize the PPSE (2PAY.SYS.DDF01) directory applet."""
     aid_bytes = hex_to_bytes(contactless_aid)
@@ -318,13 +319,14 @@ def personalize_ppse(
     card.select_ppse()
     card.factory_reset()
 
+    # Build minimal directory entry: AID + priority + kernel ID
+    # Per Book B, kernel identifier is critical for non-standard AIDs
     dir_entry = bytearray()
     dir_entry += b"\x4F" + bytes([len(aid_bytes)]) + aid_bytes
-    dir_entry += b"\x50" + bytes([len(label_bytes)]) + label_bytes
-    if preferred_name:
-        pn_bytes = preferred_name.encode()
-        dir_entry += b"\x9F\x12" + bytes([len(pn_bytes)]) + pn_bytes
-    dir_entry += b"\x87\x01\x01"
+    dir_entry += b"\x87\x01\x01"  # Priority
+    if kernel_identifier:
+        kid = bytes.fromhex(kernel_identifier)
+        dir_entry += b"\x9F\x2A" + bytes([len(kid)]) + kid
     card.builder.set_emv_tag(0x61, bytes(dir_entry), "PPSE directory entry (61)")
 
 

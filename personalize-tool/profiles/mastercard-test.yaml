@@ -93,9 +93,23 @@ templates:
 
 contactless:
   fci:
-    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "PDOL"]
   tags:
     Application Interchange Profile: "0040"
+    PDOL:
+      type: dol
+      value:
+        Terminal Transaction Qualifiers: 4
+        Amount Authorised: 6
+        Amount Other: 6
+        Terminal Country Code: 2
+        Terminal Verification Results: 5
+        Transaction Currency Code: 2
+        Transaction Date: 3
+        Transaction Type: 1
+        Unpredictable Number: 4
+        Terminal Identification: 8
+        Merchant Identifier: 15
 
 records:
   - sfi: 1
