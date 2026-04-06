@@ -1,0 +1,148 @@
+# Mastercard Test Profile
+# Uses Mastercard AID A0000000041010 for C-2 kernel testing on PAX terminal
+# The applet must be installed with matching AID before using this profile
+
+profile: Mastercard Test (C-2 Kernel)
+rid: A000000004
+contact_aid_suffix: "1010"
+contactless_aid_suffix: "1010"
+application_label: MASTERCARD
+preferred_name: "MASTERCARD CREDIT"
+bin: "54000000"
+expiry: "271231"
+
+# Kernel identifier for PPSE directory entry
+# 02 = Mastercard kernel C-2 (auto-mapped for Mastercard AID, but explicit is safer)
+kernel_identifier: "02"
+
+keys:
+  capk_index: "92"
+  key_size: 1984
+  # keys_dir: keys/
+
+tags:
+  DDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  CDOL1:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  CDOL2:
+    type: dol
+    value:
+      Authorisation Response Code: 2
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  Application Interchange Profile: "0040"
+  Application Version Number: "0001"
+  Application Effective Date: "240101"
+  Issuer Country Code: "0840"
+  Application Usage Control: "FF00"
+  SDA Tag List: "82"
+  Track 1 Discretionary Data: "00000000000000000000000000000000000000"
+  Service Code: "0201"
+  Application Currency Code: "0840"
+  Application Currency Exponent: "02"
+  IAC-Default: "FC688C9800"
+  IAC-Denial: "0000000000"
+  IAC-Online: "FC68FC9800"
+  Issuer Application Data: "06010A03A4A002"
+  CTQ: "2000"
+
+templates:
+  gpo: ["AIP", "AFL"]
+  dda: ["9F4B"]
+  genac: ["9F27", "9F36", "9F26", "9F10"]
+  fci:
+    6f: ["DF Name", "A5"]
+    a5: ["Application Label", "Application Priority Indicator"]
+
+contactless:
+  fci:
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name"]
+  tags:
+    Application Interchange Profile: "0040"
+
+records:
+  - sfi: 1
+    records:
+      - record: 2
+        tags: ["57", "5F20"]
+  - sfi: 2
+    records:
+      - record: 1
+        tags: ["8F", "92", "9F32", "9F47"]
+      - record: 2
+        tags: ["90"]
+  - sfi: 3
+    records:
+      - record: 1
+        tags: ["5A", "5F24", "5F25", "5F28", "5F34", "9F07", "9F0D", "9F0E", "9F0F", "9F4A", "8C", "8D"]
+      - record: 2
+        tags: ["8E"]
+      - record: 3
+        tags: ["5F30", "9F08", "9F42", "9F44", "9F49"]
+      - record: 4
+        tags: ["9F46"]
+      - record: 5
+        tags: ["9F48"]
+
+afl:
+  - sfi: 1
+    first_record: 2
+    last_record: 2
+    oda_count: 0
+  - sfi: 2
+    first_record: 1
+    last_record: 2
+    oda_count: 2
+  - sfi: 3
+    first_record: 1
+    last_record: 5
+    oda_count: 0
+
+settings:
+  pin: "1234"
+  flags:
+    use_random: true
+  response_template: "0077"
+
+cvm_list:
+  amount_x: 0
+  amount_y: 0
+  rules:
+    - [0x1F, 0x00]   # No CVM required
