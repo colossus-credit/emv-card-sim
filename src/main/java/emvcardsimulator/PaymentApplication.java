@@ -433,6 +433,56 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(buf, offset, pinCode, (short) 0, length);
                 break;
 
+            // App-specific 8201: RSA private key modulus
+            case (short) 0x8201:
+                rsaPrivateKeyByteSize = length;
+                short rsaKeyLen = (short) (rsaPrivateKeyByteSize * 8);
+                switch (rsaKeyLen) {
+                    case (short) 1024: rsaKeyLen = KeyBuilder.LENGTH_RSA_1024; break;
+                    case (short) 1280: rsaKeyLen = KeyBuilder.LENGTH_RSA_1280; break;
+                    case (short) 1536: rsaKeyLen = KeyBuilder.LENGTH_RSA_1536; break;
+                    case (short) 1984: rsaKeyLen = KeyBuilder.LENGTH_RSA_1984; break;
+                    case (short) 2048: rsaKeyLen = KeyBuilder.LENGTH_RSA_2048; break;
+                    default: ISOException.throwIt((short) 0x6A80);
+                }
+                try {
+                    rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, rsaKeyLen, false);
+                    rsaPrivateKey.clearKey();
+                    rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+
+            // App-specific 8202: RSA private key exponent
+            case (short) 0x8202:
+                if (rsaPrivateKey == null || rsaPrivateKeyByteSize == 0) {
+                    ISOException.throwIt((short) 0x6985);
+                }
+                try {
+                    rsaPrivateKey.setExponent(buf, offset, length);
+                } catch (CryptoException e) {
+                    rsaPrivateKey = null;
+                    rsaPrivateKeyByteSize = 0;
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+
+            // App-specific 8203: EC P-256 private key scalar
+            case (short) 0x8203:
+                if (ecPrivateKey == null) {
+                    ISOException.throwIt((short) 0x6985);
+                }
+                try {
+                    ecPrivateKey.setS(buf, offset, length);
+                    ecPrivateKeyLoaded = true;
+                } catch (CryptoException e) {
+                    ISOException.throwIt((short) 0x6A81);
+                }
+                break;
+
             // App-specific: response template tag (0x0077 or 0x0080)
             case (short) 0xA002:
                 responseTemplateTag = Util.getShort(buf, offset);

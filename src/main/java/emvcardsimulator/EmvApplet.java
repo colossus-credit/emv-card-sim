@@ -445,8 +445,10 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             JCSystem.beginTransaction();
             ReadRecord.setRecord(recordId, buf, offset, (byte) length);
             JCSystem.commitTransaction();
-        } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010) {
-            // CPS standard: 8000 = keys, 8010 = PIN, 9010 = PIN data
+        } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
+                   || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
+            // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
+            // App-specific: 8201 = RSA modulus, 8202 = RSA exponent, 8203 = EC scalar
             processStoreDataSettings(dgi, buf, offset, length);
         } else if (dgiHigh == (short) 0x00B0 && dgiLow >= 0x01 && dgiLow <= 0x06) {
             // App-specific: tag templates B001-B006, low byte = template ID
@@ -460,6 +462,12 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         } else if (dgiHigh == (short) 0x00A0) {
             // App-specific settings: A002 (response template), A003 (flags), A006 (fallback record)
             processStoreDataSettings(dgi, buf, offset, length);
+        } else if (dgi == (short) 0x0062) {
+            // CPS DGI 0062: file structure creation — acknowledged but no-op
+            // Our applet auto-creates records without explicit EF creation
+        } else if (dgiHigh == (short) 0x009F && dgiLow >= 0x60 && dgiLow <= 0x6F) {
+            // CPS reserved: 9F60-9F6F are for payment system proprietary data
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         } else if (dgi != (short) 0x0000) {
             // Everything else (non-zero) = EMV tag: DGI is the tag ID
             JCSystem.beginTransaction();
