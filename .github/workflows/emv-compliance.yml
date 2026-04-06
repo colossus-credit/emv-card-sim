@@ -3,6 +3,7 @@ name: EMV Spec Compliance Report
 on:
   pull_request:
     branches: [ master ]
+    types: [ labeled ]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +13,9 @@ permissions:
 
 jobs:
   compliance-report:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'emv-compliance'
     runs-on: ubuntu-latest
 
     steps:
