@@ -643,13 +643,13 @@ public class PaymentApplication extends EmvApplet {
         short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
-        // CDA path: generate shared ICC_DN, then ECDSA (r→9F10, s→9F7C),
+        // CDA path: generate shared ICC_DN, then ECDSA (r→9F10, s→9F6E),
         // then RSA SDAD (TDH includes ECDSA r as 9F10, reuses same ICC_DN)
         if (shouldPerformCda && canPerformCda) {
             generateIccDynamicNumber();
             generateEcdsaForCda(buf, cdolLen);
             generateSdad(buf, cid, cdolLen);
-            // CDA response: 9F27 + 9F36 + 9F4B + 9F10 (r) + 9F7C (s)
+            // CDA response: 9F27 + 9F36 + 9F4B + 9F10 (r) + 9F6E (s)
             sendGenerateAcResponseCda(apdu, buf);
         } else if (cdaRequested && !canPerformCda) {
             // CDA requested but RSA or EC key not available
@@ -666,7 +666,7 @@ public class PaymentApplication extends EmvApplet {
     /**
      * Send GENERATE AC response with CDA per EMV Book 2 Table 20.
      * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD)
-     *                  + optional 9F7C (CED: ECDSA r||s when EC key is loaded).
+     *                  + optional 9F6E (ECDSA s when EC key is loaded).
      * Note: 9F26 (AC) is NOT included — AC is embedded inside the SDAD.
      */
     private void sendGenerateAcResponseCda(APDU apdu, byte[] buf) {
@@ -684,8 +684,8 @@ public class PaymentApplication extends EmvApplet {
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag cedTag = EmvTag.findTag((short) 0x9F7C);
-        if (cedTag != null) { offset = cedTag.copyToArray(tmpBuffer, offset); }
+        EmvTag ecdsaSTag = EmvTag.findTag((short) 0x9F6E);
+        if (ecdsaSTag != null) { offset = ecdsaSTag.copyToArray(tmpBuffer, offset); }
 
         // Store as tag 77 and use existing sendResponse which handles chunking
         EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
@@ -752,7 +752,7 @@ public class PaymentApplication extends EmvApplet {
     /**
      * Generate ECDSA P-256 signature over ICC_DN || CDOL data during GENERATE AC.
      * Signs the full CDOL data as provided by the terminal, prepended with ICC Dynamic Number.
-     * Raw r component stored in tag 9F10 (IAD), s in tag 9F7C (CED), ICC_DN in 9F4C.
+     * Raw r component stored in tag 9F10 (IAD), s in tag 9F6E, ICC_DN in 9F4C.
      */
     private void generateEcdsaForGenAc(byte[] buf, short cdolLen) {
         // Generate random ICC Dynamic Number (3 bytes)
@@ -767,22 +767,25 @@ public class PaymentApplication extends EmvApplet {
         // Strip DER → raw r||s (64 bytes)
         derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
 
-        // Store r in 9F10 (IAD), s in 9F7C (CED)
+        // Store r in 9F10 (IAD), s in 9F6E
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
-        EmvTag.setTag((short) 0x9F7C, ecdsaRawSig, (short) 32, (short) 32);
+        EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
     }
+
+    // Scratch offset in tmpBuffer for small temporary data (ICC DN, etc.)
+    // SDAD builder uses offsets 0..~300; this region is beyond that range.
+    private static final short TMP_SCRATCH_OFFSET = (short) 480;
 
     /**
      * Generate 8-byte ICC Dynamic Number and store in tag 9F4C.
      * Called once before ECDSA and SDAD so both use the same value.
      */
     private void generateIccDynamicNumber() {
-        // Use tmpBuffer[480..487] as scratch for 8-byte ICC DN
-        randomData.generateData(tmpBuffer, (short) 480, (short) 8);
+        randomData.generateData(tmpBuffer, TMP_SCRATCH_OFFSET, (short) 8);
         if (!useRandom) {
-            Util.arrayFillNonAtomic(tmpBuffer, (short) 480, (short) 8, (byte) 0xAB);
+            Util.arrayFillNonAtomic(tmpBuffer, TMP_SCRATCH_OFFSET, (short) 8, (byte) 0xAB);
         }
-        EmvTag.setTag((short) 0x9F4C, tmpBuffer, (short) 480, (short) 8);
+        EmvTag.setTag((short) 0x9F4C, tmpBuffer, TMP_SCRATCH_OFFSET, (short) 8);
     }
 
     /**
@@ -790,7 +793,7 @@ public class PaymentApplication extends EmvApplet {
      * Must be called BEFORE generateSdad() so that the Transaction Data Hash
      * in the SDAD correctly includes the ECDSA r component as 9F10 (IAD).
      * Uses ICC Dynamic Number from 9F4C (set by generateIccDynamicNumber).
-     * Signs: ICC_DN(8) || CDOL data. r stored in 9F10, s in 9F7C.
+     * Signs: ICC_DN(8) || CDOL data. r stored in 9F10, s in 9F6E.
      */
     private void generateEcdsaForCda(byte[] buf, short cdolLen) {
         EmvTag iccDnTag = EmvTag.findTag((short) 0x9F4C);
@@ -807,14 +810,14 @@ public class PaymentApplication extends EmvApplet {
         // Strip DER → raw r||s (64 bytes)
         derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
 
-        // Store r in 9F10 (IAD), s in 9F7C (CED)
+        // Store r in 9F10 (IAD), s in 9F6E
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
-        EmvTag.setTag((short) 0x9F7C, ecdsaRawSig, (short) 32, (short) 32);
+        EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
     }
 
     /**
      * Build GENERATE AC response with ECDSA signature tags.
-     * Response tag 77: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (r), 9F7C (s), 9F4C (ICC_DN)
+     * Response tag 77: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (r), 9F6E (s), 9F4C (ICC_DN)
      */
     private void sendGenerateAcResponseEcdsa(APDU apdu, byte[] buf) {
         short offset = (short) 0;
@@ -843,10 +846,10 @@ public class PaymentApplication extends EmvApplet {
             offset = iadTag.copyToArray(tmpBuffer, offset);
         }
 
-        // 9F7C (CED = ECDSA s, 32 bytes)
-        EmvTag cedTag = EmvTag.findTag((short) 0x9F7C);
-        if (cedTag != null) {
-            offset = cedTag.copyToArray(tmpBuffer, offset);
+        // 9F6E (ECDSA s, 32 bytes)
+        EmvTag ecdsaSTag = EmvTag.findTag((short) 0x9F6E);
+        if (ecdsaSTag != null) {
+            offset = ecdsaSTag.copyToArray(tmpBuffer, offset);
         }
 
         // 9F4C (ICC Dynamic Number, 3 bytes)

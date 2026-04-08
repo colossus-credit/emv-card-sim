@@ -101,8 +101,8 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // CDA mode is automatically enabled when an RSA private key is loaded
-        // Load RSA-2048 key to enable CDA (done via setupRsa2048Key)
-        setupRsa2048Key();
+        // Load RSA key to enable CDA (done via setupRsaKey)
+        setupRsaKey();
 
         // Verify key was loaded by checking diagnostic command
         byte[] checkKeyCmd = new byte[] {
@@ -120,7 +120,7 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Load RSA-2048 key - this automatically enables CDA mode
-        setupRsa2048Key();
+        setupRsaKey();
 
         // Verify RSA key was loaded by checking diagnostic command 0x0007
         byte[] checkKeyCmd = new byte[] {
@@ -150,7 +150,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Test CDA transaction with GENERATE AC (ARQC)")
     public void testCdaGenerateAcArqc() throws CardException {
         setupColossusCard();
-        setupRsa2048Key();   // Set RSA key (CDA requires RSA + EC)
+        setupRsaKey();   // Set RSA key (CDA requires RSA + EC)
         setupEcKey();        // Set EC key (CDA requires both)
         enableCdaMode();     // Verify CDA is enabled
         setupColossusCdol();
@@ -236,7 +236,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Test forced online transaction (ARQC only)")
     public void testForcedOnlineTransaction() throws CardException {
         setupColossusCard();
-        setupRsa2048Key();  // Set key before enabling CDA
+        setupRsaKey();  // Set key before enabling CDA
         enableCdaMode();
         setupColossusCdol();
         setupColossusCardData();
@@ -290,7 +290,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Test ATC increment on GENERATE AC")
     public void testAtcIncrement() throws CardException {
         setupColossusCard();
-        setupRsa2048Key();  // Set key before enabling CDA
+        setupRsaKey();  // Set key before enabling CDA
         enableCdaMode();
         setupColossusCdol();
         setupColossusCardData();
@@ -348,7 +348,7 @@ public class ColossusPaymentApplicationTest {
         // If no RSA key is set yet, this is OK - will be set later
     }
 
-    private void setupRsa2048Key() throws CardException {
+    private void setupRsaKey() throws CardException {
         // RSA-1024 modulus (128 bytes)
         byte[] modulus = new byte[] {
             (byte) 0xA4, (byte) 0xC9, (byte) 0x0D, (byte) 0x48, (byte) 0x83, (byte) 0x21, (byte) 0xF7, (byte) 0x51,
@@ -555,7 +555,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("DEBUG: Get Transaction Data Hash diagnostic info")
     public void testTransactionDataHashDiagnostic() throws CardException {
         setupColossusCard();
-        setupRsa2048Key();
+        setupRsaKey();
         setupEcKey();
         enableCdaMode();
         setupColossusCdol();
@@ -729,7 +729,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Validate SDAD signature against ICC public key")
     public void testSdadValidation() throws Exception {
         setupColossusCard();
-        setupRsa2048Key();
+        setupRsaKey();
         setupEcKey();
         enableCdaMode();
         setupColossusCdol();
@@ -1248,7 +1248,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Generate AC response for user command")
     public void testUserGenAcCommand() throws Exception {
         setupColossusCard();
-        setupRsa2048Key();
+        setupRsaKey();
         setupColossusCdol();
         setupColossusCardData();
 
@@ -1312,7 +1312,7 @@ public class ColossusPaymentApplicationTest {
     public void testGenerateAcFullResponse291Bytes() throws Exception {
         // Setup card
         setupColossusCard();
-        setupRsa2048Key();
+        setupRsaKey();
         setupEcKey();
         enableCdaMode();
         setupColossusCdol();
@@ -1431,7 +1431,7 @@ public class ColossusPaymentApplicationTest {
             "GENERATE AC should succeed, got SW=" + String.format("%04X", sw));
 
         // CDA+ECDSA response with RSA-1024:
-        // 9F27(4) + 9F36(5) + 9F4B(2+2+128=132) + 9F10(2+1+32=35) + 9F7C(2+1+32=35) = 211 bytes content
+        // 9F27(4) + 9F36(5) + 9F4B(2+2+128=132) + 9F10(2+1+32=35) + 9F6E(2+1+32=35) = 211 bytes content
         // + tag 77 header (3 bytes for 81 XX) = ~214 bytes total
 
         int expectedMinLength = 200;
@@ -1460,7 +1460,7 @@ public class ColossusPaymentApplicationTest {
             System.out.println("Data starts at offset: " + dataStart);
             System.out.println("Expected total: " + (dataStart + templateLen) + " bytes");
 
-            // RSA-1024 CDA+ECDSA: 9F27(4) + 9F36(5) + 9F4B(132) + 9F10(35) + 9F7C(35) = ~211
+            // RSA-1024 CDA+ECDSA: 9F27(4) + 9F36(5) + 9F4B(132) + 9F10(35) + 9F6E(35) = ~211
             assertTrue(templateLen >= 200,
                 "Template content must be at least 200 bytes for RSA-1024 CDA+ECDSA, got " + templateLen);
         }
@@ -1888,7 +1888,7 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("End-to-end: full EMV contactless flow with CDA+ECDSA in GENERATE AC")
     public void testFullEmvContactlessWithEcdsaGenAc() throws Exception {
         setupColossusCard();
-        setupRsa2048Key();   // CDA requires RSA + EC
+        setupRsaKey();   // CDA requires RSA + EC
 
         // --- Personalize via STORE DATA ---
         assertStoreData(0x00, 0x84, new byte[] {
@@ -2018,7 +2018,7 @@ public class ColossusPaymentApplicationTest {
         // 4. Verify ECDSA signature in CDA response
         byte[] genAcResponse = response.getData();
 
-        // CDA response: 9F27 + 9F36 + 9F4B (SDAD) + 9F10 (r) + 9F7C (s)
+        // CDA response: 9F27 + 9F36 + 9F4B (SDAD) + 9F10 (r) + 9F6E (s)
         // ICC_DN is inside SDAD, not as separate tag — extract from 9F4B recovery
         byte[] sigR = null, sigS = null;
         boolean foundSdad = false;
@@ -2027,9 +2027,9 @@ public class ColossusPaymentApplicationTest {
                 sigR = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
                 System.out.println("  Found 9F10 (ECDSA r): 32 bytes");
             }
-            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x7C && genAcResponse[i + 2] == 0x20) {
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x6E && genAcResponse[i + 2] == 0x20) {
                 sigS = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
-                System.out.println("  Found 9F7C (ECDSA s): 32 bytes");
+                System.out.println("  Found 9F6E (ECDSA s): 32 bytes");
             }
             if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x4B) {
                 foundSdad = true;
@@ -2037,7 +2037,7 @@ public class ColossusPaymentApplicationTest {
             }
         }
         assertNotNull(sigR, "CDA+ECDSA response must contain 9F10 (ECDSA r)");
-        assertNotNull(sigS, "CDA+ECDSA response must contain 9F7C (ECDSA s)");
+        assertNotNull(sigS, "CDA+ECDSA response must contain 9F6E (ECDSA s)");
         assertTrue(foundSdad, "CDA+ECDSA response must contain 9F4B (SDAD)");
 
         // Get ICC_DN from applet via GET DATA (9F4C) — shared between ECDSA and SDAD
@@ -2163,7 +2163,7 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x02, (byte) 0x83, (byte) 0x00
         });
 
-        // GENERATE AC — no EC key loaded, should fall back to plain response (no 9F7C)
+        // GENERATE AC — no EC key loaded, should fall back to plain response (no 9F6E)
         byte[] cdolData = new byte[10];
         byte[] genAcCmd = new byte[5 + cdolData.length];
         genAcCmd[0] = (byte) 0x80; genAcCmd[1] = (byte) 0xAE;
@@ -2174,15 +2174,15 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
             "GENERATE AC without EC key should succeed with plain response");
 
-        // Verify NO 9F7C in response (no ECDSA)
+        // Verify NO 9F6E in response (no ECDSA)
         byte[] data = response.getData();
-        boolean found9F7C = false;
+        boolean found9F6E = false;
         for (int i = 0; i < data.length - 2; i++) {
-            if (data[i] == (byte) 0x9F && data[i + 1] == (byte) 0x7C) {
-                found9F7C = true;
+            if (data[i] == (byte) 0x9F && data[i + 1] == (byte) 0x6E) {
+                found9F6E = true;
             }
         }
-        assertTrue(!found9F7C, "Response without EC key should NOT contain 9F7C (ECDSA s)");
+        assertTrue(!found9F6E, "Response without EC key should NOT contain 9F6E (ECDSA s)");
         System.out.println("  GENERATE AC without EC key: plain response (no ECDSA)");
     }
 
