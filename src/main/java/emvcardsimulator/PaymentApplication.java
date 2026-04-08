@@ -684,8 +684,8 @@ public class PaymentApplication extends EmvApplet {
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag ecdsaSTag = EmvTag.findTag((short) 0x9F6E);
-        if (ecdsaSTag != null) { offset = ecdsaSTag.copyToArray(tmpBuffer, offset); }
+        // 9F6E (ECDSA s) intentionally omitted from CDA response — terminal
+        // may reject unknown-length tags during ParseAndStoreCardResponse
 
         // Store as tag 77 and use existing sendResponse which handles chunking
         EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);

@@ -16,7 +16,7 @@ kernel_identifier: "02"
 
 keys:
   capk_index: "94"
-  key_size: 1024      # RSA-1024 (128 bytes) — smallest key, fits single NFC frame easily
+  key_size: 1024      # RSA-1024 (128 bytes) — CDA+ECDSA response fits NFC frame
   keys_dir: ../keys/capk_1024   # Must match CAPK 94 in capk.xml
 
 tags:
@@ -84,6 +84,7 @@ tags:
   Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
+  Form Factor Indicator: "DEADBEEF00DEADBEEF00"
   CTQ: "8000"
 
 templates:

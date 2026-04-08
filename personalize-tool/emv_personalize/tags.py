@@ -73,6 +73,7 @@ _TAG_DB: dict[int, list[str]] = {
     0x9F4C: ["ICC Dynamic Number"],
     0x9F66: ["Terminal Transaction Qualifiers", "TTQ"],
     0x9F6C: ["Card Transaction Qualifiers", "CTQ"],
+    0x9F6E: ["Form Factor Indicator", "FFI"],
     0x9F69: ["UDOL", "Card Authentication Related Data"],
 
     0x8A: ["Authorisation Response Code", "ARC"],
