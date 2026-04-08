@@ -1,6 +1,6 @@
 # Colossus Credit Card Network Setup
 # AID: A0000000951
-# BIN: 67676767
+# BIN: 42069420
 # RSA-2048 only, CDA enabled, Forced online (ARQC)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -199,7 +199,7 @@
 
 # Track2 Equivalent Data - Magnetic stripe compatibility
 # Function: Card data in Track 2 format for backward compatibility
-# Behavior: PAN=67676767..., Expiry=2512, Service code=201, discretionary data, LRC
+# Behavior: PAN=42069420..., Expiry=2512, Service code=201, discretionary data, LRC
 - req: '80 01 00 57 0F 67 67 67 67 12 34 56 78 D2 51 22 01 23 45 6F'
   res: '90 00'
 
@@ -276,7 +276,7 @@
 
 # PAN (Primary Account Number) - Card account number
 # Function: Unique card number for this account
-# Behavior: 67676767123456 (8-digit Colossus BIN + account), max 19 digits, included in all transactions
+# Behavior: 42069420123456 (8-digit Colossus BIN + account), max 19 digits, included in all transactions
 - req: '80 01 00 5A 08 67 67 67 67 12 34 56 78'
   res: '90 00'
 

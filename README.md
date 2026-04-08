@@ -35,7 +35,7 @@ gradle build
 This simulator now includes full support for the **Colossus Credit Card Network** with CDA (Combined Dynamic Data Authentication):
 
 - **AID**: `A0000000951`
-- **BIN**: `67676767`
+- **BIN**: `42069420`
 - **RSA-2048 only** (RSA-1024 not supported)
 - **CDA authentication** with custom CDOL
 - **Forced online transactions** (ARQC only)
@@ -53,7 +53,7 @@ See [COLOSSUS.md](COLOSSUS.md) for detailed documentation.
 ./generate-issuer-cert.sh ./keys/capk/capk_private.pem COLOSSUS_BANK
 
 # 3. Generate ICC (card) certificate (signed by Issuer)
-./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 6767676712345674
+./generate-icc-cert.sh ./keys/issuer/issuer_private.pem 4206942012345674
 
 # 4. Generate additional test PANs with Colossus BIN
 ./generate-pan.sh 16
@@ -65,7 +65,7 @@ gradle test --tests ColossusPaymentApplicationTest
 gradle deployPaymentApp -Pjc_version=3.0.5 -Ppaymentapp_applet_aid=A0000000951
 
 # 7. Personalize card with generated certificates
-./personalize-colossus-card.sh 6767676712345674
+./personalize-colossus-card.sh 4206942012345674
 ```
 
 ## Update dependencies

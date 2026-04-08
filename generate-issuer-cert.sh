@@ -113,7 +113,7 @@ fi
 # Configuration
 KEY_SIZE=2048
 EXPONENT=3  # Standard EMV exponent
-COLOSSUS_BIN="67676767"  # Colossus BIN
+COLOSSUS_BIN="42069420"  # Colossus BIN
 CA_INDEX="92"  # Must match CAPK index
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CERT_SERIAL=$(printf "%08X" $RANDOM$RANDOM)

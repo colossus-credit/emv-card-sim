@@ -40,11 +40,11 @@
 #### Network Details
 - **Network:** Colossus Credit
 - **Network AID:** `A0000000951`
-- **BIN:** `67676767`
+- **BIN:** `42069420`
 - **Issuer:** Colossus Financial Services
 
 #### Card Data
-- **PAN:** `6767676712345678`
+- **PAN:** `4206942012345678`
 - **Expiry:** December 31, 2025
 - **Cardholder:** COLOSSUS/CARDHOLDER
 - **PIN:** 1234 (optional)
