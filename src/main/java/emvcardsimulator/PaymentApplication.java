@@ -161,6 +161,7 @@ public class PaymentApplication extends EmvApplet {
                 switch (keyLength) {
                     case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
                     case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
+                    case (short) 1408: keyLength = (short) 1408; break;
                     case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
                     case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
                     case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
@@ -240,6 +241,9 @@ public class PaymentApplication extends EmvApplet {
                         break;
                     case (short) 1280:
                         keyLength = KeyBuilder.LENGTH_RSA_1280;
+                        break;
+                    case (short) 1408:
+                        keyLength = (short) 1408;
                         break;
                     case (short) 1536:
                         keyLength = KeyBuilder.LENGTH_RSA_1536;
@@ -440,6 +444,7 @@ public class PaymentApplication extends EmvApplet {
                 switch (rsaKeyLen) {
                     case (short) 1024: rsaKeyLen = KeyBuilder.LENGTH_RSA_1024; break;
                     case (short) 1280: rsaKeyLen = KeyBuilder.LENGTH_RSA_1280; break;
+                    case (short) 1408: rsaKeyLen = (short) 1408; break;
                     case (short) 1536: rsaKeyLen = KeyBuilder.LENGTH_RSA_1536; break;
                     case (short) 1984: rsaKeyLen = KeyBuilder.LENGTH_RSA_1984; break;
                     case (short) 2048: rsaKeyLen = KeyBuilder.LENGTH_RSA_2048; break;
@@ -605,21 +610,10 @@ public class PaymentApplication extends EmvApplet {
         // CDA requested when P1 bits 5-4 = '10' (0x10). Reject RFU '11' (0x18).
         boolean cdaRequested = ((referenceControlParameter & (byte) 0x18) == (byte) 0x10);
 
-        byte responseCryptogramType = (byte) 0x40;
-        switch (requestCryptogramType) {
-            case (byte) 0x40: // TC
-                responseCryptogramType = requestCryptogramType;
-                break;
-            case (byte) 0x80: // ARQC
-                responseCryptogramType = requestCryptogramType;
-                break;
-            case (byte) 0x00: // AAC
-                responseCryptogramType = (byte) 0x00;
-                break;
-            default:
-                EmvApplet.logAndThrow(ISO7816.SW_INCORRECT_P1P2);
-                break;
-        }
+        // Online-only card: always return ARQC regardless of terminal request
+        // Terminal may ask for TC (offline approve) or AAC (decline), but we
+        // always force online authorization via ARQC
+        byte responseCryptogramType = (byte) 0x80; // ARQC
 
         // Check if CDA can be performed
         boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0);
@@ -652,8 +646,8 @@ public class PaymentApplication extends EmvApplet {
         // If CDA should be performed (requested OR AIP advertises it) and we have ICC private key
         if (shouldPerformCda && canPerformCda) {
             generateSdad(buf, cid, cdolLen);
-            // CDA performed - use full template with 9F4B
-            sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+            // CDA response per EMV Book 2 Table 20: 9F27 + 9F36 + 9F4B + 9F10 (no 9F26!)
+            sendGenerateAcResponseCda(apdu, buf);
         } else if (cdaRequested && !canPerformCda) {
             // CDA explicitly requested but key not available
             // Return 6985 (Conditions of use not satisfied) for CDA failure
@@ -669,6 +663,32 @@ public class PaymentApplication extends EmvApplet {
 
         // Scrub tmpBuffer — crypto intermediates must not linger
         Util.arrayFillNonAtomic(tmpBuffer, (short) 0, (short) tmpBuffer.length, (byte) 0x00);
+    }
+
+    /**
+     * Send GENERATE AC response with CDA per EMV Book 2 Table 20.
+     * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD).
+     * Note: 9F26 (AC) is NOT included — AC is embedded inside the SDAD.
+     */
+    private void sendGenerateAcResponseCda(APDU apdu, byte[] buf) {
+        // Build CDA response content in tmpBuffer: 9F27 + 9F36 + 9F4B + 9F10
+        short offset = (short) 0;
+
+        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
+        if (cidTag != null) { offset = cidTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) { offset = atcTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag sdadTag = EmvTag.findTag((short) 0x9F4B);
+        if (sdadTag != null) { offset = sdadTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
+
+        // Store as tag 77 and use existing sendResponse which handles chunking
+        EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
+        sendResponse(apdu, buf, (short) 0x0077);
     }
 
     /**
@@ -987,15 +1007,13 @@ public class PaymentApplication extends EmvApplet {
             }
         }
 
-        // 3. Include low byte of response template (77) length BEFORE TLV tags
-        // The terminal parses tag 77 with response_data[3..] which includes this byte
-        // when length >= 256 (encoded as 77 82 XX YY, [3..] gives YY followed by TLV data)
-        // Calculate total response content length:
-        // 9F27(4) + 9F36(5) + 9F26(11) + 9F10(3+iadLen) + 9F4B(2+lengthBytes+rsaKeySize)
+        // 3. Calculate CDA response content length for tag 77 wrapper
+        // CDA response per Book 2 Table 20: 9F27(4) + 9F36(5) + 9F4B(2+lenBytes+NIC) + 9F10(3+iadLen)
+        // Note: NO 9F26 in CDA response — AC is inside SDAD
         EmvTag iadTagForLen = EmvTag.findTag((short) 0x9F10);
         short iadLenForCalc = (iadTagForLen != null) ? (short) (iadTagForLen.getLength() & 0xFF) : 0;
         short sdadLengthBytes = (rsaPrivateKeyByteSize >= (short) 256) ? (short) 3 : (short) 2;
-        short responseContentLen = (short) (4 + 5 + 11 + 3 + iadLenForCalc + 2 + sdadLengthBytes + rsaPrivateKeyByteSize);
+        short responseContentLen = (short) (4 + 5 + 2 + sdadLengthBytes + rsaPrivateKeyByteSize + 3 + iadLenForCalc);
         // Only include low byte if length requires 82 XX YY encoding (>= 256)
         if (responseContentLen >= (short) 256) {
             tmpBuffer[400] = (byte) (responseContentLen & 0xFF);
@@ -1035,21 +1053,11 @@ public class PaymentApplication extends EmvApplet {
             debugHashInputLength = (short)(debugHashInputLength + 5);
         }
 
-        // 9F26 (AC) - 8 byte value
-        tmpBuffer[400] = (byte) 0x9F;
-        tmpBuffer[401] = (byte) 0x26;
-        tmpBuffer[402] = (byte) 0x08;
-        if (acTag != null) {
-            Util.arrayCopy(acTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 8);
-        }
-        shaMessageDigest.update(tmpBuffer, (short) 400, (short) 11);
-        // DEBUG: Record 9F26
-        if ((short)(debugHashInputLength + 11) <= (short) 256) {
-            Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 11);
-            debugHashInputLength = (short)(debugHashInputLength + 11);
-        }
+        // 9F26 (AC) is NOT included in CDA response per Book 2 Table 20
+        // AC is embedded inside the SDAD (ICC Dynamic Data)
+        // 9F4B (SDAD) is excluded from hash per Book 2 Section 6.6.2 Step 10
 
-        // 9F10 (IAD) - 7 byte value
+        // 9F10 (IAD) - variable length
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         tmpBuffer[400] = (byte) 0x9F;
         tmpBuffer[401] = (byte) 0x10;
@@ -1176,6 +1184,11 @@ public class PaymentApplication extends EmvApplet {
     private void processGetData(APDU apdu, byte[] buf) {
         // Standard EMV GET DATA: P1P2 = tag ID, no command data required
         short tagId = Util.getShort(buf, ISO7816.OFFSET_P1);
+        EmvTag tag = EmvTag.findTag(tagId);
+        if (tag == null) {
+            // Return 6A88 (Referenced data not found) per EMV spec
+            EmvApplet.logAndThrow((short) 0x6A88);
+        }
         sendResponse(apdu, buf, tagId);
     }
 

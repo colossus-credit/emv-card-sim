@@ -43,12 +43,12 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 DRY_RUN=false
 VERBOSE=false
 
-# Card configuration (matches personalize.sh defaults)
-RID="A000000951"
-AID_SUFFIX="0001"
+# Card configuration — temporarily using Mastercard AID for C-2 kernel testing
+RID="A000000004"
+AID_SUFFIX="1010"
 CONTACTLESS_AID_SUFFIX="1010"
-DEFAULT_BIN="66907500"
-DEFAULT_APP_LABEL="COLOSSUS"
+DEFAULT_BIN="54000000"
+DEFAULT_APP_LABEL="MASTERCARD"
 DEFAULT_EXPIRY="271231"
 PAN=""
 
@@ -191,8 +191,8 @@ preferred_name="${DEFAULT_APP_LABEL} CREDIT"
 preferred_name_hex=$(echo -n "$preferred_name" | xxd -p | tr -d '\n')
 preferred_name_len=$(printf '%02X' ${#preferred_name})
 full_contactless_aid_len=$(printf '%02X' $((${#FULL_CONTACTLESS_AID} / 2)))
-# 9F2A = Kernel Identifier: 02 = Mastercard Kernel C-2 (has GENERATE AC with CDOL)
-contactless_dir="4F${full_contactless_aid_len}${FULL_CONTACTLESS_AID}50${preferred_name_len}${preferred_name_hex}9F12${preferred_name_len}${preferred_name_hex}8701019F2A0102"
+# Mastercard AID auto-maps to C-2 kernel, no explicit 9F2A needed
+contactless_dir="4F${full_contactless_aid_len}${FULL_CONTACTLESS_AID}50${preferred_name_len}${preferred_name_hex}9F12${preferred_name_len}${preferred_name_hex}870101"
 contactless_dir_len=$(printf '%02X' $((${#contactless_dir} / 2)))
 
 # ============================================================
@@ -397,10 +397,9 @@ add_store_data "0094" "080202001001020218010500" "AFL (94)"
 # SDA tag list: 82 (AIP)
 add_store_data "9F4A" "0182" "SDA tag list (9F4A)"
 
-# CVM list (matches personalize.sh)
-# CDOL1
+# CDOL1: Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6)
 add_store_data "008C" "9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106" "CDOL1 (8C)"
-# CDOL2 (same as CDOL1 for simplicity)
+# CDOL2: same as CDOL1
 add_store_data "008D" "9F02069F03069F1A0295055F2A029A039C019F37049F1C089F160F9F0106" "CDOL2 (8D)"
 # CVM list: online PIN, signature, no CVM
 add_store_data "008E" "000000000000000042031E031F00" "CVM list (8E)"

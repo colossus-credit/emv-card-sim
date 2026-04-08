@@ -91,15 +91,15 @@ def run_personalization(
     personalize_ppse(card, contactless_aid=contactless_aid, label=label,
                      preferred_name=preferred_name, kernel_identifier=kernel_id)
 
-    # 3. Contact payment app
-    log.info("=== Personalizing Contact Payment App (AID: %s) ===", contact_aid)
-    personalize_payment_app(
-        card, aid=contact_aid, profile=profile,
-        pan=pan, expiry_yymmdd=expiry, certs=certs,
-        contactless=False,
-    )
+    # Two passes when AIDs differ (separate applet instances), single pass when same
+    if contact_aid != contactless_aid:
+        log.info("=== Personalizing Contact Payment App (AID: %s) ===", contact_aid)
+        personalize_payment_app(
+            card, aid=contact_aid, profile=profile,
+            pan=pan, expiry_yymmdd=expiry, certs=certs,
+            contactless=False,
+        )
 
-    # 4. Contactless payment app — adds PDOL, preferred name, different FCI
     log.info("=== Personalizing Contactless Payment App (AID: %s) ===", contactless_aid)
     personalize_payment_app(
         card, aid=contactless_aid, profile=profile,

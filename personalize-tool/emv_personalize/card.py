@@ -201,14 +201,9 @@ class Card:
     def set_read_record_template(self, sfi: int, record: int,
                                  tags: list[str | int]) -> None:
         resolved = [resolve_tag(str(t)) for t in tags]
-        if self.use_store_data:
-            # CPS SFI-based DGI: high byte = SFI, low byte = record number
-            dgi = (sfi << 8) | record
-            from .tlv import build_tag_list_2byte
-            self.builder.store_data(dgi, build_tag_list_2byte(resolved),
-                                    description=f"STORE_DATA SFI{sfi}/REC{record}")
-        else:
-            self.builder.set_read_record_template(sfi, record, resolved)
+        # Always use dev command 8003 for record templates — STORE DATA DGI path
+        # stores records that aren't accessible over contactless on JCOP cards
+        self.builder.set_read_record_template(sfi, record, resolved)
 
     # ---- Settings ----
 
@@ -319,10 +314,10 @@ def personalize_ppse(
     card.select_ppse()
     card.factory_reset()
 
-    # Build minimal directory entry: AID + priority + kernel ID
-    # Per Book B, kernel identifier is critical for non-standard AIDs
+    # Build directory entry: AID + label + priority + kernel ID
     dir_entry = bytearray()
     dir_entry += b"\x4F" + bytes([len(aid_bytes)]) + aid_bytes
+    dir_entry += b"\x50" + bytes([len(label_bytes)]) + label_bytes
     dir_entry += b"\x87\x01\x01"  # Priority
     if kernel_identifier:
         kid = bytes.fromhex(kernel_identifier)

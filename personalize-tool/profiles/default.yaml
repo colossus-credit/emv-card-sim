@@ -10,10 +10,13 @@ preferred_name: "COLOSSUS CREDIT"
 bin: "66907500"
 expiry: "271231"
 
+# Kernel identifier for PPSE directory entry
+kernel_identifier: "02"
+
 keys:
-  capk_index: "92"
-  key_size: 1984      # RSA key size in bits (248 bytes)
-  # keys_dir: keys/   # Uncomment to load from existing keys directory
+  capk_index: "93"
+  key_size: 1408      # RSA-1408 (176 bytes) — fits NFC contactless frame
+  keys_dir: ../keys/capk_1408   # Must match CAPK 93 in capk.xml
 
 tags:
   # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---
@@ -65,7 +68,7 @@ tags:
 
   # --- Simple tag values ---
   Application Interchange Profile: "3C01"
-  Application Version Number: "0001"
+  Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
   Application Usage Control: "FF00"
@@ -77,6 +80,8 @@ tags:
   IAC-Default: "FC688C9800"
   IAC-Denial: "0000000000"
   IAC-Online: "FC68FC9800"
+  Issuer Code Table Index: "01"
+  Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
   CTQ: "8000"
 
@@ -91,9 +96,9 @@ templates:
 # Contactless overrides (merged on top of base tags/templates for contactless AID)
 contactless:
   fci:
-    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "PDOL"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
   tags:
-    Application Interchange Profile: "0000"
+    Application Interchange Profile: "1980"
     PDOL:
       type: dol
       value:
@@ -106,14 +111,16 @@ contactless:
         Transaction Date: 3
         Transaction Type: 1
         Unpredictable Number: 4
-        Terminal Identification: 8
-        Merchant Identifier: 15
 
 records:
   - sfi: 1
     records:
+      - record: 1
+        tags: ["57", "5A", "5F24", "5F28", "5F34", "9F07", "8C"]
       - record: 2
-        tags: ["57", "5F20"]
+        tags: ["5F20", "5F25", "8D", "8E", "9F0D", "9F0E", "9F0F", "9F4A"]
+      - record: 3
+        tags: ["5F30", "9F08", "9F42", "9F44", "9F49"]
   - sfi: 2
     records:
       - record: 1
@@ -123,28 +130,22 @@ records:
   - sfi: 3
     records:
       - record: 1
-        tags: ["5A", "5F24", "5F25", "5F28", "5F34", "9F07", "9F0D", "9F0E", "9F0F", "9F4A", "8C", "8D"]
-      - record: 2
-        tags: ["8E"]
-      - record: 3
-        tags: ["5F30", "9F08", "9F42", "9F44", "9F49"]
-      - record: 4
         tags: ["9F46"]
-      - record: 5
+      - record: 2
         tags: ["9F48"]
 
 afl:
   - sfi: 1
-    first_record: 2
-    last_record: 2
+    first_record: 1
+    last_record: 3
     oda_count: 0
   - sfi: 2
     first_record: 1
     last_record: 2
-    oda_count: 2
+    oda_count: 1
   - sfi: 3
     first_record: 1
-    last_record: 5
+    last_record: 2
     oda_count: 0
 
 settings:
@@ -157,4 +158,5 @@ cvm_list:
   amount_x: 0
   amount_y: 0
   rules:
-    - [0x1F, 0x00]   # No CVM required
+    - [0x42, 0x03]   # Online PIN, if terminal supports it
+    - [0x1F, 0x00]   # No CVM required, always

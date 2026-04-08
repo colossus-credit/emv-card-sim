@@ -100,26 +100,15 @@ public class PaymentSystemEnvironment extends EmvApplet {
             return;
         }
 
-        ReadRecord readRecord = ReadRecord.findRecord(p1p2);
-        if (readRecord == null) {
-            if (defaultReadRecord != null) {
-                short p1p2Fallback = Util.getShort(defaultReadRecord, (short) 0);
-                readRecord = ReadRecord.findRecord(p1p2Fallback);
-            }
-
-            if (readRecord == null) {
-                EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
-            }
+        // Record data stored as EmvTag entry keyed by P1P2
+        EmvTag recordTag = EmvTag.findTag(p1p2);
+        if (recordTag == null) {
+            EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
         }
 
-        short tag70Length = readRecord.copyDataToArray(tmpBuffer, (short) 0);
-
-        EmvTag tag = EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, (byte) tag70Length);
-
-        if (buf[ISO7816.OFFSET_LC] != (byte) 0x00 && buf[ISO7816.OFFSET_LC] != tag.getLength()) {
-            EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);
-        }
-
+        // Copy raw record data and wrap in tag 70
+        short recordLen = recordTag.copyDataToArray(tmpBuffer, (short) 0);
+        EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, recordLen);
         sendResponse(apdu, buf, (short) 0x0070);
     }
 

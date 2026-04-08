@@ -329,41 +329,50 @@ def build_icc_certificate(
 
 
 def build_static_data_auth(
-    capk_index: str,
-    issuer_remainder: bytes,
-    issuer_cert: bytes,
-    aip: bytes = b"\x3C\x01",
+    oda_record_tags: list[list[tuple[int, bytes]]],
+    aip: bytes = b"\x39\x80",
 ) -> bytes:
     """Build the Static Data to be Authenticated for ICC certificate hash.
 
-    Per EMV Book 2: concatenation of VALUE fields from ODA records + AIP.
-    This matches the applet's SFI2 layout:
-      Record 1: 8F(capk_index) + 92(issuer_remainder) + 9F32(03) + 9F47(03)
-      Record 2: 90(issuer_certificate)
-      + AIP value
+    Per EMV Book 3 Section 10.3:
+    - Concatenation of record content (inside tag 70, excluding tag 70 wrapper)
+      from records marked as ODA in the AFL
+    - Followed by the VALUE of tags listed in SDA Tag List (9F4A), typically AIP
+
+    Per Book 3: "For files with SFI in the range 1 to 10, the record tag ('70')
+    and the record length are excluded. All other data in the data field of the
+    response to the READ RECORD command is included."
+
+    Args:
+        oda_record_tags: List of records, each record is a list of (tag_id, value) tuples.
+                         These must be in the same order as the record template.
+        aip: AIP value bytes (from SDA Tag List tag 9F4A which specifies tag 82)
     """
-    # SFI2 Record 1: TLV-encoded values
-    record1 = bytearray()
-    # 8F = CA PK Index
-    record1 += b"\x8F\x01" + bytes.fromhex(capk_index)
-    # 92 = Issuer PK Remainder
-    if issuer_remainder:
-        record1 += b"\x92" + bytes([len(issuer_remainder)]) + issuer_remainder
-    # 9F32 = Issuer PK Exponent
-    record1 += b"\x9F\x32\x01\x03"
-    # 9F47 = ICC PK Exponent
-    record1 += b"\x9F\x47\x01\x03"
+    result = bytearray()
 
-    # SFI2 Record 2: Issuer Certificate TLV
-    record2 = bytearray()
-    cert_len = len(issuer_cert)
-    if cert_len >= 128:
-        record2 += b"\x90\x81" + bytes([cert_len])
-    else:
-        record2 += b"\x90" + bytes([cert_len])
-    record2 += issuer_cert
+    for record in oda_record_tags:
+        for tag_id, value in record:
+            # Serialize as TLV (same as EmvTag.copyToArray)
+            if tag_id <= 0xFF:
+                # Single-byte tag
+                result.append(tag_id & 0xFF)
+            else:
+                # Two-byte tag
+                result.append((tag_id >> 8) & 0xFF)
+                result.append(tag_id & 0xFF)
+            # Length encoding
+            val_len = len(value)
+            if val_len >= 128:
+                result.append(0x81)
+                result.append(val_len & 0xFF)
+            else:
+                result.append(val_len)
+            result += value
 
-    return bytes(record1) + bytes(record2) + aip
+    # Append AIP value (from SDA Tag List 9F4A which says tag 82)
+    result += aip
+
+    return bytes(result)
 
 
 @dataclass
@@ -402,9 +411,16 @@ class CertificateHierarchy:
         ec_key = EcKeyMaterial.generate()
 
         # Build static data auth for ICC cert hash
-        sda = build_static_data_auth(
-            capk_index, issuer_cert.remainder, issuer_cert.certificate
-        )
+        # ODA count = 1: only SFI2/R1 is in the SDA (matches real Mastercard)
+        oda_records = [
+            [  # SFI2/R1: must match record template order: 8F, 92, 9F32, 9F47
+                (0x8F, bytes.fromhex(capk_index)),
+                (0x92, issuer_cert.remainder),
+                (0x9F32, b"\x03"),
+                (0x9F47, b"\x03"),
+            ],
+        ]
+        sda = build_static_data_auth(oda_records, aip=b"\x19\x80")
 
         log.info("Building ICC certificate...")
         icc_cert = build_icc_certificate(issuer, icc, pan, expiry,
@@ -455,9 +471,16 @@ class CertificateHierarchy:
             ec_key = EcKeyMaterial.from_pem(ec_pem_path)
 
         # Regenerate ICC certificate (it contains PAN and must match)
-        sda = build_static_data_auth(
-            capk_index, issuer_cert.remainder, issuer_cert.certificate
-        )
+        # ODA records must match what the card returns for SFI2/R1 and R2
+        oda_records = [
+            [  # SFI2/R1: must match record template order: 8F, 92, 9F32, 9F47
+                (0x8F, bytes.fromhex(capk_index)),
+                (0x92, issuer_cert.remainder),
+                (0x9F32, issuer.exponent),
+                (0x9F47, icc.exponent),
+            ],
+        ]
+        sda = build_static_data_auth(oda_records, aip=b"\x19\x80")
         icc_cert = build_icc_certificate(issuer, icc, pan, expiry,
                                          static_data_auth=sda)
 

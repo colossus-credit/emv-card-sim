@@ -1,13 +1,13 @@
-# Mastercard Test Profile
-# Uses Mastercard AID A0000000041010 for C-2 kernel testing on PAX terminal
+# Mastercard Test Profile — US Common Debit
+# Uses Mastercard AID A0000000042203 for C-2 kernel testing on PAX terminal
 # The applet must be installed with matching AID before using this profile
 
-profile: Mastercard Test (C-2 Kernel)
+profile: Mastercard US Common Debit (C-2 Kernel)
 rid: A000000004
-contact_aid_suffix: "1010"
-contactless_aid_suffix: "1010"
+contact_aid_suffix: "2203"
+contactless_aid_suffix: "2203"
 application_label: MASTERCARD
-preferred_name: "MASTERCARD CREDIT"
+preferred_name: "DEBIT MASTERCARD"
 bin: "54000000"
 expiry: "271231"
 
@@ -16,25 +16,15 @@ expiry: "271231"
 kernel_identifier: "02"
 
 keys:
-  capk_index: "92"
-  key_size: 1984
+  capk_index: "F8"
+  key_size: 1024
   # keys_dir: keys/
 
 tags:
   DDOL:
     type: dol
     value:
-      Amount Authorised: 6
-      Amount Other: 6
-      Terminal Country Code: 2
-      Terminal Verification Results: 5
-      Transaction Currency Code: 2
-      Transaction Date: 3
-      Transaction Type: 1
       Unpredictable Number: 4
-      Terminal Identification: 8
-      Merchant Identifier: 15
-      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -67,8 +57,9 @@ tags:
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
-  Application Interchange Profile: "0040"
-  Application Version Number: "0001"
+  Application Interchange Profile: "3800"
+  Application Version Number: "0002"
+  Issuer Code Table Index: "01"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
   Application Usage Control: "FF00"
@@ -77,11 +68,12 @@ tags:
   Service Code: "0201"
   Application Currency Code: "0840"
   Application Currency Exponent: "02"
-  IAC-Default: "FC688C9800"
+  IAC-Default: "FFFFFFFFFF"
   IAC-Denial: "0000000000"
   IAC-Online: "FC68FC9800"
+  Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
-  CTQ: "2000"
+  CTQ: "0000"
 
 templates:
   gpo: ["AIP", "AFL"]
@@ -93,9 +85,9 @@ templates:
 
 contactless:
   fci:
-    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "PDOL"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
   tags:
-    Application Interchange Profile: "0040"
+    Application Interchange Profile: "3980"
     PDOL:
       type: dol
       value:
@@ -108,37 +100,35 @@ contactless:
         Transaction Date: 3
         Transaction Type: 1
         Unpredictable Number: 4
-        Terminal Identification: 8
-        Merchant Identifier: 15
 
 records:
   - sfi: 1
     records:
+      - record: 1
+        tags: ["57", "5A", "5F24", "9F07", "8C"]
       - record: 2
-        tags: ["57", "5F20"]
+        tags: ["5F20", "5F25", "5F28", "5F34", "9F4A"]
+      - record: 3
+        tags: ["8D", "9F0D", "9F0E", "9F0F"]
+      - record: 4
+        tags: ["8E", "9F08", "9F42", "9F44", "9F49", "5F30"]
   - sfi: 2
     records:
       - record: 1
-        tags: ["8F", "92", "9F32", "9F47"]
+        tags: ["8F", "9F32", "9F47", "92"]
       - record: 2
         tags: ["90"]
   - sfi: 3
     records:
       - record: 1
-        tags: ["5A", "5F24", "5F25", "5F28", "5F34", "9F07", "9F0D", "9F0E", "9F0F", "9F4A", "8C", "8D"]
-      - record: 2
-        tags: ["8E"]
-      - record: 3
-        tags: ["5F30", "9F08", "9F42", "9F44", "9F49"]
-      - record: 4
         tags: ["9F46"]
-      - record: 5
+      - record: 2
         tags: ["9F48"]
 
 afl:
   - sfi: 1
-    first_record: 2
-    last_record: 2
+    first_record: 1
+    last_record: 4
     oda_count: 0
   - sfi: 2
     first_record: 1
@@ -146,7 +136,7 @@ afl:
     oda_count: 2
   - sfi: 3
     first_record: 1
-    last_record: 5
+    last_record: 2
     oda_count: 0
 
 settings:
@@ -159,4 +149,5 @@ cvm_list:
   amount_x: 0
   amount_y: 0
   rules:
-    - [0x1F, 0x00]   # No CVM required
+    - [0x42, 0x03]   # Online PIN, if terminal supports it
+    - [0x1F, 0x00]   # No CVM required, always

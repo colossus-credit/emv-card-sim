@@ -366,7 +366,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         }
 
         JCSystem.beginTransaction();
-        ReadRecord.setRecord(readRecordId, buf, dataOffset, (byte) dataLen);
+        EmvTag.setTag(readRecordId, buf, dataOffset, dataLen);
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
@@ -458,7 +458,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             }
 
             JCSystem.beginTransaction();
-            ReadRecord.setRecord(recordId, buf, dataOffset, (byte) dataLen);
+            EmvTag.setTag(recordId, buf, dataOffset, dataLen);
             JCSystem.commitTransaction();
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
                    || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
@@ -484,8 +484,15 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             // CPS DGI 0062: file structure creation — acknowledged but no-op
             // Our applet auto-creates records without explicit EF creation
         } else if (dgiHigh == (short) 0x009F && dgiLow >= 0x60 && dgiLow <= 0x6F) {
-            // CPS reserved: 9F60-9F6F are for payment system proprietary data
-            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            // CPS reserved range 9F60-9F6F: payment system proprietary data
+            // Allow known tags (9F6C = CTQ), reject truly reserved ones
+            if (dgi == (short) 0x9F6C) {
+                JCSystem.beginTransaction();
+                EmvTag.setTag(dgi, buf, offset, length);
+                JCSystem.commitTransaction();
+            } else {
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            }
         } else if (dgi != (short) 0x0000) {
             // Everything else (non-zero) = EMV tag: DGI is the tag ID
             JCSystem.beginTransaction();
@@ -588,27 +595,47 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected void processReadRecord(APDU apdu, byte[] buf) {
         short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
 
-        ReadRecord readRecord = ReadRecord.findRecord(p1p2);
-        if (readRecord == null) {
-            if (defaultReadRecord != null) {
-                short p1p2Fallback = Util.getShort(defaultReadRecord, (short) 0);
-                readRecord = ReadRecord.findRecord(p1p2Fallback);
-            }
-
-            if (readRecord == null) {
-                EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
-            }
+        // Record templates stored as EmvTag entries keyed by P1P2
+        EmvTag templateTag = EmvTag.findTag(p1p2);
+        if (templateTag == null) {
+            EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
         }
 
-        short tag70Length = readRecord.expandTlvToArray(tmpBuffer, (short) 0);
-
-        EmvTag tag = EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, tag70Length);
-
-        if (buf[ISO7816.OFFSET_LC] != (byte) 0x00 && buf[ISO7816.OFFSET_LC] != tag.getLength()) {
-            EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);
+        // Expand tag list to TLV in tmpBuffer
+        byte[] templateData = templateTag.getData();
+        short templateLen = templateTag.getLength();
+        short contentLen = (short) 0;
+        for (short i = (short) 0; i < templateLen; i += (short) 2) {
+            short tagId = Util.getShort(templateData, i);
+            EmvTag tag = EmvTag.findTag(tagId);
+            if (tag == null) {
+                EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
+            }
+            contentLen = tag.copyToArray(tmpBuffer, contentLen);
         }
 
-        sendResponse(apdu, buf, (short) 0x0070);
+        // Debug: store SFI2/R1 (P1P2=0114) expanded content in DF04 for comparison
+        if (p1p2 == (short) 0x0114) {
+            short storeLen = (contentLen > (short) 200) ? (short) 200 : contentLen;
+            EmvTag.setTag((short) 0xDF04, tmpBuffer, (short) 0, storeLen);
+        }
+
+        // Build tag 70 wrapper in chunkBuffer, then copy content after it
+        short respLen = (short) 0;
+        chunkBuffer[respLen++] = (byte) 0x70;
+        if (contentLen >= (short) 128) {
+            chunkBuffer[respLen++] = (byte) 0x81;
+            chunkBuffer[respLen++] = (byte) (contentLen & 0xFF);
+        } else {
+            chunkBuffer[respLen++] = (byte) contentLen;
+        }
+        Util.arrayCopy(tmpBuffer, (short) 0, chunkBuffer, respLen, contentLen);
+        respLen += contentLen;
+
+        // Send directly from chunkBuffer — no EmvTag, no buf copy
+        apdu.setOutgoing();
+        apdu.setOutgoingLength(respLen);
+        apdu.sendBytesLong(chunkBuffer, (short) 0, respLen);
     }
 
     protected EmvApplet() {

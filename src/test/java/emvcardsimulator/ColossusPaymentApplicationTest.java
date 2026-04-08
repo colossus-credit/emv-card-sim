@@ -243,25 +243,22 @@ public class ColossusPaymentApplicationTest {
         // Prepare minimal CDOL data
         byte[] cdolData = createColossusCdolData();
         
-        // Request ARQC (forced online, no CDA)
-        // P1 = 0x80: bit 7-6 = 10 (ARQC), bit 4 = 0 (no CDA)
+        // Request ARQC — even without CDA bit in P1, card performs CDA
+        // because AIP has CDA bit set and RSA key is loaded
         byte[] generateAcCmd = new byte[5 + cdolData.length];
         generateAcCmd[0] = (byte) 0x80;
         generateAcCmd[1] = (byte) 0xAE;
-        generateAcCmd[2] = (byte) 0x80;  // ARQC without CDA
+        generateAcCmd[2] = (byte) 0x80;  // ARQC
         generateAcCmd[3] = (byte) 0x00;
         generateAcCmd[4] = (byte) cdolData.length;
         System.arraycopy(cdolData, 0, generateAcCmd, 5, cdolData.length);
-        
+
         ResponseAPDU response = SmartCard.transmitCommand(generateAcCmd);
-        
-        // Verify the transaction succeeded
-        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), 
-            "GENERATE AC should succeed with valid RSA key");
-        
-        byte[] responseData = response.getData();
-        assertNotNull(responseData, "Response data should not be null");
-        assertTrue(responseData.length > 0, "Response should contain cryptogram data");
+
+        // CDA response > 256 bytes may use GET RESPONSE chaining (61XX)
+        short sw = (short) response.getSW();
+        assertTrue(sw == ISO7816.SW_NO_ERROR || (sw & (short) 0xFF00) == (short) 0x6100,
+            "GENERATE AC should succeed or chain (61XX), got " + Integer.toHexString(sw & 0xFFFF));
     }
 
     @Test
@@ -1475,9 +1472,10 @@ public class ColossusPaymentApplicationTest {
         // - 9F26 (AC): 11 bytes (9F 26 08 XX...)
         // - 9F10 (IAD): ~10 bytes (9F 10 07 XX...)
         // - 9F4B (SDAD): 259 bytes (9F 4B 82 01 00 + 256 bytes)
-        // Total: ~293 bytes (but 291 is what the terminal log showed)
+        // CDA response: 77 + 9F27(4) + 9F36(5) + 9F4B(2+2+248) + 9F10(3+7) = ~271 bytes
+        // No 9F26 in CDA response per EMV Book 2 Table 20
 
-        int expectedMinLength = 291;
+        int expectedMinLength = 270;
         assertTrue(responseData.length >= expectedMinLength,
             "CDA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
 
@@ -1617,16 +1615,16 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("Reject GENERATE AC with invalid cryptogram type")
-    public void testGenerateAcInvalidCryptogramType() throws CardException {
+    @DisplayName("GENERATE AC always returns ARQC for online-only card")
+    public void testGenerateAcAlwaysReturnsArqc() throws CardException {
         setupColossusCard();
-        // P1=0xC0 — bits [7:6] = 11, which is not a valid cryptogram type
+        // Even with P1=0xC0 (invalid in old code), card returns ARQC (online-only)
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xAE, (byte) 0xC0, (byte) 0x00,
             (byte) 0x00
         });
-        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
-            "GENERATE AC with invalid cryptogram type should return 6A86");
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "Online-only card should accept any P1 and return ARQC");
     }
 
     @Test
@@ -1943,19 +1941,20 @@ public class ColossusPaymentApplicationTest {
         }, "PAN (5A)");
         assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
 
-        // AIP = 0040 (no ODA, contactless indicator)
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x00, (byte) 0x40 }, "AIP (82)");
+        // AIP = 3800 (CVM + TRM + Issuer Auth, EMV mode)
+        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x38, (byte) 0x00 }, "AIP (82)");
 
         // AFL: SFI1 rec1 (for READ RECORD)
         assertStoreData(0x00, 0x94, new byte[] {
             (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
         }, "AFL (94)");
 
-        // CDOL1
+        // CDOL1: Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6) = 58 bytes
         assertStoreData(0x00, 0x8C, new byte[] {
             (byte) 0x9F, (byte) 0x02, (byte) 0x06,
             (byte) 0x9F, (byte) 0x03, (byte) 0x06,
             (byte) 0x9F, (byte) 0x1A, (byte) 0x02,
+            (byte) 0x95, (byte) 0x05,
             (byte) 0x5F, (byte) 0x2A, (byte) 0x02,
             (byte) 0x9A, (byte) 0x03,
             (byte) 0x9C, (byte) 0x01,
@@ -1963,7 +1962,7 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x9F, (byte) 0x1C, (byte) 0x08,
             (byte) 0x9F, (byte) 0x16, (byte) 0x0F,
             (byte) 0x9F, (byte) 0x01, (byte) 0x06
-        }, "CDOL1 (8C) — no TVR");
+        }, "CDOL1 (8C)");
 
         // EC private key
         assertStoreData(0x80, 0x00, new byte[] {
@@ -2014,8 +2013,8 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
         System.out.println("  GPO: OK, response = " + response.getData().length + " bytes (AIP+AFL)");
 
-        // 3. GENERATE AC with CDOL data (53 bytes matching CDOL1 without TVR)
-        // Amount(6) + AmountOther(6) + Country(2) + Currency(2) + Date(3) + Type(1) + UN(4) + TerminalID(8) + MerchantID(15) + AcquirerID(6) = 53 bytes
+        // 3. GENERATE AC with CDOL data (58 bytes matching CDOL1)
+        // Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6)
         byte[] cdolData = new byte[] {
             // Amount Authorised
             (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00,
@@ -2023,6 +2022,8 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
             // Terminal Country Code (USA)
             (byte) 0x08, (byte) 0x40,
+            // Terminal Verification Results
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
             // Currency Code (USD)
             (byte) 0x08, (byte) 0x40,
             // Transaction Date
@@ -2078,7 +2079,7 @@ public class ColossusPaymentApplicationTest {
         assertNotNull(sigS, "GENERATE AC response must contain 9F7C (s)");
         assertNotNull(iccDn, "GENERATE AC response must contain 9F4C (ICC DN)");
 
-        // Reconstruct signed message: ICC_DN(3) || CDOL data (53 bytes)
+        // Reconstruct signed message: ICC_DN(3) || CDOL data (58 bytes)
         byte[] signedMessage = new byte[3 + cdolData.length];
         System.arraycopy(iccDn, 0, signedMessage, 0, 3);
         System.arraycopy(cdolData, 0, signedMessage, 3, cdolData.length);
@@ -2557,6 +2558,148 @@ public class ColossusPaymentApplicationTest {
         });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
             "STORE DATA with CLA 80 should succeed per CPS");
+    }
+
+    // ── EmvTag-based record storage tests ──
+
+    @Test
+    @DisplayName("Record template stored as EmvTag is readable via READ RECORD")
+    public void testRecordTemplateViaEmvTag() throws CardException {
+        setupColossusCard();
+
+        // Set a tag value
+        assertStoreData(0x00, 0x50, new byte[] {
+            (byte) 0x54, (byte) 0x45, (byte) 0x53, (byte) 0x54
+        }, "App label (50) = TEST");
+
+        // Set record template for SFI1/R1 via dev command: contains tag 0050
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x03, (byte) 0x01, (byte) 0x0C,
+            (byte) 0x02, (byte) 0x00, (byte) 0x50
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "SET_READ_RECORD_TEMPLATE should succeed");
+
+        // READ RECORD SFI1/R1
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x0C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "READ RECORD should succeed");
+
+        // Verify response contains tag 70 wrapping tag 50
+        byte[] data = response.getData();
+        assertEquals((byte) 0x70, data[0], "Response must start with tag 70");
+        // Find tag 50 inside
+        boolean found50 = false;
+        for (int i = 2; i < data.length - 1; i++) {
+            if (data[i] == (byte) 0x50 && data[i + 1] == (byte) 0x04) {
+                found50 = true;
+                break;
+            }
+        }
+        assertTrue(found50, "Tag 70 must contain tag 50 (Application Label)");
+    }
+
+    @Test
+    @DisplayName("Multiple records across SFIs are readable")
+    public void testMultipleRecordsAcrossSfis() throws CardException {
+        setupColossusCard();
+
+        // Set tag values
+        assertStoreData(0x00, 0x50, new byte[] { 0x41, 0x42 }, "Label AB");
+        assertStoreData(0x00, 0x87, new byte[] { 0x01 }, "Priority 01");
+
+        // SFI1/R1: tag 50
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x03, (byte) 0x01, (byte) 0x0C,
+            (byte) 0x02, (byte) 0x00, (byte) 0x50
+        });
+
+        // SFI2/R1: tag 87
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x03, (byte) 0x01, (byte) 0x14,
+            (byte) 0x02, (byte) 0x00, (byte) 0x87
+        });
+
+        // Read SFI1/R1
+        ResponseAPDU r1 = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x0C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) r1.getSW(), "SFI1/R1 should succeed");
+
+        // Read SFI2/R1
+        ResponseAPDU r2 = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x14, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) r2.getSW(), "SFI2/R1 should succeed");
+
+        // Verify both return valid tag 70 responses
+        assertEquals((byte) 0x70, r1.getData()[0], "SFI1/R1 must have tag 70");
+        assertEquals((byte) 0x70, r2.getData()[0], "SFI2/R1 must have tag 70");
+    }
+
+    @Test
+    @DisplayName("Factory reset clears record templates")
+    public void testFactoryResetClearsRecords() throws CardException {
+        setupColossusCard();
+
+        // Set a tag and record template
+        assertStoreData(0x00, 0x50, new byte[] { 0x58 }, "Label X");
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x03, (byte) 0x01, (byte) 0x0C,
+            (byte) 0x02, (byte) 0x00, (byte) 0x50
+        });
+
+        // Verify record exists
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x0C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "Record should exist before factory reset");
+
+        // Factory reset
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x05, (byte) 0x00, (byte) 0x00, (byte) 0x00
+        });
+
+        // Record should be gone
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x0C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_RECORD_NOT_FOUND, (short) response.getSW(),
+            "Record should not exist after factory reset");
+    }
+
+    @Test
+    @DisplayName("STORE DATA SFI record stored as EmvTag and readable via READ RECORD")
+    public void testStoreDataSfiRecordViaEmvTag() throws CardException {
+        setupColossusCard();
+
+        // Set tag values first
+        assertStoreData(0x00, 0x50, new byte[] {
+            (byte) 0x43, (byte) 0x41, (byte) 0x52, (byte) 0x44
+        }, "Label = CARD");
+        assertStoreData(0x00, 0x87, new byte[] { 0x01 }, "Priority");
+
+        // Store record template via STORE DATA DGI 0101 (SFI1/R1)
+        // DGI 0101: dgiHigh=01 (SFI), dgiLow=01 (record)
+        // Data: tag list [0050, 0087] — but CPS wraps in tag 70
+        // Tag 70 wrapper with inner content: 00 50 00 87
+        assertStoreData(0x01, 0x01, new byte[] {
+            (byte) 0x70, (byte) 0x04,
+            (byte) 0x00, (byte) 0x50, (byte) 0x00, (byte) 0x87
+        }, "SFI1/R1 via STORE DATA");
+
+        // READ RECORD SFI1/R1 (P1=01, P2=0C)
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x01, (byte) 0x0C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "READ RECORD via STORE DATA DGI should succeed");
+
+        byte[] data = response.getData();
+        assertEquals((byte) 0x70, data[0], "Response must start with tag 70");
     }
 }
 
