@@ -21,7 +21,7 @@ public class EmvTag {
 
     protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];
-        data = new byte[300];  // Increased for RSA-2048 certificates (256 bytes)
+        data = new byte[400];  // CDA+ECDSA response: SDAD(~261) + CID(4) + ATC(5) + IAD(35) + CED(35)
         this.length = length;
 
         Util.setShort(tag, (short) 0, tagId);

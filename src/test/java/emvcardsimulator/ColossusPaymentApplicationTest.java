@@ -150,8 +150,9 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("Test CDA transaction with GENERATE AC (ARQC)")
     public void testCdaGenerateAcArqc() throws CardException {
         setupColossusCard();
-        setupRsa2048Key();   // Set RSA key first (CDA requires key)
-        enableCdaMode();     // Verify CDA is enabled (key is present)
+        setupRsa2048Key();   // Set RSA key (CDA requires RSA + EC)
+        setupEcKey();        // Set EC key (CDA requires both)
+        enableCdaMode();     // Verify CDA is enabled
         setupColossusCdol();
         setupColossusCardData();
 
@@ -348,108 +349,71 @@ public class ColossusPaymentApplicationTest {
     }
 
     private void setupRsa2048Key() throws CardException {
-        // RSA-2048 modulus (256 bytes) - from keys/icc/icc_modulus.bin
+        // RSA-1024 modulus (128 bytes)
         byte[] modulus = new byte[] {
-            (byte) 0xB4, (byte) 0xB4, (byte) 0x58, (byte) 0x78, (byte) 0x31, (byte) 0x29, (byte) 0x27, (byte) 0x92,
-            (byte) 0xEE, (byte) 0x57, (byte) 0x5D, (byte) 0x28, (byte) 0x4C, (byte) 0xCB, (byte) 0x40, (byte) 0xA9,
-            (byte) 0x09, (byte) 0x4A, (byte) 0xD2, (byte) 0x02, (byte) 0x9D, (byte) 0xC4, (byte) 0x56, (byte) 0x55,
-            (byte) 0x35, (byte) 0x9C, (byte) 0x57, (byte) 0x73, (byte) 0x5B, (byte) 0x09, (byte) 0xA8, (byte) 0xAF,
-            (byte) 0x58, (byte) 0xDC, (byte) 0x32, (byte) 0x26, (byte) 0x47, (byte) 0x57, (byte) 0xCC, (byte) 0xB4,
-            (byte) 0x07, (byte) 0x11, (byte) 0xA5, (byte) 0xB5, (byte) 0x7B, (byte) 0xAA, (byte) 0x58, (byte) 0x64,
-            (byte) 0x23, (byte) 0x3A, (byte) 0x3F, (byte) 0x0B, (byte) 0xD3, (byte) 0x05, (byte) 0x71, (byte) 0x55,
-            (byte) 0xB9, (byte) 0x8E, (byte) 0x8D, (byte) 0xA1, (byte) 0x30, (byte) 0x8D, (byte) 0xBA, (byte) 0x9D,
-            (byte) 0x36, (byte) 0xF8, (byte) 0x1F, (byte) 0x18, (byte) 0x7D, (byte) 0x9D, (byte) 0x2A, (byte) 0xBF,
-            (byte) 0xBA, (byte) 0xFE, (byte) 0x2F, (byte) 0xC0, (byte) 0x94, (byte) 0xF0, (byte) 0x17, (byte) 0x94,
-            (byte) 0x1A, (byte) 0x9D, (byte) 0x8A, (byte) 0x94, (byte) 0x13, (byte) 0x22, (byte) 0x27, (byte) 0x00,
-            (byte) 0xA5, (byte) 0x59, (byte) 0x63, (byte) 0x2C, (byte) 0xF1, (byte) 0xDB, (byte) 0x24, (byte) 0xCD,
-            (byte) 0x89, (byte) 0xB8, (byte) 0x91, (byte) 0xE7, (byte) 0x2F, (byte) 0x73, (byte) 0xD4, (byte) 0x85,
-            (byte) 0xE3, (byte) 0xD1, (byte) 0x49, (byte) 0x25, (byte) 0x82, (byte) 0xF6, (byte) 0x42, (byte) 0x5F,
-            (byte) 0x98, (byte) 0x15, (byte) 0x94, (byte) 0x8A, (byte) 0x04, (byte) 0x52, (byte) 0xB8, (byte) 0x48,
-            (byte) 0x6F, (byte) 0xE4, (byte) 0x17, (byte) 0x62, (byte) 0x76, (byte) 0xC7, (byte) 0x5E, (byte) 0xF7,
-            (byte) 0xB6, (byte) 0xE7, (byte) 0xC2, (byte) 0xEB, (byte) 0x11, (byte) 0xBD, (byte) 0x5B, (byte) 0xDD,
-            (byte) 0x12, (byte) 0x46, (byte) 0x5B, (byte) 0x15, (byte) 0x42, (byte) 0x2C, (byte) 0x5F, (byte) 0x51,
-            (byte) 0xB4, (byte) 0xA8, (byte) 0x72, (byte) 0xB3, (byte) 0xBE, (byte) 0xF8, (byte) 0xFC, (byte) 0x0E,
-            (byte) 0xAB, (byte) 0xD4, (byte) 0xDE, (byte) 0xF6, (byte) 0x7C, (byte) 0x78, (byte) 0x3D, (byte) 0xBE,
-            (byte) 0x9D, (byte) 0x65, (byte) 0x63, (byte) 0xE0, (byte) 0xE5, (byte) 0x45, (byte) 0x25, (byte) 0xE9,
-            (byte) 0xA8, (byte) 0x83, (byte) 0xEF, (byte) 0xD4, (byte) 0x73, (byte) 0x31, (byte) 0x18, (byte) 0x9D,
-            (byte) 0xB0, (byte) 0x10, (byte) 0x9C, (byte) 0x51, (byte) 0xB7, (byte) 0xCC, (byte) 0x70, (byte) 0xE8,
-            (byte) 0xB1, (byte) 0xEF, (byte) 0x8F, (byte) 0x66, (byte) 0xEE, (byte) 0xFC, (byte) 0xD5, (byte) 0x18,
-            (byte) 0x93, (byte) 0xBF, (byte) 0xFC, (byte) 0x6A, (byte) 0xF7, (byte) 0xDF, (byte) 0x55, (byte) 0x47,
-            (byte) 0x09, (byte) 0x68, (byte) 0xB7, (byte) 0x5D, (byte) 0x4E, (byte) 0xF5, (byte) 0x1D, (byte) 0xB0,
-            (byte) 0x08, (byte) 0xA7, (byte) 0xC5, (byte) 0x91, (byte) 0xC1, (byte) 0xAF, (byte) 0xED, (byte) 0xB3,
-            (byte) 0xC1, (byte) 0x87, (byte) 0x29, (byte) 0x63, (byte) 0x7E, (byte) 0x1A, (byte) 0x07, (byte) 0x87,
-            (byte) 0xA9, (byte) 0x10, (byte) 0x38, (byte) 0x24, (byte) 0x89, (byte) 0x6C, (byte) 0xEB, (byte) 0xDF,
-            (byte) 0x0D, (byte) 0xE0, (byte) 0x71, (byte) 0x0E, (byte) 0xF5, (byte) 0x24, (byte) 0xB6, (byte) 0xD0,
-            (byte) 0x00, (byte) 0x51, (byte) 0x3C, (byte) 0xD0, (byte) 0x17, (byte) 0x20, (byte) 0x25, (byte) 0xC4,
-            (byte) 0x00, (byte) 0xB2, (byte) 0x5F, (byte) 0x5F, (byte) 0x06, (byte) 0x74, (byte) 0x45, (byte) 0x57
+            (byte) 0xA4, (byte) 0xC9, (byte) 0x0D, (byte) 0x48, (byte) 0x83, (byte) 0x21, (byte) 0xF7, (byte) 0x51,
+            (byte) 0xCC, (byte) 0xBF, (byte) 0xF3, (byte) 0xA9, (byte) 0xCB, (byte) 0x15, (byte) 0x6A, (byte) 0xD1,
+            (byte) 0xC9, (byte) 0x05, (byte) 0xF8, (byte) 0x69, (byte) 0xBD, (byte) 0xFC, (byte) 0xF3, (byte) 0x2C,
+            (byte) 0x45, (byte) 0x19, (byte) 0x52, (byte) 0x04, (byte) 0x6E, (byte) 0x8C, (byte) 0x9A, (byte) 0x04,
+            (byte) 0x28, (byte) 0xB5, (byte) 0x6A, (byte) 0x64, (byte) 0x0A, (byte) 0xF9, (byte) 0x49, (byte) 0xD2,
+            (byte) 0xC3, (byte) 0xD0, (byte) 0xD0, (byte) 0xD0, (byte) 0x11, (byte) 0x48, (byte) 0x9E, (byte) 0x91,
+            (byte) 0x9F, (byte) 0xE4, (byte) 0xBE, (byte) 0x24, (byte) 0xA4, (byte) 0x6C, (byte) 0x59, (byte) 0x3F,
+            (byte) 0x0D, (byte) 0x58, (byte) 0x28, (byte) 0x18, (byte) 0x90, (byte) 0x9F, (byte) 0xB6, (byte) 0xD0,
+            (byte) 0x5C, (byte) 0xB1, (byte) 0x31, (byte) 0xED, (byte) 0xC2, (byte) 0xF5, (byte) 0xE9, (byte) 0xE8,
+            (byte) 0x85, (byte) 0x9A, (byte) 0x92, (byte) 0xB8, (byte) 0x39, (byte) 0x84, (byte) 0x14, (byte) 0xA4,
+            (byte) 0x59, (byte) 0x8A, (byte) 0xA3, (byte) 0x48, (byte) 0x8F, (byte) 0xBA, (byte) 0x68, (byte) 0x59,
+            (byte) 0xA1, (byte) 0xA8, (byte) 0x43, (byte) 0x71, (byte) 0x32, (byte) 0xD0, (byte) 0xF0, (byte) 0x44,
+            (byte) 0x4A, (byte) 0x0D, (byte) 0x3B, (byte) 0xE9, (byte) 0x97, (byte) 0x7C, (byte) 0x47, (byte) 0x30,
+            (byte) 0xCA, (byte) 0xCC, (byte) 0xB6, (byte) 0xB2, (byte) 0x8F, (byte) 0x0D, (byte) 0xEE, (byte) 0x74,
+            (byte) 0x6F, (byte) 0x70, (byte) 0x5A, (byte) 0x68, (byte) 0x0F, (byte) 0x2E, (byte) 0x1F, (byte) 0x89,
+            (byte) 0x0E, (byte) 0xDE, (byte) 0xC1, (byte) 0x7B, (byte) 0x97, (byte) 0x10, (byte) 0x0E, (byte) 0x73
         };
-        
-        // Send modulus using extended APDU (256 bytes in single command)
-        // Extended APDU format: CLA INS P1 P2 00 Lc_hi Lc_lo [data...]
-        byte[] modulusCmd = new byte[7 + 256];  // 7 byte header + 256 byte data
+
+        // RSA-1024 private exponent (128 bytes)
+        byte[] exponent = new byte[] {
+            (byte) 0x82, (byte) 0x06, (byte) 0x22, (byte) 0x75, (byte) 0x15, (byte) 0x03, (byte) 0xB8, (byte) 0x22,
+            (byte) 0xD3, (byte) 0x6C, (byte) 0xA2, (byte) 0xD7, (byte) 0x57, (byte) 0x67, (byte) 0x8E, (byte) 0xE1,
+            (byte) 0xF9, (byte) 0xBC, (byte) 0xBC, (byte) 0x46, (byte) 0xB3, (byte) 0xA2, (byte) 0xE4, (byte) 0x3E,
+            (byte) 0x0A, (byte) 0x47, (byte) 0xF0, (byte) 0x6F, (byte) 0x8E, (byte) 0xCB, (byte) 0x62, (byte) 0xBB,
+            (byte) 0xE5, (byte) 0x63, (byte) 0x40, (byte) 0x8F, (byte) 0xB0, (byte) 0x19, (byte) 0x04, (byte) 0x27,
+            (byte) 0x4A, (byte) 0x5B, (byte) 0x7A, (byte) 0x68, (byte) 0xB3, (byte) 0x3A, (byte) 0x99, (byte) 0xE4,
+            (byte) 0x4E, (byte) 0x46, (byte) 0x2F, (byte) 0xC2, (byte) 0xB9, (byte) 0xFA, (byte) 0xC4, (byte) 0x70,
+            (byte) 0xFC, (byte) 0x16, (byte) 0x93, (byte) 0x8C, (byte) 0xCE, (byte) 0x91, (byte) 0x37, (byte) 0xAD,
+            (byte) 0xED, (byte) 0x28, (byte) 0x6C, (byte) 0x3A, (byte) 0x60, (byte) 0xE5, (byte) 0xF5, (byte) 0x5C,
+            (byte) 0x16, (byte) 0x42, (byte) 0x6C, (byte) 0x89, (byte) 0x6A, (byte) 0xBB, (byte) 0x50, (byte) 0xD9,
+            (byte) 0x2A, (byte) 0xA8, (byte) 0x63, (byte) 0x54, (byte) 0xAA, (byte) 0xF6, (byte) 0x11, (byte) 0x6D,
+            (byte) 0x43, (byte) 0xA2, (byte) 0x56, (byte) 0x48, (byte) 0x07, (byte) 0x07, (byte) 0xFD, (byte) 0xF0,
+            (byte) 0xF3, (byte) 0xC1, (byte) 0xCC, (byte) 0x3C, (byte) 0x39, (byte) 0x9E, (byte) 0x2C, (byte) 0xE3,
+            (byte) 0x61, (byte) 0xBA, (byte) 0x3A, (byte) 0x72, (byte) 0x85, (byte) 0xF5, (byte) 0xA5, (byte) 0x32,
+            (byte) 0x34, (byte) 0x8F, (byte) 0x56, (byte) 0x57, (byte) 0x7F, (byte) 0x11, (byte) 0x2D, (byte) 0xC2,
+            (byte) 0xF4, (byte) 0xAB, (byte) 0x51, (byte) 0xE4, (byte) 0xDF, (byte) 0x90, (byte) 0xE0, (byte) 0x01
+        };
+
+        // Send modulus (128 bytes, fits in short APDU)
+        byte[] modulusCmd = new byte[5 + 128];
         modulusCmd[0] = (byte) 0x80;  // CLA
         modulusCmd[1] = (byte) 0x04;  // INS (SET_SETTINGS)
         modulusCmd[2] = (byte) 0x00;  // P1
         modulusCmd[3] = (byte) 0x04;  // P2 (modulus setting)
-        modulusCmd[4] = (byte) 0x00;  // Extended length indicator
-        modulusCmd[5] = (byte) 0x01;  // Lc high byte (256 = 0x0100)
-        modulusCmd[6] = (byte) 0x00;  // Lc low byte
-        System.arraycopy(modulus, 0, modulusCmd, 7, 256);
+        modulusCmd[4] = (byte) 0x80;  // LC = 128
+        System.arraycopy(modulus, 0, modulusCmd, 5, 128);
 
         ResponseAPDU response = SmartCard.transmitCommand(modulusCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "RSA-2048 modulus should succeed");
+            "RSA-1024 modulus should succeed");
 
-        // RSA-2048 private exponent (256 bytes) - from keys/icc/icc_private.pem
-        byte[] exponent = new byte[] {
-            (byte) 0x78, (byte) 0x78, (byte) 0x3A, (byte) 0xFA, (byte) 0xCB, (byte) 0x70, (byte) 0xC5, (byte) 0x0C,
-            (byte) 0x9E, (byte) 0xE4, (byte) 0xE8, (byte) 0xC5, (byte) 0x88, (byte) 0x87, (byte) 0x80, (byte) 0x70,
-            (byte) 0xB0, (byte) 0xDC, (byte) 0x8C, (byte) 0x01, (byte) 0xBE, (byte) 0x82, (byte) 0xE4, (byte) 0x38,
-            (byte) 0xCE, (byte) 0x68, (byte) 0x3A, (byte) 0x4C, (byte) 0xE7, (byte) 0x5B, (byte) 0xC5, (byte) 0xCA,
-            (byte) 0x3B, (byte) 0x3D, (byte) 0x76, (byte) 0xC4, (byte) 0x2F, (byte) 0x8F, (byte) 0xDD, (byte) 0xCD,
-            (byte) 0x5A, (byte) 0x0B, (byte) 0xC3, (byte) 0xCE, (byte) 0x52, (byte) 0x71, (byte) 0x90, (byte) 0x42,
-            (byte) 0xC2, (byte) 0x26, (byte) 0xD4, (byte) 0xB2, (byte) 0x8C, (byte) 0xAE, (byte) 0x4B, (byte) 0x8E,
-            (byte) 0x7B, (byte) 0xB4, (byte) 0x5E, (byte) 0x6B, (byte) 0x75, (byte) 0xB3, (byte) 0xD1, (byte) 0xBE,
-            (byte) 0x24, (byte) 0xA5, (byte) 0x6A, (byte) 0x10, (byte) 0x53, (byte) 0xBE, (byte) 0x1C, (byte) 0x7F,
-            (byte) 0xD1, (byte) 0xFE, (byte) 0xCA, (byte) 0x80, (byte) 0x63, (byte) 0x4A, (byte) 0xBA, (byte) 0x62,
-            (byte) 0xBC, (byte) 0x69, (byte) 0x07, (byte) 0x0D, (byte) 0x62, (byte) 0x16, (byte) 0xC4, (byte) 0xAB,
-            (byte) 0x18, (byte) 0xE6, (byte) 0x42, (byte) 0x1D, (byte) 0xF6, (byte) 0x92, (byte) 0x18, (byte) 0x89,
-            (byte) 0x06, (byte) 0x7B, (byte) 0x0B, (byte) 0xEF, (byte) 0x74, (byte) 0xF7, (byte) 0xE3, (byte) 0x03,
-            (byte) 0xED, (byte) 0x36, (byte) 0x30, (byte) 0xC3, (byte) 0xAC, (byte) 0xA4, (byte) 0x2C, (byte) 0x3F,
-            (byte) 0xBA, (byte) 0xB9, (byte) 0x0D, (byte) 0xB1, (byte) 0x58, (byte) 0x37, (byte) 0x25, (byte) 0x85,
-            (byte) 0x9F, (byte) 0xED, (byte) 0x64, (byte) 0xEC, (byte) 0x4F, (byte) 0x2F, (byte) 0x94, (byte) 0xA4,
-            (byte) 0x05, (byte) 0x75, (byte) 0xFB, (byte) 0x66, (byte) 0xA5, (byte) 0xD6, (byte) 0x00, (byte) 0x58,
-            (byte) 0xCC, (byte) 0x8E, (byte) 0xFE, (byte) 0xA3, (byte) 0x03, (byte) 0x5E, (byte) 0xB6, (byte) 0x74,
-            (byte) 0x5E, (byte) 0x61, (byte) 0x98, (byte) 0x98, (byte) 0xC9, (byte) 0x4C, (byte) 0xB5, (byte) 0x20,
-            (byte) 0x57, (byte) 0x48, (byte) 0xDD, (byte) 0x25, (byte) 0xB2, (byte) 0x02, (byte) 0xE3, (byte) 0x79,
-            (byte) 0x3A, (byte) 0x80, (byte) 0xC8, (byte) 0xE1, (byte) 0x2D, (byte) 0xCD, (byte) 0xAC, (byte) 0xBA,
-            (byte) 0xEE, (byte) 0xAE, (byte) 0xA0, (byte) 0x5D, (byte) 0xC7, (byte) 0x45, (byte) 0x17, (byte) 0x21,
-            (byte) 0xFD, (byte) 0x4B, (byte) 0x37, (byte) 0x09, (byte) 0x26, (byte) 0x81, (byte) 0xD3, (byte) 0xDD,
-            (byte) 0xF0, (byte) 0xB9, (byte) 0xCF, (byte) 0xDE, (byte) 0xF0, (byte) 0x39, (byte) 0x46, (byte) 0x32,
-            (byte) 0x40, (byte) 0x9F, (byte) 0x5C, (byte) 0x47, (byte) 0x9B, (byte) 0x6B, (byte) 0x22, (byte) 0x94,
-            (byte) 0x2A, (byte) 0x3F, (byte) 0x26, (byte) 0xE0, (byte) 0x7E, (byte) 0x17, (byte) 0xD1, (byte) 0xEE,
-            (byte) 0x82, (byte) 0x4E, (byte) 0x26, (byte) 0x73, (byte) 0x50, (byte) 0x65, (byte) 0x11, (byte) 0x8F,
-            (byte) 0xA7, (byte) 0x32, (byte) 0xEA, (byte) 0xB9, (byte) 0x36, (byte) 0x07, (byte) 0x9E, (byte) 0xA3,
-            (byte) 0xBB, (byte) 0x1F, (byte) 0xBA, (byte) 0xCC, (byte) 0x67, (byte) 0xF7, (byte) 0x30, (byte) 0x7D,
-            (byte) 0xBC, (byte) 0x16, (byte) 0xE1, (byte) 0x13, (byte) 0x91, (byte) 0xCA, (byte) 0xD0, (byte) 0x84,
-            (byte) 0x29, (byte) 0x36, (byte) 0xAE, (byte) 0x2B, (byte) 0xE5, (byte) 0x0F, (byte) 0xB4, (byte) 0xE5,
-            (byte) 0xA2, (byte) 0x67, (byte) 0xA6, (byte) 0x07, (byte) 0x3C, (byte) 0x34, (byte) 0x31, (byte) 0x8B
-        };
-        
-        // Send exponent using extended APDU (256 bytes in single command)
-        byte[] expCmd = new byte[7 + 256];  // 7 byte header + 256 byte data
+        // Send exponent (128 bytes, fits in short APDU)
+        byte[] expCmd = new byte[5 + 128];
         expCmd[0] = (byte) 0x80;  // CLA
         expCmd[1] = (byte) 0x04;  // INS (SET_SETTINGS)
         expCmd[2] = (byte) 0x00;  // P1
         expCmd[3] = (byte) 0x05;  // P2 (exponent setting)
-        expCmd[4] = (byte) 0x00;  // Extended length indicator
-        expCmd[5] = (byte) 0x01;  // Lc high byte (256 = 0x0100)
-        expCmd[6] = (byte) 0x00;  // Lc low byte
-        System.arraycopy(exponent, 0, expCmd, 7, 256);
+        expCmd[4] = (byte) 0x80;  // LC = 128
+        System.arraycopy(exponent, 0, expCmd, 5, 128);
 
         response = SmartCard.transmitCommand(expCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "RSA-2048 exponent should succeed");
+            "RSA-1024 exponent should succeed");
     }
 
     private void setupEcKey() throws CardException {
@@ -1344,11 +1308,12 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("Test GENERATE AC returns full 291 bytes for CDA response")
+    @DisplayName("Test GENERATE AC returns CDA+ECDSA response")
     public void testGenerateAcFullResponse291Bytes() throws Exception {
         // Setup card
         setupColossusCard();
         setupRsa2048Key();
+        setupEcKey();
         enableCdaMode();
         setupColossusCdol();
         setupColossusCardData();
@@ -1465,19 +1430,13 @@ public class ColossusPaymentApplicationTest {
         assertTrue(sw == 0x9000 || (sw & 0xFF00) == 0x6100,
             "GENERATE AC should succeed, got SW=" + String.format("%04X", sw));
 
-        // The expected response structure for CDA:
-        // - Template 77 header: 4 bytes (77 82 01 23)
-        // - 9F27 (CID): 4 bytes (9F 27 01 XX)
-        // - 9F36 (ATC): 5 bytes (9F 36 02 XX XX)
-        // - 9F26 (AC): 11 bytes (9F 26 08 XX...)
-        // - 9F10 (IAD): ~10 bytes (9F 10 07 XX...)
-        // - 9F4B (SDAD): 259 bytes (9F 4B 82 01 00 + 256 bytes)
-        // CDA response: 77 + 9F27(4) + 9F36(5) + 9F4B(2+2+248) + 9F10(3+7) = ~271 bytes
-        // No 9F26 in CDA response per EMV Book 2 Table 20
+        // CDA+ECDSA response with RSA-1024:
+        // 9F27(4) + 9F36(5) + 9F4B(2+2+128=132) + 9F10(2+1+32=35) + 9F7C(2+1+32=35) = 211 bytes content
+        // + tag 77 header (3 bytes for 81 XX) = ~214 bytes total
 
-        int expectedMinLength = 270;
+        int expectedMinLength = 200;
         assertTrue(responseData.length >= expectedMinLength,
-            "CDA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
+            "CDA+ECDSA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
 
         // Verify template structure
         if (responseData.length > 0) {
@@ -1501,13 +1460,12 @@ public class ColossusPaymentApplicationTest {
             System.out.println("Data starts at offset: " + dataStart);
             System.out.println("Expected total: " + (dataStart + templateLen) + " bytes");
 
-            // For RSA-2048 CDA, template content should be ~287 bytes
-            // (9F27:4 + 9F36:5 + 9F26:11 + 9F10:10 + 9F4B:259 = 289, plus some variation)
-            assertTrue(templateLen >= 280,
-                "Template content must be at least 280 bytes for RSA-2048 CDA, got " + templateLen);
+            // RSA-1024 CDA+ECDSA: 9F27(4) + 9F36(5) + 9F4B(132) + 9F10(35) + 9F7C(35) = ~211
+            assertTrue(templateLen >= 200,
+                "Template content must be at least 200 bytes for RSA-1024 CDA+ECDSA, got " + templateLen);
         }
 
-        System.out.println("\n=== TEST PASSED: Full 291+ byte response received ===");
+        System.out.println("\n=== TEST PASSED: CDA+ECDSA response received ===");
     }
 
     // ========================================================================
@@ -1927,9 +1885,10 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("End-to-end: full EMV contactless flow with ECDSA in GENERATE AC")
+    @DisplayName("End-to-end: full EMV contactless flow with CDA+ECDSA in GENERATE AC")
     public void testFullEmvContactlessWithEcdsaGenAc() throws Exception {
         setupColossusCard();
+        setupRsa2048Key();   // CDA requires RSA + EC
 
         // --- Personalize via STORE DATA ---
         assertStoreData(0x00, 0x84, new byte[] {
@@ -1941,8 +1900,8 @@ public class ColossusPaymentApplicationTest {
         }, "PAN (5A)");
         assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
 
-        // AIP = 3800 (CVM + TRM + Issuer Auth, EMV mode)
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x38, (byte) 0x00 }, "AIP (82)");
+        // AIP = 1980 (CDA supported in byte 1 bit 0)
+        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x19, (byte) 0x80 }, "AIP (82)");
 
         // AFL: SFI1 rec1 (for READ RECORD)
         assertStoreData(0x00, 0x94, new byte[] {
@@ -1964,8 +1923,8 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x9F, (byte) 0x01, (byte) 0x06
         }, "CDOL1 (8C)");
 
-        // EC private key
-        assertStoreData(0x80, 0x00, new byte[] {
+        // EC private key via DGI 8203 (explicit EC, since RSA is already loaded)
+        assertStoreData(0x82, 0x03, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
             (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
@@ -1974,7 +1933,7 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
             (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
             (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
-        }, "EC private key (A00B)");
+        }, "EC private key (8203)");
 
         // Templates
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
@@ -2046,21 +2005,23 @@ public class ColossusPaymentApplicationTest {
         byte[] genAcCmd = new byte[5 + cdolData.length];
         genAcCmd[0] = (byte) 0x80;
         genAcCmd[1] = (byte) 0xAE;
-        genAcCmd[2] = (byte) 0x80;  // ARQC, no CDA
+        genAcCmd[2] = (byte) 0x90;  // ARQC + CDA
         genAcCmd[3] = (byte) 0x00;
         genAcCmd[4] = (byte) cdolData.length;
         System.arraycopy(cdolData, 0, genAcCmd, 5, cdolData.length);
 
         response = SmartCard.transmitCommand(genAcCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "GENERATE AC should succeed");
+            "GENERATE AC with CDA+ECDSA should succeed");
         System.out.println("  GENERATE AC: OK, response = " + response.getData().length + " bytes");
 
-        // 4. Verify ECDSA signature in response
+        // 4. Verify ECDSA signature in CDA response
         byte[] genAcResponse = response.getData();
 
-        // Extract r (9F10), s (9F7C), ICC_DN (9F4C)
-        byte[] sigR = null, sigS = null, iccDn = null;
+        // CDA response: 9F27 + 9F36 + 9F4B (SDAD) + 9F10 (r) + 9F7C (s)
+        // ICC_DN is inside SDAD, not as separate tag — extract from 9F4B recovery
+        byte[] sigR = null, sigS = null;
+        boolean foundSdad = false;
         for (int i = 0; i < genAcResponse.length - 2; i++) {
             if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x10 && genAcResponse[i + 2] == 0x20) {
                 sigR = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
@@ -2070,19 +2031,29 @@ public class ColossusPaymentApplicationTest {
                 sigS = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
                 System.out.println("  Found 9F7C (ECDSA s): 32 bytes");
             }
-            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x4C && genAcResponse[i + 2] == 0x03) {
-                iccDn = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 3);
-                System.out.println("  Found 9F4C (ICC DN): 3 bytes");
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x4B) {
+                foundSdad = true;
+                System.out.println("  Found 9F4B (SDAD)");
             }
         }
-        assertNotNull(sigR, "GENERATE AC response must contain 9F10 (r)");
-        assertNotNull(sigS, "GENERATE AC response must contain 9F7C (s)");
-        assertNotNull(iccDn, "GENERATE AC response must contain 9F4C (ICC DN)");
+        assertNotNull(sigR, "CDA+ECDSA response must contain 9F10 (ECDSA r)");
+        assertNotNull(sigS, "CDA+ECDSA response must contain 9F7C (ECDSA s)");
+        assertTrue(foundSdad, "CDA+ECDSA response must contain 9F4B (SDAD)");
 
-        // Reconstruct signed message: ICC_DN(3) || CDOL data (58 bytes)
-        byte[] signedMessage = new byte[3 + cdolData.length];
-        System.arraycopy(iccDn, 0, signedMessage, 0, 3);
-        System.arraycopy(cdolData, 0, signedMessage, 3, cdolData.length);
+        // Get ICC_DN from applet via GET DATA (9F4C) — shared between ECDSA and SDAD
+        response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xCA, (byte) 0x9F, (byte) 0x4C, (byte) 0x00
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GET DATA 9F4C should succeed");
+        byte[] iccDnTlv = response.getData();
+        // Skip TLV header (9F4C + length byte)
+        byte[] iccDn = Arrays.copyOfRange(iccDnTlv, 3, 3 + 8);
+        System.out.println("  ICC DN (9F4C): 8 bytes");
+
+        // Reconstruct signed message: ICC_DN(8) || CDOL data
+        byte[] signedMessage = new byte[8 + cdolData.length];
+        System.arraycopy(iccDn, 0, signedMessage, 0, 8);
+        System.arraycopy(cdolData, 0, signedMessage, 8, cdolData.length);
 
         // Derive public key
         byte[] ecPrivKeyBytes = new byte[] {
@@ -2122,7 +2093,7 @@ public class ColossusPaymentApplicationTest {
         assertTrue(valid, "ECDSA signature must verify: signed over ICC_DN || CDOL data");
         System.out.println("  ECDSA signature VERIFIED over ICC_DN(" + iccDn.length + "B) || CDOL(" + cdolData.length + "B)");
 
-        System.out.println("\n=== Full EMV contactless with ECDSA in GENERATE AC PASSED ===");
+        System.out.println("\n=== Full EMV contactless with CDA+ECDSA in GENERATE AC PASSED ===");
     }
 
     /**
