@@ -84,7 +84,7 @@ tags:
   Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
-  Form Factor Indicator: "DEADBEEF00DEADBEEF00"
+  Form Factor Indicator: "08400000"
   CTQ: "8000"
 
 templates:
