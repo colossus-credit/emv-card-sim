@@ -1,182 +1,175 @@
-# emv-card-sim
+![Build and test](https://github.com/mrautio/emv-card-simulator/workflows/Build%20and%20Test/badge.svg)
 
-JavaCard EMV card simulator for the [ColossusNet](https://colossus.credit) payment network. Produces ECDSA P-256 signatures over transaction data for on-chain verification, wrapped in a standard EMV contactless (C-2 kernel) flow with CDA.
+# emv-card-simulator
 
-## Prerequisites
+JavaCard implementation of an EMV card for payment terminal functional and security testing / fuzzing.
 
-- Java 11+ (`brew install openjdk@11`)
-- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- Smart card reader (e.g., Gemalto USB)
-- JCOP JavaCard (3.0.5+)
-- [gp.jar](https://github.com/martinpaljak/GlobalPlatformPro) in project root
+If you need a payment terminal simulator for testing, try [emvpt](https://github.com/mrautio/emvpt) project.
 
-## Quick Start
+## Building
 
-```bash
-# 1. Build CAP files
-./gradlew cap
+### Cloning project
 
-# 2. Install applets on card
-java -jar gp.jar --force --install build/card/pse.cap
-java -jar gp.jar --force --install build/card/ppse.cap
-java -jar gp.jar --force --install build/card/paymentapp.cap
-java -jar gp.jar --force --install build/card/paymentapp_contactless.cap
-
-# 3. Set up Python personalization tool
-cd personalize && uv venv --python 3.13 && uv pip install -e . && cd ..
-
-# 4. Personalize card
-uv run --project personalize python personalize/personalize.py \
-  -p personalize/profiles/default.yaml --reader Gemalto
-
-# 5. Run tests
-./gradlew test
+```sh
+git clone --recurse-submodules https://github.com/mrautio/emv-card-simulator.git
 ```
 
-## Architecture
+### Docker build
 
-### Applets
+If you don't want to install Java8/Gradle(>6), you may use Docker:
 
-| Applet | AID | Interface | Purpose |
-|--------|-----|-----------|---------|
-| PSE | `1PAY.SYS.DDF01` | Contact | Payment System Environment |
-| PPSE | `2PAY.SYS.DDF01` | Contactless | Proximity PSE |
-| RIX 0001 | `A0000009510001` | Contact | Contact payment (DDA + ECDSA) |
-| RIX 1010 | `A0000009511010` | Contactless | Contactless payment (C-2 CDA + ECDSA) |
-
-### Contactless Flow (C-2 Kernel, Full EMV + CDA)
-
-```
-SELECT PPSE  -->  PPSE FCI (AID, Kernel=C-2)
-SELECT AID   -->  FCI (PDOL, Label)
-GPO          -->  AIP + AFL          [ECDSA signs ATC || PDOL here]
-READ RECORD  -->  Mandatory tags + 9F6E (ECDSA s)
-READ RECORD  -->  RSA cert chain (CAPK -> Issuer -> ICC)
-GENERATE AC  -->  CID + ATC + SDAD + 9F10 (ECDSA r)
+```sh
+docker build -t emvcard-builder -f Dockerfile .
 ```
 
-### Dual Cryptography
+### Gradle build
 
-- **RSA-1024 CDA**: Standard EMV certificate chain verified by terminal. CAPK is RSA-1984 (index 0x92), Issuer/ICC keys are RSA-1024 (mixed hierarchy for NFC frame fit).
-- **ECDSA P-256**: Signs `ATC(2) || PDOL(58)` = 60 bytes at GPO time. `r` in tag 9F10 (GenAC response), `s` in tag 9F6E (READ RECORD). Verified on-chain via RIP-7212.
-
-### Key Hierarchy
-
-```
-CAPK (RSA-1984, 248 bytes) -- loaded on terminal, index 0x92
-  |
-  +-- Issuer Certificate (tag 90, 248 bytes) -- in READ RECORD
-  |     contains Issuer PK (RSA-1024, 128 bytes)
-  |
-  +-- ICC Certificate (tag 9F46, 128 bytes) -- in READ RECORD
-  |     contains ICC PK (RSA-1024, 128 bytes)
-  |
-  +-- SDAD (tag 9F4B, 128 bytes) -- in GENERATE AC response
-        signed by ICC private key
-
-EC P-256 key -- separate, stored in secure element
-  signs transaction data at GPO time
-```
-
-## Card Profile
-
-Default profile: `personalize/profiles/default.yaml`
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| RID | `A000000951` | ColossusNet |
-| BIN | `66907500` | Fixed PAN: `6690750012345676` |
-| AIP (contactless) | `1980` | CDA + CVM + TRM + EMV mode |
-| CTQ | `8000` | Online PIN when CVM needed |
-| AUC | `AB00` | Domestic only, ATM + non-ATM |
-| Service Code | `0701` | Closed loop (bilateral agreement) |
-| CAPK Index | `92` | RSA-1984 CAPK, RSA-1024 ICC |
-
-## Personalization
-
-```bash
-# Default profile (fixed PAN, existing keys)
-uv run --project personalize python personalize/personalize.py \
-  -p personalize/profiles/default.yaml --reader Gemalto
-
-# Generate fresh keys
-uv run --project personalize python personalize/personalize.py \
-  -p personalize/profiles/default.yaml --reader Gemalto --gen-keys
-
-# Custom PAN
-uv run --project personalize python personalize/personalize.py \
-  -p personalize/profiles/default.yaml --reader Gemalto --pan 6690750012345676
-
-# Dry run (print APDUs without sending)
-uv run --project personalize python personalize/personalize.py \
-  -p personalize/profiles/default.yaml --dry-run
-```
-
-## Uninstall / Reinstall
-
-```bash
-# Remove all applets
-java -jar gp.jar --delete A000000951000000 --force
-java -jar gp.jar --delete A000000951100000 --force
-java -jar gp.jar --delete 315041592E000000000000000000 --force
-java -jar gp.jar --delete 325041592E000000000000000000 --force
-
-# Reinstall
-java -jar gp.jar --force --install build/card/pse.cap
-java -jar gp.jar --force --install build/card/ppse.cap
-java -jar gp.jar --force --install build/card/paymentapp.cap
-java -jar gp.jar --force --install build/card/paymentapp_contactless.cap
-```
-
-## Testing
-
-```bash
-# Run all tests
-./gradlew test
-
-# Run specific test class
-./gradlew test --tests ColossusPaymentApplicationTest
-
-# Build CAP files only (no tests)
+```sh
 ./gradlew cap
 ```
 
-## ECDSA Signed Message Format
+### Building with custom AIDs
 
-The card signs 60 bytes at GPO time: `ATC(2) || PDOL(58)`
+By default, CAP files are built with the Colossus RID (`A000000951`). To build for a different RID (e.g., Visa `A000000003`):
 
-| Offset | Length | Tag | Field |
-|--------|--------|-----|-------|
-| 0 | 2 | 9F36 | ATC (pre-increment, N) |
-| 2 | 6 | 9F02 | Amount Authorised |
-| 8 | 6 | 9F03 | Amount Other |
-| 14 | 2 | 9F1A | Terminal Country Code |
-| 16 | 5 | 95 | Terminal Verification Results |
-| 21 | 2 | 5F2A | Transaction Currency Code |
-| 23 | 3 | 9A | Transaction Date |
-| 26 | 1 | 9C | Transaction Type |
-| 27 | 4 | 9F37 | Unpredictable Number |
-| 31 | 8 | 9F1C | Terminal Identification |
-| 39 | 15 | 9F16 | Merchant Identifier |
-| 54 | 6 | 9F01 | Acquirer Identifier |
-
-The GENERATE AC response contains ATC = N+1 (post-increment). The verifier subtracts 1 to reconstruct the signed message.
-
-## Project Structure
-
-```
-emv-card-sim/
-  src/main/java/emvcardsimulator/   # JavaCard applet source
-  src/test/java/emvcardsimulator/   # JUnit tests (jcardsim)
-  build/card/                        # Built CAP files
-  personalize/                       # Python personalization tool
-    emv_personalize/                 #   Python package
-    profiles/                        #   YAML card profiles
-    personalize.py                   #   CLI entry point
-  keys/                              # RSA/EC key hierarchies (gitignored)
-  gp.jar                             # GlobalPlatform tool
+```sh
+./gradlew cap \
+  -Ppaymentapp_cap_aid=A000000003000000 \
+  -Ppaymentapp_applet_aid=A0000000031010 \
+  -Ppaymentapp_contactless_cap_aid=A000000003100000 \
+  -Ppaymentapp_contactless_applet_aid=A0000000031020
 ```
 
-## Spec
+The applet AID is baked into the CAP file at build time. The `personalize.sh` script uses the RID from its config, so the CAP must be built with matching AIDs before personalization.
 
-See [ColossusNet Technical Specification](https://github.com/colossus-credit/colossusnet-spec) for the full protocol documentation.
+## Colossus Credit Card Network Support
+
+This simulator now includes full support for the **Colossus Credit Card Network** with CDA (Combined Dynamic Data Authentication):
+
+- **RID**: `A000000951`
+- **Contact AID**: `A0000009510001`, **Contactless AID**: `A0000009511010`
+- **BIN**: `66907500`
+- **Mixed RSA hierarchy**: CAPK RSA-1984, Issuer/ICC RSA-1024
+- **CDA + ECDSA P-256**: CDA for terminal ODA, ECDSA for on-chain verification
+- **Forced online transactions** (ARQC only)
+
+See the [ColossusNet Technical Specification](https://github.com/colossus-credit/colossusnet-spec) for full protocol documentation.
+
+## EMV PKI and Certificate Chain
+
+EMV uses a hierarchical PKI (Public Key Infrastructure) to authenticate cards. The ICC (card) public key is not stored directly - it's embedded in a signed certificate chain.
+
+### Certificate Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CAPK (CA Public Key)                         │
+│                    Root of Trust                                │
+│              Stored in terminal configuration                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ verifies
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Issuer Certificate (Tag 90)                        │
+│              Signed by CAPK private key                         │
+│              Contains: Issuer Public Key                        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ verifies
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               ICC Certificate (Tag 9F46)                        │
+│              Signed by Issuer private key                       │
+│              Contains: ICC Public Key                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ used for
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   SDAD / DDA Signature                          │
+│              Signed by ICC private key                          │
+│              Verified by terminal using ICC Public Key          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ICC Certificate Structure (Tag 9F46)
+
+The ICC certificate is a signed container that holds the public key:
+
+```
+┌─────────────────────────────────────────┐
+│ Header: 0x6A                            │
+│ Format: 0x04 (ICC certificate)          │
+│ PAN (Application PAN)                   │
+│ Expiry Date                             │
+│ Certificate Serial Number               │
+│ Hash Algorithm (01=SHA-1, 02=SHA-256)   │
+│ Public Key Algorithm                    │
+│ Public Key Length                       │
+│ Exponent Length                         │
+│ ICC Public Key (or leftmost portion)    │  ← Public key embedded here
+│ Padding (0xBB...)                       │
+│ Hash (20 or 32 bytes)                   │
+│ Trailer: 0xBC                           │
+└─────────────────────────────────────────┘
+        │
+        └── RSA-signed with Issuer Private Key
+```
+
+### Related EMV Tags
+
+| Tag | Name | Description |
+|-----|------|-------------|
+| `8F` | CA Public Key Index | Identifies which CAPK to use |
+| `90` | Issuer Public Key Certificate | Issuer cert signed by CAPK |
+| `92` | Issuer Public Key Remainder | Overflow bytes if key > cert space |
+| `9F32` | Issuer Public Key Exponent | Usually 03 or 010001 |
+| `9F46` | ICC Public Key Certificate | ICC cert signed by Issuer |
+| `9F47` | ICC Public Key Exponent | Usually 03 or 010001 |
+| `9F48` | ICC Public Key Remainder | Overflow bytes if key > cert space |
+| `9F4B` | Signed Dynamic Application Data | SDAD signed by ICC private key |
+
+### Public Key Recovery
+
+To recover the ICC public key, the terminal must:
+
+1. Look up **CAPK** using RID + CA Public Key Index (tag `8F`)
+2. Decrypt **Issuer Certificate** (tag `90`) using CAPK
+3. Extract Issuer public key, append **Issuer Remainder** (tag `92`) if present
+4. Decrypt **ICC Certificate** (tag `9F46`) using Issuer public key
+5. Extract ICC public key, append **ICC Remainder** (tag `9F48`) if present
+6. Use ICC public key to verify **SDAD** (tag `9F4B`) signatures
+
+### Quick Start - Colossus Card
+
+```bash
+# 1. Run tests
+./gradlew test
+
+# 2. Build and deploy all applets to card
+./gradlew deploy
+
+# 3. Personalize card with default profile
+./gradlew personalize
+
+# Custom reader or profile:
+./gradlew personalize -Preader=Identiv
+./gradlew personalize -Pprofile=personalize/profiles/mastercard-test.yaml
+```
+
+## Update dependencies
+
+Run the [GitHub Actions Workflow](https://github.com/mrautio/emv-card-simulator/actions/workflows/update-dependencies.yml).
+
+## Deploying to a SmartCard
+
+Requires a SmartCard reader and a JCOP JavaCard (3.0.5+).
+
+```sh
+# Deploy all applets (PSE, PPSE, contact, contactless)
+./gradlew deploy
+
+# Deploy and personalize in one step
+./gradlew personalize
+```

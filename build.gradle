@@ -358,15 +358,48 @@ task cap {
 task deployPse(type: Exec) {
     dependsOn downloadGp, cap
     group "JavaCard"
-    description "Deploy PaymentSystemEnvironment applet to JavaCard"
+    description "Deploy PSE applet to JavaCard"
 
     commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/pse.cap'
+}
+
+task deployPpse(type: Exec) {
+    dependsOn downloadGp, cap
+    group "JavaCard"
+    description "Deploy PPSE applet to JavaCard"
+
+    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/ppse.cap'
 }
 
 task deployPaymentApp(type: Exec) {
     dependsOn downloadGp, cap
     group "JavaCard"
-    description "Deploy payment application applet to JavaCard"
+    description "Deploy contact payment applet to JavaCard"
 
     commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/paymentapp.cap'
+}
+
+task deployPaymentAppContactless(type: Exec) {
+    dependsOn downloadGp, cap
+    group "JavaCard"
+    description "Deploy contactless payment applet to JavaCard"
+
+    commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/paymentapp_contactless.cap'
+}
+
+task deploy {
+    dependsOn deployPse, deployPpse, deployPaymentApp, deployPaymentAppContactless
+    group "JavaCard"
+    description "Build and deploy all applets to JavaCard"
+}
+
+task personalize(type: Exec) {
+    group "JavaCard"
+    description "Personalize card with default profile"
+
+    def reader = project.hasProperty('reader') ? project.reader : 'Gemalto'
+    def profile = project.hasProperty('profile') ? project.profile : 'personalize/profiles/default.yaml'
+
+    commandLine 'uv', 'run', '--project', 'personalize', 'python',
+        'personalize/personalize.py', '-p', profile, '--reader', reader
 }
