@@ -217,7 +217,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
 
         // Parse length (1 byte)
         short dgiDataLen = (short) (buf[dgiDataOffset] & 0x00FF);
-        dgiDataOffset += 1;
+        dgiDataOffset = (short) (dgiDataOffset + 1);
 
         switch (dgi) {
             case (short) 0xD001:  // Directory entry

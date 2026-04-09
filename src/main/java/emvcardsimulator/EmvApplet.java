@@ -404,19 +404,19 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         while (dataOffset < endOffset) {
             // Parse DGI (2 bytes)
             short dgi = Util.getShort(buf, dataOffset);
-            dataOffset += 2;
+            dataOffset = (short) (dataOffset + 2);
 
             // Parse length (1 or 3 bytes BER)
             short dgiDataLen;
             if ((buf[dataOffset] & 0xFF) == 0x81) {
                 dgiDataLen = (short) (buf[(short) (dataOffset + 1)] & 0x00FF);
-                dataOffset += 2;
+                dataOffset = (short) (dataOffset + 2);
             } else if ((buf[dataOffset] & 0xFF) == 0x82) {
                 dgiDataLen = Util.getShort(buf, (short) (dataOffset + 1));
-                dataOffset += 3;
+                dataOffset = (short) (dataOffset + 3);
             } else {
                 dgiDataLen = (short) (buf[dataOffset] & 0x00FF);
-                dataOffset += 1;
+                dataOffset = (short) (dataOffset + 1);
             }
 
             // Route this DGI

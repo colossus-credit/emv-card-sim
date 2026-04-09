@@ -987,7 +987,7 @@ public class PaymentApplication extends EmvApplet {
         if (acTag != null) {
             Util.arrayCopy(acTag.getData(), (short) 0, tmpBuffer, offset, (short) 8);
         }
-        offset += 8;
+        offset = (short) (offset + 8);
 
         // Transaction Data Hash Code (20 bytes)
         // Per EMV Book 2, this hash is over:
@@ -1149,7 +1149,7 @@ public class PaymentApplication extends EmvApplet {
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
         // DEBUG: Store the Transaction Data Hash output
         Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
-        offset += 20;
+        offset = (short) (offset + 20);
 
         // Trailer at end
         tmpBuffer[(short) (signedDataSize - 1)] = (byte) 0xBC;
