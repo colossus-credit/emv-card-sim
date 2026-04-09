@@ -400,6 +400,10 @@ task personalize(type: Exec) {
     def reader = project.hasProperty('reader') ? project.reader : 'Gemalto'
     def profile = project.hasProperty('profile') ? project.profile : 'personalize/profiles/default.yaml'
 
-    commandLine 'uv', 'run', '--project', 'personalize', 'python',
+    def uvBin = System.getenv('HOME') + '/.local/bin/uv'
+    if (!new File(uvBin).exists()) {
+        uvBin = 'uv'  // fallback to PATH
+    }
+    commandLine uvBin, 'run', '--project', 'personalize', 'python',
         'personalize/personalize.py', '-p', profile, '--reader', reader
 }

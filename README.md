@@ -6,23 +6,22 @@ JavaCard implementation of an EMV card for payment terminal functional and secur
 
 If you need a payment terminal simulator for testing, try [emvpt](https://github.com/mrautio/emvpt) project.
 
+## Prerequisites
+
+```bash
+# Java 11 (required for Gradle and JavaCard SDK)
+brew install openjdk@11
+export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/$(ls /opt/homebrew/Cellar/openjdk@11/)/libexec/openjdk.jdk/Contents/Home
+# Add to ~/.zshrc to make permanent
+
+# uv (required for Python personalization tool)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Smart card reader + JCOP JavaCard (3.0.5+)
+# gp.jar in project root (https://github.com/martinpaljak/GlobalPlatformPro)
+```
+
 ## Building
-
-### Cloning project
-
-```sh
-git clone --recurse-submodules https://github.com/mrautio/emv-card-simulator.git
-```
-
-### Docker build
-
-If you don't want to install Java8/Gradle(>6), you may use Docker:
-
-```sh
-docker build -t emvcard-builder -f Dockerfile .
-```
-
-### Gradle build
 
 ```sh
 ./gradlew cap
