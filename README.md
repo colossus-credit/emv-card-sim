@@ -9,10 +9,9 @@ If you need a payment terminal simulator for testing, try [emvpt](https://github
 ## Prerequisites
 
 ```bash
-# Java 11 (required for Gradle and JavaCard SDK)
-brew install openjdk@11
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/$(ls /opt/homebrew/Cellar/openjdk@11/)/libexec/openjdk.jdk/Contents/Home
-# Add to ~/.zshrc to make permanent
+# Java 11+ (required for Gradle and JavaCard SDK)
+brew install openjdk@17
+# Ensure JAVA_HOME is set in ~/.zshrc
 
 # uv (required for Python personalization tool)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -21,13 +20,27 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # gp.jar in project root (https://github.com/martinpaljak/GlobalPlatformPro)
 ```
 
-## Building
+## Quick Start
 
-```sh
+```bash
+# 1. Build CAP files
 ./gradlew cap
+
+# 2. Deploy all applets to card (PSE, PPSE, contact, contactless)
+./gradlew deploy
+
+# 3. Personalize card with default profile
+./gradlew personalize
+
+# Custom reader or profile:
+./gradlew personalize -Preader=Identiv
+./gradlew personalize -Pprofile=personalize/profiles/mastercard-test.yaml
+
+# 4. Run tests
+./gradlew test
 ```
 
-### Building with custom AIDs
+## Building with custom AIDs
 
 By default, CAP files are built with the Colossus RID (`A000000951`). To build for a different RID (e.g., Visa `A000000003`):
 
@@ -39,7 +52,7 @@ By default, CAP files are built with the Colossus RID (`A000000951`). To build f
   -Ppaymentapp_contactless_applet_aid=A0000000031020
 ```
 
-The applet AID is baked into the CAP file at build time. The `personalize.sh` script uses the RID from its config, so the CAP must be built with matching AIDs before personalization.
+The applet AID is baked into the CAP file at build time.
 
 ## Colossus Credit Card Network Support
 
@@ -140,35 +153,3 @@ To recover the ICC public key, the terminal must:
 5. Extract ICC public key, append **ICC Remainder** (tag `9F48`) if present
 6. Use ICC public key to verify **SDAD** (tag `9F4B`) signatures
 
-### Quick Start - Colossus Card
-
-```bash
-# 1. Run tests
-./gradlew test
-
-# 2. Build and deploy all applets to card
-./gradlew deploy
-
-# 3. Personalize card with default profile
-./gradlew personalize
-
-# Custom reader or profile:
-./gradlew personalize -Preader=Identiv
-./gradlew personalize -Pprofile=personalize/profiles/mastercard-test.yaml
-```
-
-## Update dependencies
-
-Run the [GitHub Actions Workflow](https://github.com/mrautio/emv-card-simulator/actions/workflows/update-dependencies.yml).
-
-## Deploying to a SmartCard
-
-Requires a SmartCard reader and a JCOP JavaCard (3.0.5+).
-
-```sh
-# Deploy all applets (PSE, PPSE, contact, contactless)
-./gradlew deploy
-
-# Deploy and personalize in one step
-./gradlew personalize
-```
