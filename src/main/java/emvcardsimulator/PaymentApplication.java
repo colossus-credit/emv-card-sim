@@ -643,13 +643,11 @@ public class PaymentApplication extends EmvApplet {
         short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
-        // CDA path: generate shared ICC_DN, then ECDSA (r→9F10, s→9F6E),
-        // then RSA SDAD (TDH includes ECDSA r as 9F10, reuses same ICC_DN)
+        // CDA path: ECDSA already done at GPO (r in 9F10, s in 9F6E, ICC_DN in 9F4C).
+        // Just build SDAD — its TDH includes 9F10 (ECDSA r). ICC_DN reused from 9F4C.
         if (shouldPerformCda && canPerformCda) {
-            generateIccDynamicNumber();
-            generateEcdsaForCda(buf, cdolLen);
             generateSdad(buf, cid, cdolLen);
-            // CDA response: 9F27 + 9F36 + 9F4B + 9F10 (r) + 9F6E (s)
+            // CDA response: 9F27 + 9F36 + 9F4B + 9F10 (no 9F6E — delivered via READ RECORD)
             sendGenerateAcResponseCda(apdu, buf);
         } else if (cdaRequested && !canPerformCda) {
             // CDA requested but RSA or EC key not available
@@ -684,8 +682,7 @@ public class PaymentApplication extends EmvApplet {
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
         if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
 
-        // 9F6E (ECDSA s) intentionally omitted from CDA response — terminal
-        // may reject unknown-length tags during ParseAndStoreCardResponse
+        // 9F6E (ECDSA s) omitted — terminal rejects non-standard tag lengths
 
         // Store as tag 77 and use existing sendResponse which handles chunking
         EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
@@ -811,6 +808,32 @@ public class PaymentApplication extends EmvApplet {
         derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
 
         // Store r in 9F10 (IAD), s in 9F6E
+        EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
+        EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
+    }
+
+    /**
+     * Generate ECDSA P-256 signature at GPO time over PDOL data.
+     * Signs: ICC_DN(8) || storedPdolData. r stored in 9F10, s in 9F6E.
+     * 9F6E is delivered to terminal via READ RECORD (C-2 spec allows 9F6E in tag 70).
+     * 9F10 is returned at GENERATE AC time in the CDA response.
+     */
+    private void generateEcdsaAtGpo() {
+        EmvTag iccDnTag = EmvTag.findTag((short) 0x9F4C);
+        if (iccDnTag == null) return;
+
+        byte[] iccDn = iccDnTag.getData();
+        short iccDnLen = iccDnTag.getLength();
+
+        // Sign: ICC_DN(8) || PDOL data
+        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
+        ecdsaSignature.update(iccDn, (short) 0, iccDnLen);
+        short sigLen = ecdsaSignature.sign(storedPdolData, (short) 0, storedPdolLength, ecdsaSigBuffer, (short) 0);
+
+        // Strip DER → raw r||s (64 bytes)
+        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
+
+        // Store r in 9F10 (IAD — returned at GenAC), s in 9F6E (read via READ RECORD)
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
         EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
     }
@@ -977,9 +1000,9 @@ public class PaymentApplication extends EmvApplet {
         debugHashInputLength = 0;
 
         // 1. Include PDOL data first (stored from GPO)
-        // Use the defined PDOL length (33 bytes for this card config), not the received length
-        // PDOL: 9F66(4)+9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4) = 33
-        short pdolDefinedLength = 33;
+        // Use the defined PDOL length, not the received length
+        // PDOL: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)+9F1C(8)+9F16(15)+9F01(6) = 58
+        short pdolDefinedLength = 58;
         if (storedPdolLength > 0) {
             short pdolHashLen = (storedPdolLength < pdolDefinedLength) ? storedPdolLength : pdolDefinedLength;
             shaMessageDigest.update(storedPdolData, (short) 0, pdolHashLen);
@@ -1286,6 +1309,14 @@ public class PaymentApplication extends EmvApplet {
             storedPdolLength = pdolLen;
         } else {
             storedPdolLength = 0;
+        }
+
+        // ECDSA signing at GPO time: sign over PDOL data (includes terminal/merchant ID)
+        // r→9F10, s→9F6E. Terminal reads 9F6E in READ RECORD (tag 70, per C-2 A.1.165).
+        // 9F10 is returned at GENERATE AC time in the CDA response.
+        if (ecPrivateKeyLoaded && storedPdolLength > 0) {
+            generateIccDynamicNumber();
+            generateEcdsaAtGpo();
         }
 
         // Full EMV mode for both contact and contactless:

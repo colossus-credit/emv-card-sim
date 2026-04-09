@@ -104,7 +104,6 @@ contactless:
     PDOL:
       type: dol
       value:
-        Terminal Transaction Qualifiers: 4
         Amount Authorised: 6
         Amount Other: 6
         Terminal Country Code: 2
@@ -113,6 +112,9 @@ contactless:
         Transaction Date: 3
         Transaction Type: 1
         Unpredictable Number: 4
+        Terminal Identification: 8
+        Merchant Identifier: 15
+        Acquirer Identifier: 6
 
 records:
   - sfi: 1
@@ -122,7 +124,7 @@ records:
       - record: 2
         tags: ["5F20", "5F25", "8D", "8E", "9F0D", "9F0E", "9F0F", "9F4A"]
       - record: 3
-        tags: ["5F30", "9F08", "9F42", "9F44", "9F49"]
+        tags: ["5F30", "9F08", "9F42", "9F44", "9F49", "9F6E"]
   - sfi: 2
     records:
       - record: 1
