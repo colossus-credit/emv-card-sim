@@ -9,9 +9,10 @@ If you need a payment terminal simulator for testing, try [emvpt](https://github
 ## Prerequisites
 
 ```bash
-# Java 11+ (required for Gradle and JavaCard SDK)
-brew install openjdk@17
-# Ensure JAVA_HOME is set in ~/.zshrc
+# Java 11 (required for Gradle and JavaCard SDK)
+brew install openjdk@11
+export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/$(ls /opt/homebrew/Cellar/openjdk@11/)/libexec/openjdk.jdk/Contents/Home
+# Add the export to ~/.zshrc to make permanent
 
 # uv (required for Python personalization tool)
 curl -LsSf https://astral.sh/uv/install.sh | sh
