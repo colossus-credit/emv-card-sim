@@ -1,0 +1,6 @@
+
+# Python build artifacts
+__pycache__/
+*.egg-info/
+*.pyc
+uv.lock

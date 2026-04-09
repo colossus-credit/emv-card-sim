@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: emv-personalize
-Version: 0.1.0
-Summary: Python personalization tool for emv-card-sim JavaCard applet
-Requires-Python: >=3.10
-Requires-Dist: pyscard>=2.0.0
-Requires-Dist: cryptography>=41.0.0
-Requires-Dist: pyyaml>=6.0
