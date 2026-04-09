@@ -17,7 +17,7 @@ kernel_identifier: "02"
 keys:
   capk_index: "92"
   key_size: 1024      # ICC/Issuer RSA-1024, CAPK RSA-1984 (mixed hierarchy)
-  keys_dir: ../keys/capk_1984_mixed   # CAPK 92 (RSA-1984) in capk.xml, ICC/SDAD RSA-1024
+  keys_dir: ../../keys/capk_1984_mixed   # CAPK 92 (RSA-1984) in capk.xml, ICC/SDAD RSA-1024
 
 tags:
   # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---

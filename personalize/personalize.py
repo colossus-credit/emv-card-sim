@@ -168,6 +168,10 @@ Examples:
         profile["application_label"] = args.label
 
     keys_dir = args.keys_dir or profile.get("keys", {}).get("keys_dir")
+    # Resolve keys_dir relative to profile file, not CWD
+    if keys_dir and not os.path.isabs(keys_dir):
+        profile_dir = os.path.dirname(os.path.abspath(args.profile))
+        keys_dir = os.path.normpath(os.path.join(profile_dir, keys_dir))
 
     if args.dry_run:
         transport = DryRunTransport(verbose=True)

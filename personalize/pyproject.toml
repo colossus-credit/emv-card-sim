@@ -10,7 +10,10 @@ dependencies = [
 ]
 
 [project.scripts]
-personalize = "personalize:main"
+emv-personalize = "personalize:main"
+
+[tool.setuptools]
+packages = ["emv_personalize"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

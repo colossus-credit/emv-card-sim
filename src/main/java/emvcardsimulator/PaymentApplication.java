@@ -813,21 +813,19 @@ public class PaymentApplication extends EmvApplet {
     }
 
     /**
-     * Generate ECDSA P-256 signature at GPO time over PDOL data.
-     * Signs: ICC_DN(8) || storedPdolData. r stored in 9F10, s in 9F6E.
-     * 9F6E is delivered to terminal via READ RECORD (C-2 spec allows 9F6E in tag 70).
-     * 9F10 is returned at GENERATE AC time in the CDA response.
+     * Generate ECDSA P-256 signature at GPO time over ATC || PDOL data.
+     * Signs: ATC(2) || storedPdolData(58) = 60 bytes.
+     * ATC is pre-increment (N). GenAC will increment to N+1. Verifier subtracts 1.
+     * r stored in 9F10 (returned at GenAC), s in 9F6E (delivered via READ RECORD).
      */
     private void generateEcdsaAtGpo() {
-        EmvTag iccDnTag = EmvTag.findTag((short) 0x9F4C);
-        if (iccDnTag == null) return;
+        // Get current ATC (pre-increment value)
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag == null) return;
 
-        byte[] iccDn = iccDnTag.getData();
-        short iccDnLen = iccDnTag.getLength();
-
-        // Sign: ICC_DN(8) || PDOL data
+        // Sign: ATC(2) || PDOL data(58)
         ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(iccDn, (short) 0, iccDnLen);
+        ecdsaSignature.update(atcTag.getData(), (short) 0, atcTag.getLength());
         short sigLen = ecdsaSignature.sign(storedPdolData, (short) 0, storedPdolLength, ecdsaSigBuffer, (short) 0);
 
         // Strip DER → raw r||s (64 bytes)
@@ -1311,11 +1309,12 @@ public class PaymentApplication extends EmvApplet {
             storedPdolLength = 0;
         }
 
-        // ECDSA signing at GPO time: sign over PDOL data (includes terminal/merchant ID)
+        // ECDSA signing at GPO time: sign ATC || PDOL data
+        // ATC provides transaction sequencing, PDOL includes terminal/merchant/acquirer ID.
         // r→9F10, s→9F6E. Terminal reads 9F6E in READ RECORD (tag 70, per C-2 A.1.165).
         // 9F10 is returned at GENERATE AC time in the CDA response.
+        // Note: ATC here is pre-increment (N). GenAC increments to N+1. Verifier subtracts 1.
         if (ecPrivateKeyLoaded && storedPdolLength > 0) {
-            generateIccDynamicNumber();
             generateEcdsaAtGpo();
         }
 
