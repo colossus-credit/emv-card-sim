@@ -1430,13 +1430,14 @@ public class ColossusPaymentApplicationTest {
         assertTrue(sw == 0x9000 || (sw & 0xFF00) == 0x6100,
             "GENERATE AC should succeed, got SW=" + String.format("%04X", sw));
 
-        // CDA+ECDSA response with RSA-1024:
-        // 9F27(4) + 9F36(5) + 9F4B(2+2+128=132) + 9F10(2+1+32=35) + 9F6E(2+1+32=35) = 211 bytes content
-        // + tag 77 header (3 bytes for 81 XX) = ~214 bytes total
+        // CDA response with RSA-1024 (ECDSA now at GPO, not in GenAC response):
+        // 9F27(4) + 9F36(5) + 9F4B(2+2+128=132) + 9F10(2+1+7=10) = 151 bytes content
+        // + tag 77 header (3 bytes for 81 XX) = ~154 bytes total
+        // Note: 9F10 is 7-byte IAD unless GPO was called first (then 32-byte ECDSA r)
 
-        int expectedMinLength = 200;
+        int expectedMinLength = 140;
         assertTrue(responseData.length >= expectedMinLength,
-            "CDA+ECDSA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
+            "CDA response must be at least " + expectedMinLength + " bytes, got " + responseData.length);
 
         // Verify template structure
         if (responseData.length > 0) {
@@ -1460,12 +1461,12 @@ public class ColossusPaymentApplicationTest {
             System.out.println("Data starts at offset: " + dataStart);
             System.out.println("Expected total: " + (dataStart + templateLen) + " bytes");
 
-            // RSA-1024 CDA+ECDSA: 9F27(4) + 9F36(5) + 9F4B(132) + 9F10(35) + 9F6E(35) = ~211
-            assertTrue(templateLen >= 200,
-                "Template content must be at least 200 bytes for RSA-1024 CDA+ECDSA, got " + templateLen);
+            // RSA-1024 CDA: 9F27(4) + 9F36(5) + 9F4B(132) + 9F10(10) = ~151
+            assertTrue(templateLen >= 140,
+                "Template content must be at least 140 bytes for RSA-1024 CDA, got " + templateLen);
         }
 
-        System.out.println("\n=== TEST PASSED: CDA+ECDSA response received ===");
+        System.out.println("\n=== TEST PASSED: CDA response received (ECDSA at GPO) ===");
     }
 
     // ========================================================================
@@ -1964,13 +1965,47 @@ public class ColossusPaymentApplicationTest {
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
         System.out.println("  SELECT: OK");
 
-        // 2. GPO (empty PDOL — full EMV mode returns AIP+AFL, not qVSDC all-in-one)
-        response = SmartCard.transmitCommand(new byte[] {
-            (byte) 0x80, (byte) 0xA8, (byte) 0x00, (byte) 0x00,
-            (byte) 0x02, (byte) 0x83, (byte) 0x00
-        });
+        // 2. GPO with 58-byte PDOL data (triggers ECDSA signing at GPO time)
+        // Same data as CDOL1: Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6)
+        byte[] pdolData = new byte[] {
+            // Amount Authorised
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x10, (byte) 0x00,
+            // Amount Other
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            // Terminal Country Code (USA)
+            (byte) 0x08, (byte) 0x40,
+            // Terminal Verification Results
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00,
+            // Currency Code (USD)
+            (byte) 0x08, (byte) 0x40,
+            // Transaction Date
+            (byte) 0x26, (byte) 0x04, (byte) 0x03,
+            // Transaction Type
+            (byte) 0x00,
+            // Unpredictable Number
+            (byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF,
+            // Terminal ID
+            (byte) 0x54, (byte) 0x45, (byte) 0x52, (byte) 0x4D,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // Merchant ID
+            (byte) 0x4D, (byte) 0x45, (byte) 0x52, (byte) 0x43, (byte) 0x48,
+            (byte) 0x41, (byte) 0x4E, (byte) 0x54, (byte) 0x30, (byte) 0x30,
+            (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x30, (byte) 0x31,
+            // Acquirer ID
+            (byte) 0x00, (byte) 0x00, (byte) 0x01, (byte) 0x23, (byte) 0x45, (byte) 0x67
+        };
+        byte[] gpoCmd = new byte[5 + 2 + pdolData.length]; // CLA INS P1 P2 LC + tag 83 + len + data
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[2] = (byte) 0x00;
+        gpoCmd[3] = (byte) 0x00;
+        gpoCmd[4] = (byte) (2 + pdolData.length); // LC = tag(1) + len(1) + data
+        gpoCmd[5] = (byte) 0x83; // Command template tag
+        gpoCmd[6] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        response = SmartCard.transmitCommand(gpoCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
-        System.out.println("  GPO: OK, response = " + response.getData().length + " bytes (AIP+AFL)");
+        System.out.println("  GPO: OK, ECDSA signed ATC||PDOL at GPO time");
 
         // 3. GENERATE AC with CDOL data (58 bytes matching CDOL1)
         // Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6)
@@ -2018,42 +2053,52 @@ public class ColossusPaymentApplicationTest {
         // 4. Verify ECDSA signature in CDA response
         byte[] genAcResponse = response.getData();
 
-        // CDA response: 9F27 + 9F36 + 9F4B (SDAD) + 9F10 (r) + 9F6E (s)
-        // ICC_DN is inside SDAD, not as separate tag — extract from 9F4B recovery
-        byte[] sigR = null, sigS = null;
+        // CDA response: 9F27 + 9F36 + 9F4B (SDAD) + 9F10 (ECDSA r from GPO)
+        // 9F6E (ECDSA s) is NOT in GenAC response — delivered via READ RECORD
+        byte[] sigR = null;
         boolean foundSdad = false;
         for (int i = 0; i < genAcResponse.length - 2; i++) {
             if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x10 && genAcResponse[i + 2] == 0x20) {
                 sigR = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
                 System.out.println("  Found 9F10 (ECDSA r): 32 bytes");
             }
-            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x6E && genAcResponse[i + 2] == 0x20) {
-                sigS = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 32);
-                System.out.println("  Found 9F6E (ECDSA s): 32 bytes");
-            }
             if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x4B) {
                 foundSdad = true;
                 System.out.println("  Found 9F4B (SDAD)");
             }
         }
-        assertNotNull(sigR, "CDA+ECDSA response must contain 9F10 (ECDSA r)");
-        assertNotNull(sigS, "CDA+ECDSA response must contain 9F6E (ECDSA s)");
-        assertTrue(foundSdad, "CDA+ECDSA response must contain 9F4B (SDAD)");
+        assertNotNull(sigR, "CDA response must contain 9F10 (ECDSA r from GPO)");
+        assertTrue(foundSdad, "CDA response must contain 9F4B (SDAD)");
 
-        // Get ICC_DN from applet via GET DATA (9F4C) — shared between ECDSA and SDAD
+        // Get ECDSA s from 9F6E via GET DATA (set at GPO time)
         response = SmartCard.transmitCommand(new byte[] {
-            (byte) 0x80, (byte) 0xCA, (byte) 0x9F, (byte) 0x4C, (byte) 0x00
+            (byte) 0x80, (byte) 0xCA, (byte) 0x9F, (byte) 0x6E, (byte) 0x00
         });
-        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GET DATA 9F4C should succeed");
-        byte[] iccDnTlv = response.getData();
-        // Skip TLV header (9F4C + length byte)
-        byte[] iccDn = Arrays.copyOfRange(iccDnTlv, 3, 3 + 8);
-        System.out.println("  ICC DN (9F4C): 8 bytes");
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GET DATA 9F6E should succeed");
+        byte[] sigSTlv = response.getData();
+        byte[] sigS = Arrays.copyOfRange(sigSTlv, 3, 3 + 32);
+        System.out.println("  Found 9F6E (ECDSA s) via GET DATA: 32 bytes");
 
-        // Reconstruct signed message: ICC_DN(8) || CDOL data
-        byte[] signedMessage = new byte[8 + cdolData.length];
-        System.arraycopy(iccDn, 0, signedMessage, 0, 8);
-        System.arraycopy(cdolData, 0, signedMessage, 8, cdolData.length);
+        // Get ATC pre-increment value: GenAC ATC is N+1, ECDSA signed over N
+        // Read ATC from GenAC response (9F36)
+        byte[] atcBytes = null;
+        for (int i = 0; i < genAcResponse.length - 2; i++) {
+            if (genAcResponse[i] == (byte) 0x9F && genAcResponse[i + 1] == (byte) 0x36 && genAcResponse[i + 2] == 0x02) {
+                atcBytes = Arrays.copyOfRange(genAcResponse, i + 3, i + 3 + 2);
+                break;
+            }
+        }
+        assertNotNull(atcBytes, "GenAC response must contain ATC (9F36)");
+        // Pre-increment ATC = GenAC ATC - 1
+        int atcValue = ((atcBytes[0] & 0xFF) << 8) | (atcBytes[1] & 0xFF);
+        int preAtc = atcValue - 1;
+        byte[] preAtcBytes = new byte[] { (byte) ((preAtc >> 8) & 0xFF), (byte) (preAtc & 0xFF) };
+        System.out.println("  ATC in GenAC: " + atcValue + ", pre-increment (signed): " + preAtc);
+
+        // Reconstruct signed message: ATC_pre(2) || PDOL data(58)
+        byte[] signedMessage = new byte[2 + pdolData.length];
+        System.arraycopy(preAtcBytes, 0, signedMessage, 0, 2);
+        System.arraycopy(pdolData, 0, signedMessage, 2, pdolData.length);
 
         // Derive public key
         byte[] ecPrivKeyBytes = new byte[] {
@@ -2090,10 +2135,10 @@ public class ColossusPaymentApplicationTest {
         verifier.initVerify(pubKey);
         verifier.update(signedMessage);
         boolean valid = verifier.verify(derSig);
-        assertTrue(valid, "ECDSA signature must verify: signed over ICC_DN || CDOL data");
-        System.out.println("  ECDSA signature VERIFIED over ICC_DN(" + iccDn.length + "B) || CDOL(" + cdolData.length + "B)");
+        assertTrue(valid, "ECDSA signature must verify: signed over ATC || PDOL data");
+        System.out.println("  ECDSA signature VERIFIED over ATC(" + preAtcBytes.length + "B) || PDOL(" + pdolData.length + "B)");
 
-        System.out.println("\n=== Full EMV contactless with CDA+ECDSA in GENERATE AC PASSED ===");
+        System.out.println("\n=== Full EMV contactless with ECDSA at GPO + CDA at GenAC PASSED ===");
     }
 
     /**
