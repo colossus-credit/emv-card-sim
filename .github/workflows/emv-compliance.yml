@@ -17,6 +17,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.label.name == 'emv-compliance'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -40,122 +41,94 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: "--model claude-sonnet-4-6"
           use_sticky_comment: true
+          show_full_output: true
           prompt: |
-            You are auditing a pull request to an EMV JavaCard applet simulator
-            against the official EMV specifications.
+            You are auditing an EMV JavaCard applet PR against the EMV specs.
+            Your scope is the DIFF plus the CHANGED FILES only. You may read
+            files that appear in the diff to resolve references (constants,
+            method calls, tag definitions). You may NOT read unchanged files,
+            browse the codebase, or explore outside the diff.
 
-            EMV spec PDFs are at .emv-specs/. Use pdftotext to search them:
+            ## Budget
+            Stay under 15 minutes of wall-clock work. If you run out of time,
+            post what you have.
+
+            ## Spec search
+            EMV spec PDFs are at .emv-specs/. Search ONE spec at a time with
+            a targeted keyword. Never loop over all PDFs.
             ```bash
-            # Search a specific spec
-            pdftotext .emv-specs/EMV*Book_3*.pdf - | grep -i -A 10 -B 2 "keyword"
-
-            # Search all specs
-            for f in .emv-specs/*.pdf; do echo "=== $f ==="; pdftotext "$f" - | grep -i -A 5 -B 2 "keyword" | head -50; done
+            pdftotext .emv-specs/EMV*Book_3*.pdf - | grep -i -A 8 -B 1 "keyword" | head -60
             ```
+            Spec index (pick the right one — do not search all of them):
+            - Book 1: ICC-Terminal interface, APDU structure, status words
+            - Book 2: Security, CDA/DDA/SDA, certificates, cryptograms
+            - Book 3: Application flow, tags, CVM, transaction processing
+            - C-3: Visa contactless / qVSDC / MSD
 
-            Spec index:
-            - Book 1 (EMV*Book_1*): ICC-Terminal interface, ATR, APDU structure
-            - Book 2 (EMV*Book_2*): Security, CDA/DDA/SDA, certificates, ARQC/TC/AAC
-            - Book 3 (EMV*Book_3*): Application flow, tags, DOL, transaction processing, CVM
-            - Book 4 (EMV*Book_4*): Cardholder interfaces
-            - C-3 (C-3*): Visa contactless / payWave / VCPS / qVSDC / MSD
+            ## Step 1: Read the diff
+            Run `git diff origin/master...HEAD`. That is your primary input.
+            Use `git diff --stat` first to see which files changed.
 
-            ## Step 1: Read the diff and changed files
+            ## Step 2: Extract spec-relevant elements from the diff
+            Scan the diff hunks for these elements only:
+            - EMV tag references (e.g. 9F27, 5A, 82, 8C)
+            - APDU status words (0x9000, 0x6A88, 0x6300, etc.)
+            - Command handlers (SELECT, GPO, READ RECORD, GENERATE AC, VERIFY PIN, DDA, CDA)
+            - AIP, AFL, CDOL, CVM List byte sequences
+            - Certificate-chain fields (CA index, Issuer cert, ICC cert)
+            - CID values (AAC/TC/ARQC)
 
-            Run `git diff origin/master...HEAD` to identify every EMV-relevant change.
-            Then read the FULL source of each changed file so you understand the
-            surrounding context (class structure, related methods, constants, imports).
+            Ignore: formatting, refactors, comments, test-only code, and
+            simulator test commands (CLA=0x80XX).
 
-            Also read these key files for cross-cutting context even if they weren't changed:
-            - src/main/java/emvcardsimulator/PaymentApplication.java (transaction flow)
-            - src/main/java/emvcardsimulator/EmvApplet.java (command dispatch)
-            - src/main/java/emvcardsimulator/EmvTag.java (tag storage)
-            - src/main/java/emvcardsimulator/ReadRecord.java (Track 2 equivalent data)
-            - src/main/java/emvcardsimulator/TagTemplate.java (response template builder)
-            - src/main/java/emvcardsimulator/PaymentSystemEnvironment.java (PSE/PPSE applet)
-            - src/test/java/config/colossus_card_setup_apdus.yaml (card personalization spec)
-            - personalize-colossus-card.sh (card programming script)
+            Pick AT MOST 5 elements worth auditing. If the diff has none,
+            post "No spec-relevant changes in this PR" and stop.
 
-            Understanding the full applet matters — a change to one command handler
-            can violate spec requirements enforced elsewhere in the code.
+            ## Step 3: Check each element against the spec
+            For each element:
+            1. If the diff line references a constant or method defined in a
+               changed file, read that file to resolve the reference. Only
+               read changed files — never unchanged ones.
+            2. Run ONE targeted pdftotext search against the right spec.
+            3. Decide PASS or FLAG based on the resolved diff line plus the
+               search result. Mark UNCERTAIN only if even the changed files
+               don't give you enough to decide.
 
-            ## Step 2: Run targeted spec checks
+            Which spec to search:
+            - Tag format/length/encoding → Book 3
+            - Status words → Book 1 or Book 3
+            - Command P1/P2/sequence → Book 3
+            - PIN / CVM rules → Book 3
+            - Signed data, certificates, cryptograms → Book 2
+            - Contactless kernel behavior → C-3
 
-            For each change, perform the applicable checks below by searching the specs.
+            Target: one spec search per element. Two maximum.
 
-            ### Tag / TLV validation
-            For any EMV tag referenced in the diff (e.g. 9F27, 9F26, 9F4B, 5A):
-            - Search Book 3 for the tag definition
-            - Verify the tag number, name, format (b/n/cn/an), and length match the spec
-            - Verify encoding (e.g. BCD for PAN, binary for CID)
-            - Check template nesting (tag must appear inside the correct parent: 77, 70, 80)
-
-            ### APDU response codes
-            For any SW1/SW2 status words in the diff (e.g. 0x9000, 0x6A88):
-            - Search Book 1 and Book 3 for the status word definition
-            - Verify the code is used for the correct error condition
-            - Check that the command (INS byte) returns spec-valid status words
-
-            ### Transaction flow compliance
-            If the diff touches command handlers (SELECT, GPO, READ RECORD, GENERATE AC, etc.):
-            - Search Book 3 for the command specification
-            - Verify P1/P2 handling matches the spec
-            - Verify the command sequence constraints are respected
-            - Check response template format (Format 1 tag 80 vs Format 2 tag 77)
-
-            ### CVM processing
-            If the diff touches PIN verification or cardholder verification:
-            - Search Book 3 for CVM List processing rules
-            - Verify online PIN (P2=80) vs offline plaintext PIN (P2=88) handling
-            - Check PIN Try Counter behavior and lockout logic
-
-            ### Cryptogram and authentication
-            If the diff touches DDA, CDA, or GENERATE AC:
-            - Search Book 2 for the signing/verification procedure
-            - Verify the signed data format (header, padding, hash input)
-            - Check CID byte values: AAC=00, TC=40, ARQC=80
-            - Verify ATC increment behavior
-
-            ### Card personalization data
-            If the diff touches YAML card specs, personalization scripts, or SET EMV TAG commands:
-            - For each tag being set, search Book 3 for the tag definition
-            - Verify tag format matches spec (n=numeric/BCD, cn=compressed numeric, b=binary, an=alphanumeric)
-            - Verify tag length is within spec-defined bounds
-            - Verify tag values are valid (e.g. currency codes per ISO 4217, country codes per ISO 3166)
-            - Check AIP byte encoding against Book 3 Table 44 (bit meanings for SDA/DDA/CDA/CVM/TRM)
-            - Check AFL structure: each 4-byte entry must have valid SFI, record range, and offline auth count
-            - Check CDOL1/CDOL2 structure: each tag-length pair must reference a valid terminal tag
-            - Check CVM List: verify amount fields and CVM rule encoding against Book 3 §10.5
-            - Check certificate chain: CA index, Issuer cert, ICC cert, and exponents must be consistent
-            - Check TAC/IAC values against Book 3 TVR bit definitions
-
-            ## Step 3: Write the report
-
-            Output a markdown compliance report in this format:
+            ## Step 4: Write the report
+            Post as a PR comment in this format:
 
             ## EMV Spec Compliance Report
 
-            ### Changes Reviewed
-            - List each changed file and what EMV logic it touches
+            ### Scope
+            - One-line summary: what diff elements you checked, what you skipped
 
             ### Findings
+            For each element (up to 5), use this exact format:
 
-            For each spec-relevant finding, use this format:
-
-            #### [PASS|FLAG] Short title
-            - **File**: path/to/file.java:L123
+            #### [PASS|FLAG|UNCERTAIN] Short title
+            - **Diff**: path/to/file:L123 (from the diff header)
             - **Spec**: Book N §X.Y.Z — section title
-            - **Detail**: What the code does and whether it matches the spec.
-              For FLAG: state what the code does vs what the spec requires.
+            - **Detail**: One or two sentences tied to the diff line.
+              For FLAG: state what the diff shows vs what the spec requires.
+              For UNCERTAIN: state what context you'd need to decide.
 
             ### Summary
-            - X checks passed, Y flagged
+            - X PASS, Y FLAG, Z UNCERTAIN
             - One-line overall assessment
 
             ## Rules
-            - You MUST search the specs with pdftotext — do not rely on memory
+            - Only read files that appear in the diff. Never read unchanged files.
+            - Search specs with pdftotext before citing a section — no memory
             - Reference specs by name and section number only
-            - Do NOT quote spec text verbatim — the report is public
-            - Do NOT include raw PDF content in the output
-            - Only FLAG genuine deviations, not simulator-specific test commands (0x80XX)
-            - Keep the report concise and actionable
+            - NEVER quote spec text verbatim — the comment is public
+            - Skip simulator test commands (CLA=0x80XX)
