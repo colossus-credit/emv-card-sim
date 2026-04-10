@@ -1,0 +1,12 @@
+# Colossus Network CAPK Configuration
+# Generated: Sun Jan 11 14:03:50 CST 2026
+# CA Index: 0x92
+
+# CAPK Public Key Exponent (tag 9F32)
+- req: '80 01 9F 32 01 03'
+  res: '90 00'
+
+# CAPK Modulus (tag 9F06) - 248 bytes for RSA-1984
+- req: '80 01 00 06 00 c9 0a 36 d6 94 46 3a 50 d5 f8 90 03 a1 16 9e a0 b9 33 a5 d2 65 0a ca 69 ae 7e 72 61 16 9f 8c 39 52 b7 f4 68 27 fd f8 d4 3b 47 7c 7b 02 56 ec 2b 40 3c b4 f8 e8 38 6d 90 7d 22 b0 3a 04 eb 94 e4 9b 5f 01 08 56 6e 1e 55 cf c9 c9 0e 41 2c b4 3c e6 ff 1b 34 dd f6 92 4c 1d f3 e3 d2 1e d1 0c bc 8e b6 a5 48 ad b1 5e c7 96 4e 67 ce 4b d3 39 a8 15 6a fe de 16 25 77 bf a8 b0 de 3f d4 77 c1 75 1f de be 3b f8 ad 58 77 89 ae c2 e9 3c 71 0e 9c 20 84 15 e6 39 27 43 74 db 72 86 75 e4 9a 3e 60 6c 4e be f4 3f 26 06 5a 90 ee 98 f1 bb c9 db 85 75 21 89 73 0a 38 48 6a c4 89 5a c3 e1 e6 6a 40 ac ef 54 5d 63 3a 14 25 ac 4b 0b 6d 6d ad 61 9f a7 50 b4 3f 5d 92 82 44 2b cd 2f 80 88 ec bd 64 b2 3d 12 88 e8 52 4b 85 02 d1 0a c8 3e b9 92 cd 8d 6a dc cb 90 62 5d f1'
+  res: '90 00'
+

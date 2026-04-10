@@ -1,0 +1,24 @@
+# Colossus Network ICC Certificate Configuration
+# Generated: Mon Jan 19 18:04:29 CST 2026
+# Card PAN: 6767676707626054
+# Serial: 9555A118
+
+# ICC Public Key Exponent (tag 9F47)
+- req: '80 01 9F 47 02 03'
+  res: '90 00'
+
+# ICC Public Key Certificate (tag 9F46) - Signed by Issuer
+- req: '80 01 9F 46 F8 ae dc 91 1c 1f e9 81 06 6b fc 13 5e 6b 38 21 48 09 c8 d6 e3 8f 8f d9 39 94 ec ad b7 24 1f da 24 4a be 8b 62 a5 53 20 d1 3b 4a 5c f3 53 58 cc bd e1 a0 21 7a 8e 60 b0 2e 8b 54 c7 a8 4a cb d8 21 e7 f2 87 a2 db 6e a0 dd 81 ad 33 46 a6 5d e5 fb b5 1e b8 eb 73 a5 9a db 97 19 d1 8c 09 2c 18 d4 69 4b 37 6b f7 30 bd 9e f0 89 9d a5 ae 99 34 fa be da cc 8e a9 15 58 c8 3f 27 cf a8 e9 9d 97 e0 28 57 86 89 b8 b2 e7 52 47 00 e4 b3 c0 2a da 1f d9 65 bb 85 67 24 6c 5a d7 4e 3d 24 e2 57 4b 8d 34 bd f0 fb 24 df 28 9d 80 bb 2c 8e 44 00 14 ca b8 e1 45 e0 8a 57 fa 3c 29 26 13 0f 96 eb fa 92 a1 0e 1f 99 41 c1 01 98 4a ff fa d2 8d f6 29 e6 68 44 df c5 f8 5a 96 48 77 84 d8 08 3c 08 b2 20 8c 55 9c 89 a6 2a 9d 28 a3 c6 e2 fa 6e 27 a3 af 2c a8 93 85 eb a6 e2 3a'
+  res: '90 00'
+
+# ICC Public Key Remainder (tag 9F48) - 42 bytes
+- req: '80 01 9F 48 2A a5 e0 00 89 c1 c2 7c 12 3f fc 59 19 44 a0 c9 2d 7f d3 78 f0 7f f5 fa de 5f 68 9c 18 4c c1 f4 08 0f c7 5f f2 d6 2b c7 14 6d a5'
+  res: '90 00'
+
+# Card PAN (tag 5A)
+- req: '80 01 00 5A 10 67 67 67 67 07 62 60 54 '
+  res: '90 00'
+
+# Note: The ICC certificate must be verified by terminals using the Issuer public key
+# The complete certificate chain: CAPK → Issuer → ICC
+# The ICC private key is used on-card to sign transaction data for CDA/DDA

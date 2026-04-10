@@ -1,0 +1,89 @@
+Colossus Network Issuer Certificate
+====================================
+
+Generated: Mon Jan 19 19:39:42 CST 2026
+Issuer Name: COLOSSUS_BANK
+Algorithm: RSA-2048
+Hash Algorithm: SHA-1
+CA Index: 0x92
+
+Issuer Public Key Parameters:
+------------------------------
+Modulus Size:     256 bytes (2048 bits)
+Public Exponent:  3 (0x03)
+
+Certificate Details:
+--------------------
+Certificate Size: 256 bytes
+Serial Number:    5AC46DBE
+Expiry Date:      271231
+BIN:              67676767
+Remainder Size:   36 bytes
+
+File Locations:
+---------------
+Private Key:      ./keys/issuer/issuer_private.pem
+Public Key:       ./keys/issuer/issuer_public.pem
+Modulus (binary): ./keys/issuer/issuer_modulus.bin
+Exponent (binary): ./keys/issuer/issuer_exponent.bin
+Certificate:      ./keys/issuer/issuer_certificate.bin
+Remainder:        ./keys/issuer/issuer_remainder.bin
+
+Signed By:
+----------
+CAPK Private Key: ./keys/capk/capk_private.pem
+
+Issuer Modulus (Hex):
+ace267e258be0eadd590514f035b31157580fad48974ba6a2d71398810cd95c7
+7deae4d7cfff5efc9dee19197ca5f87c26d7e0657fd299c0351e0269cb4094d4
+232a0b8fe3d0b6a53c9bbc442461329bb584b7eb44f86738cbf276c7120b24cf
+b48a7c7700acb665d0b528cba30220daec984aeb81b4339d89ccd79619f54e78
+38c69c019b4d7f2a8773d817e36875dae9d22c9b8d56a69d870aca07e9b04c70
+da73a2a33270bc97b1c0b5ed424e425099cf9eafcfce1af801b8037447ffd809
+aa9bf0bd0088b6f1406de6b7fb8f2ba520864c671e06019fd13d3e1fddfdde01
+5874273b8ef0da0df574c04786635f363b9938d83f0151f9c7d20a09e94d1b69
+
+Issuer Public Exponent (Hex):
+03
+
+Certificate (Hex):
+ae1aa2c37af7cf1300f129f905dccecc7d1f7d70db6b7c693dbb6b5f8adcc15c
+28451ff21c4eb17d5ef7072ef25179158a1ef1459d818e6c2f389d7f2a74f0de
+f38c20482d79422bb2447d1524d046d92804d7b27ffc35faf2e0dcc148d3ff3f
+9d6bfa9f6d613e8b1827bd21154c132645f4b864f018b65e793004141ab394ec
+76039512beb1cfed251524ecc176277eec58b8334288965ec4c9eeaf37c0db0a
+f89c494a18b8522120bf002daef4023fc58c7a7d3e017ed2850dd76029ac3056
+a49ad627ac68e510469fbf87d90e007086f3ead616698a865f219fa5057be96c
+99f0f8aeca77dc43e697051fdba6d6e81ee5726a535addf4fb2441cfcc91bfc4
+
+Remainder (Hex):
+ddfdde015874273b8ef0da0df574c04786635f363b9938d83f0151f9c7d20a09
+e94d1b69
+
+Security Notice:
+----------------
+⚠️  KEEP THE ISSUER PRIVATE KEY SECURE!
+⚠️  This key is used to sign ICC (card) certificates
+⚠️  Store in HSM for production use
+
+EMV Usage:
+----------
+1. Use this certificate on cards to verify issuer authenticity
+2. Use issuer private key to sign ICC Public Key Certificates
+3. Each card will have ICC certificate signed by this issuer key
+
+Certificate Chain:
+------------------
+CAPK → Signs this Issuer Certificate ✓
+Issuer Key (this) → Will sign ICC Certificates
+ICC Key → Signs transaction data (DDA/CDA)
+
+Next Steps:
+-----------
+1. ✓ Issuer key generated (this step)
+2. → Generate ICC keys (one per card)
+3. → Sign ICC certificates with this issuer key
+4. → Load certificates onto cards via personalization
+5. → Configure terminals with CAPK to verify chain
+
+For more information, see COLOSSUS.md

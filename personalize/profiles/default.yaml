@@ -1,0 +1,166 @@
+# Default EMV Card Personalization Profile
+# Matches the behavior of personalize.sh on feat/pax-terminal-integration
+
+profile: Colossus Contact + Contactless
+rid: A000000951
+contact_aid_suffix: "0001"
+contactless_aid_suffix: "1010"
+application_label: COLOSSUS
+preferred_name: "COLOSSUS CREDIT"
+bin: "66907500"
+pan: "6690750012345676"
+expiry: "271231"
+
+# Kernel identifier for PPSE directory entry
+kernel_identifier: "02"
+
+keys:
+  capk_index: "92"
+  key_size: 1024      # ICC/Issuer RSA-1024, CAPK RSA-1984 (mixed hierarchy)
+  keys_dir: ../../keys/capk_1984_mixed   # CAPK 92 (RSA-1984) in capk.xml, ICC/SDAD RSA-1024
+
+tags:
+  # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---
+  DDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  CDOL1:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  CDOL2:
+    type: dol
+    value:
+      Authorisation Response Code: 2
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
+  # --- Simple tag values ---
+  Application Interchange Profile: "3C01"
+  Application Version Number: "0002"
+  Application Effective Date: "240101"
+  Issuer Country Code: "0840"
+  Application Usage Control: "AB00"
+  SDA Tag List: "82"
+  Track 1 Discretionary Data: "00000000000000000000000000000000000000"
+  Service Code: "0701"
+  Application Currency Code: "0840"
+  Application Currency Exponent: "02"
+  IAC-Default: "D84000A800"
+  IAC-Denial: "0010000000"
+  IAC-Online: "D84004F800"
+  Issuer Code Table Index: "01"
+  Language Preference: "656E"
+  Issuer Application Data: "06010A03A4A002"
+  Form Factor Indicator: "08400000"
+  CTQ: "8000"
+
+templates:
+  gpo: ["AIP", "AFL"]
+  dda: ["9F4B"]
+  genac: ["9F27", "9F36", "9F26", "9F10"]
+  fci:
+    6f: ["DF Name", "A5"]
+    a5: ["Application Label", "Application Priority Indicator"]
+
+# Contactless overrides (merged on top of base tags/templates for contactless AID)
+contactless:
+  fci:
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
+  tags:
+    Application Interchange Profile: "1980"
+    PDOL:
+      type: dol
+      value:
+        Amount Authorised: 6
+        Amount Other: 6
+        Terminal Country Code: 2
+        Terminal Verification Results: 5
+        Transaction Currency Code: 2
+        Transaction Date: 3
+        Transaction Type: 1
+        Unpredictable Number: 4
+        Terminal Identification: 8
+        Merchant Identifier: 15
+        Acquirer Identifier: 6
+
+records:
+  - sfi: 1
+    records:
+      - record: 1
+        tags: ["57", "5A", "5F24", "5F28", "5F34", "9F07", "8C"]
+      - record: 2
+        tags: ["5F20", "5F25", "8D", "8E", "9F0D", "9F0E", "9F0F", "9F4A"]
+      - record: 3
+        tags: ["5F30", "9F08", "9F42", "9F44", "9F49", "9F6E"]
+  - sfi: 2
+    records:
+      - record: 1
+        tags: ["8F", "92", "9F32", "9F47"]
+      - record: 2
+        tags: ["90"]
+  - sfi: 3
+    records:
+      - record: 1
+        tags: ["9F46"]
+      - record: 2
+        tags: ["9F48"]
+
+afl:
+  - sfi: 1
+    first_record: 1
+    last_record: 3
+    oda_count: 0
+  - sfi: 2
+    first_record: 1
+    last_record: 2
+    oda_count: 1
+  - sfi: 3
+    first_record: 1
+    last_record: 2
+    oda_count: 0
+
+settings:
+  pin: "1234"
+  flags:
+    use_random: true
+  response_template: "0080"
+
+cvm_list:
+  amount_x: 0
+  amount_y: 0
+  rules:
+    - [0x42, 0x03]   # Online PIN, if terminal supports it
+    - [0x1F, 0x00]   # No CVM required, always
