@@ -156,7 +156,15 @@ Examples:
                         help="Generate new certificate hierarchy")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--store-data", action="store_true",
-                        help="Use CPS v2.0 STORE DATA (INS E2) instead of custom dev commands")
+                        default=True,
+                        help="(default) Use CPS v2.0 STORE DATA (INS E2). "
+                             "This is the production-ready path and the mode "
+                             "card manufacturers' perso bureaus will use.")
+    parser.add_argument("--legacy-dev", dest="store_data", action="store_false",
+                        help="Opt out of CPS mode and use the proprietary "
+                             "dev 80xx commands instead. Only works on "
+                             "non-production builds where dev commands "
+                             "haven't been stripped.")
     parser.add_argument("--gp-jar-format", action="store_true",
                         help="In dry-run, output as gp.jar -a arguments")
 

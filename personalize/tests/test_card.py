@@ -11,8 +11,16 @@ from emv_personalize.crypto import CertificateHierarchy
 
 @pytest.fixture
 def card():
+    """Card fixture pinned to legacy dev-command mode.
+
+    These tests assert specific 80xx APDU byte sequences (SET_TAG, SET_SETTINGS,
+    SET_READ_RECORD_TEMPLATE, etc.). They were written before the default
+    flipped to CPS mode, so they explicitly request ``use_store_data=False``
+    to keep asserting dev-mode output. CPS-mode test coverage lives in the
+    dry-run integration path in ``personalize.py``.
+    """
     transport = DryRunTransport(verbose=False)
-    return Card(transport), transport
+    return Card(transport, use_store_data=False), transport
 
 
 @pytest.fixture
@@ -255,15 +263,15 @@ class TestPersonalizePaymentApp:
 
     def test_contact_and_contactless_same_structure(self, card, profile, certs):
         """Both AIDs should produce the same APDU structure (different AID only)."""
-        c1, t1 = Card(DryRunTransport(verbose=False)), DryRunTransport(verbose=False)
-        c1 = Card(t1)
+        t1 = DryRunTransport(verbose=False)
+        c1 = Card(t1, use_store_data=False)
         personalize_payment_app(
             c1, aid="A0000009510001", profile=profile,
             pan="6690750012345678", expiry_yymmdd="271231", certs=certs,
         )
 
         t2 = DryRunTransport(verbose=False)
-        c2 = Card(t2)
+        c2 = Card(t2, use_store_data=False)
         personalize_payment_app(
             c2, aid="A0000009511010", profile=profile,
             pan="6690750012345678", expiry_yymmdd="271231", certs=certs,
