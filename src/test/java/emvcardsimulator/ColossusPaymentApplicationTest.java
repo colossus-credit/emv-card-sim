@@ -2519,18 +2519,245 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("STORE DATA: DGI 0062 (file structure creation) accepted as no-op")
+    @DisplayName("STORE DATA: DGI 0062 (file structure creation) parses valid FCP")
     public void testStoreDataDgi0062() throws CardException {
         setupColossusCard();
 
-        // DGI 0062 with some dummy FCP data — should be accepted silently
+        // CPS v2.0 Annex A.5 Table A-27. Minimum valid FCP:
+        //   62 0B
+        //     80 02 00 10      file size 16 bytes
+        //     82 02 0A 01      file descriptor + data coding (linear fixed, T=1)
+        //     88 01 01         SFI = 1
+        // Inner is 11 bytes, outer FCP TLV (with tag+len) = 13 bytes.
+        // DGI 0062 content = 13 bytes, DGI triplet (2+1+13) = 16 bytes.
+        // STORE DATA Lc = 16 (0x10).
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
-            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x10,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0D,
+                (byte) 0x62, (byte) 0x0B,
+                    (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+                    (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01,
+                    (byte) 0x88, (byte) 0x01, (byte) 0x01
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "Valid DGI 0062 FCP should be accepted");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: malformed DGI 0062 returns 6A80")
+    public void testStoreDataDgi0062Malformed() throws CardException {
+        setupColossusCard();
+
+        // Garbage payload that is not a valid 62-FCP TLV. Must be rejected with
+        // 6A80 (incorrect parameters in the data field) per CPS Table 4-10.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
             (byte) 0x06,
             (byte) 0x00, (byte) 0x62, (byte) 0x03, (byte) 0xAA, (byte) 0xBB, (byte) 0xCC
         });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "Malformed DGI 0062 should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 with missing tag 88 (SFI) returns 6A80")
+    public void testStoreDataDgi0062MissingSfi() throws CardException {
+        setupColossusCard();
+
+        // Valid FCP structure except tag 88 is absent. Per CPS Annex A.5 Table
+        // A-27 tag 88 is mandatory — parser should reject with 6A80.
+        //   62 08
+        //     80 02 00 10
+        //     82 02 0A 01
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x0D,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0A,
+                (byte) 0x62, (byte) 0x08,
+                    (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+                    (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01
+        });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "DGI 0062 missing mandatory tag 88 should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 with SFI out of range (0x1F) returns 6A80")
+    public void testStoreDataDgi0062SfiOutOfRange() throws CardException {
+        setupColossusCard();
+
+        // Tag 88 value = 1F (above max SFI 1E per CPS Annex A.5 Table A-27)
+        //   62 0B
+        //     80 02 00 10
+        //     82 02 0A 01
+        //     88 01 1F
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x10,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0D,
+                (byte) 0x62, (byte) 0x0B,
+                    (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+                    (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01,
+                    (byte) 0x88, (byte) 0x01, (byte) 0x1F
+        });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "DGI 0062 with SFI out of range should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: last STORE DATA (P1 b8=1) commits perso, next STORE DATA returns 6985")
+    public void testStoreDataLifecycleCommit() throws CardException {
+        setupColossusCard();
+
+        // Send a non-last STORE DATA first — should succeed
+        ResponseAPDU first = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xAA, (byte) 0xBB
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) first.getSW(),
+            "Non-last STORE DATA should be accepted");
+
+        // Send a last STORE DATA (P1 b8 = 1) — should commit lifecycle
+        ResponseAPDU last = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xCC, (byte) 0xDD
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) last.getSW(),
+            "Last STORE DATA should also be accepted");
+
+        // Third STORE DATA after lifecycle is committed — should be rejected
+        ResponseAPDU rejected = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xEE, (byte) 0xFF
+        });
+        assertEquals((short) 0x6985, (short) rejected.getSW(),
+            "STORE DATA after PERSO_DONE should return 6985 per CPS §4.3.5.4");
+
+        // factoryReset should move back to PERSO_PENDING
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x05, (byte) 0x00, (byte) 0x00, (byte) 0x00
+        });
+        ResponseAPDU afterReset = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0x11, (byte) 0x22
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) afterReset.getSW(),
+            "factoryReset should return lifecycle to PERSO_PENDING");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 7FFF (integrity MAC) accepted as no-op")
+    public void testStoreDataDgi7FFF() throws CardException {
+        setupColossusCard();
+
+        // DGI 7FFF carries the personalization data integrity MAC per CPS
+        // §4.3.5.2. We don't verify it yet, but must accept it so real bureau
+        // scripts don't fail.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x0B,
+            (byte) 0x7F, (byte) 0xFF, (byte) 0x08,
+                (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04,
+                (byte) 0x05, (byte) 0x06, (byte) 0x07, (byte) 0x08
+        });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "DGI 0062 should be accepted as no-op");
+            "DGI 7FFF should be accepted as no-op");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: record DGI 010C stored in RecordStore, readable via READ RECORD")
+    public void testStoreDataRecordRoundTrip() throws CardException {
+        setupColossusCard();
+
+        // SELECT is a prereq because the Colossus applet's PSE wrapper sends
+        // SELECT to enter transaction mode. But for this test we just need to
+        // load a record and read it back directly via READ RECORD.
+
+        // Store a record via DGI 010C: SFI=01 (0x01), record number = 12 (0x0C).
+        // Record body (inside tag 70) is just 5A 02 12 34 (PAN tag with 2 bytes).
+        // The applet strips the tag-70 wrapper and stores 5A 02 12 34 raw.
+        //
+        //   Record body: 5A 02 12 34    (4 bytes)
+        //   Wrapped:     70 04 5A 02 12 34    (6 bytes)
+        //   DGI 010C L=06 wrapped = 0E bytes total
+        byte[] storeCmd = new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x09,
+            (byte) 0x01, (byte) 0x0C, (byte) 0x06,
+                (byte) 0x70, (byte) 0x04,
+                    (byte) 0x5A, (byte) 0x02, (byte) 0x12, (byte) 0x34
+        };
+        ResponseAPDU storeResponse = SmartCard.transmitCommand(storeCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) storeResponse.getSW(),
+            "STORE DATA DGI 010C should succeed");
+
+        // READ RECORD P1=0x0C (record 12), P2=(1<<3)|0x04 = 0x0C
+        byte[] readCmd = new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x0C, (byte) 0x0C, (byte) 0x00
+        };
+        ResponseAPDU readResponse = SmartCard.transmitCommand(readCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) readResponse.getSW(),
+            "READ RECORD should find the stored record");
+        byte[] readData = readResponse.getData();
+        assertNotNull(readData, "READ RECORD response should have data");
+
+        // Expected: tag 70, len 04, body 5A 02 12 34
+        assertEquals(6, readData.length, "Record response should be 6 bytes (tag 70 wrapped)");
+        assertEquals((byte) 0x70, readData[0], "Response should start with tag 70");
+        assertEquals((byte) 0x04, readData[1], "Tag 70 length should be 4");
+        assertEquals((byte) 0x5A, readData[2], "Body byte 0 should be 5A");
+        assertEquals((byte) 0x02, readData[3], "Body byte 1 should be 02");
+        assertEquals((byte) 0x12, readData[4], "Body byte 2 should be 12");
+        assertEquals((byte) 0x34, readData[5], "Body byte 3 should be 34");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 preallocation enforces max record size")
+    public void testStoreDataDgi0062EnforcesMaxSize() throws CardException {
+        setupColossusCard();
+
+        // DGI 0062 declares SFI=1 with max record size = 4 bytes via tag 82 in 5-byte form.
+        //   62 0E
+        //     80 02 00 10      file size (informational)
+        //     82 05 0A 01 00 04 01   FDB + DCB + max rec size (00 04) + num recs (01)
+        //     88 01 01         SFI = 1
+        ResponseAPDU setupResponse = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x13,
+            (byte) 0x00, (byte) 0x62, (byte) 0x10,
+                (byte) 0x62, (byte) 0x0E,
+                    (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+                    (byte) 0x82, (byte) 0x05, (byte) 0x0A, (byte) 0x01, (byte) 0x00, (byte) 0x04, (byte) 0x01,
+                    (byte) 0x88, (byte) 0x01, (byte) 0x01
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) setupResponse.getSW(),
+            "DGI 0062 setup should succeed");
+
+        // Attempt to store a 5-byte record body — exceeds declared max (4)
+        //   DGI 0101 LEN=05 body=11 22 33 44 55
+        ResponseAPDU oversized = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x08,
+            (byte) 0x01, (byte) 0x01, (byte) 0x05,
+                (byte) 0x11, (byte) 0x22, (byte) 0x33, (byte) 0x44, (byte) 0x55
+        });
+        assertEquals((short) 0x6A80, (short) oversized.getSW(),
+            "Record exceeding declared max size should return 6A80");
+
+        // 4-byte body should be accepted
+        ResponseAPDU fitting = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x07,
+            (byte) 0x01, (byte) 0x01, (byte) 0x04,
+                (byte) 0x11, (byte) 0x22, (byte) 0x33, (byte) 0x44
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) fitting.getSW(),
+            "Record at declared max size should be accepted");
     }
 
     @Test
