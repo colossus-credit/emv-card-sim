@@ -1,4 +1,4 @@
-package emvcardsimulator.perso;
+package emvcardsimulator;
 
 /**
  * Status word constants from EMV Card Personalization Specification v2.0.

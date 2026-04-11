@@ -2775,17 +2775,22 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("STORE DATA: reserved DGI 9F60-9F6F should be rejected")
+    @DisplayName("STORE DATA: DGI in 9F60-9F6F range stored as EMV tag")
     public void testStoreDataReservedDgi() throws CardException {
         setupColossusCard();
 
+        // Previously we rejected DGIs in the 9F60-9F6F range (except 9F6C)
+        // as "reserved for payment-system-proprietary data". That was wrong —
+        // 9F6C (CTQ), 9F6D, 9F6E (FFI), 9F6F are all real EMV tags used by
+        // Visa, Mastercard, and other schemes. Treat them as ordinary EMV
+        // tags: the DGI value equals the tag ID and the value gets stored.
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
             (byte) 0x04,
             (byte) 0x9F, (byte) 0x65, (byte) 0x01, (byte) 0xAA
         });
-        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
-            "Reserved DGI 9F65 should return 6A86");
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "DGI 9F65 should be stored as EMV tag (previously wrongly rejected)");
     }
 
     @Test

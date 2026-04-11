@@ -1,4 +1,4 @@
-package emvcardsimulator.perso;
+package emvcardsimulator;
 
 import emvcardsimulator.EmvApplet;
 import javacard.framework.JCSystem;

@@ -438,7 +438,18 @@ def personalize_ppse(
     preferred_name: str | None = None,
     kernel_identifier: str | None = None,
 ) -> None:
-    """Personalize the PPSE (2PAY.SYS.DDF01) directory applet."""
+    """Personalize the PPSE (2PAY.SYS.DDF01) directory applet.
+
+    The PPSE applet is specialised — it does NOT use the generic EmvTag store
+    or RecordStore. It has its own proprietary STORE DATA handler that accepts
+    only two DGIs:
+
+      * ``D001`` — directory entry (inside-tag-61 content)
+      * ``D002`` — complete FCI template (not used here)
+
+    We therefore bypass ``card.set_emv_tag()`` and send the directory entry
+    directly via STORE DATA DGI D001 regardless of ``use_store_data`` mode.
+    """
     aid_bytes = hex_to_bytes(contactless_aid)
     label_bytes = label.encode()
 
@@ -453,7 +464,12 @@ def personalize_ppse(
     if kernel_identifier:
         kid = bytes.fromhex(kernel_identifier)
         dir_entry += b"\x9F\x2A" + bytes([len(kid)]) + kid
-    card.set_emv_tag(0x61, bytes(dir_entry), "PPSE directory entry (61)")
+
+    # Send to PPSE's proprietary STORE DATA handler as DGI D001.
+    card.builder.store_data(
+        0xD001, bytes(dir_entry),
+        description=f"STORE_DATA PPSE directory entry (DGI D001, {len(dir_entry)}B)",
+    )
 
 
 def personalize_payment_app(

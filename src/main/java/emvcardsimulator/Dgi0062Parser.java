@@ -1,6 +1,5 @@
-package emvcardsimulator.perso;
+package emvcardsimulator;
 
-import emvcardsimulator.EmvApplet;
 import javacard.framework.Util;
 
 /**
@@ -39,11 +38,11 @@ public final class Dgi0062Parser {
 
     /**
      * Parse one or more 62-FCP TLVs from a DGI 0062 payload, preallocating each
-     * declared SFI in the record store.
+     * declared SFI in the {@link RecordStore}.
      *
      * @throws javacard.framework.ISOException with 6A80 on any structural error
      */
-    public static void parse(byte[] buf, short off, short len, RecordStore store) {
+    public static void parse(byte[] buf, short off, short len) {
         if (len <= 0) {
             EmvApplet.logAndThrow(PersoSw.SW_INCORRECT_DATA);
         }
@@ -159,7 +158,7 @@ public final class Dgi0062Parser {
                 EmvApplet.logAndThrow(PersoSw.SW_INCORRECT_DATA);
             }
 
-            store.preallocateSfi(sfi, numRecords, maxRecordSize);
+            RecordStore.preallocateSfi(sfi, numRecords, maxRecordSize);
         }
     }
 
@@ -168,17 +167,17 @@ public final class Dgi0062Parser {
         if (off >= end) {
             EmvApplet.logAndThrow(PersoSw.SW_INCORRECT_DATA);
         }
-        int b = buf[off] & 0xFF;
-        if (b < 0x80) {
-            return (short) b;
+        short b = (short) (buf[off] & 0xFF);
+        if (b < (short) 0x80) {
+            return b;
         }
-        if (b == 0x81) {
+        if (b == (short) 0x81) {
             if ((short) (off + 1) >= end) {
                 EmvApplet.logAndThrow(PersoSw.SW_INCORRECT_DATA);
             }
             return (short) (buf[(short) (off + 1)] & 0xFF);
         }
-        if (b == 0x82) {
+        if (b == (short) 0x82) {
             if ((short) (off + 2) >= end) {
                 EmvApplet.logAndThrow(PersoSw.SW_INCORRECT_DATA);
             }
@@ -190,7 +189,7 @@ public final class Dgi0062Parser {
 
     /** Number of bytes occupied by the BER length encoding starting at off. */
     private static short berLenSize(byte[] buf, short off) {
-        int b = buf[off] & 0xFF;
+        short b = (short) (buf[off] & 0xFF);
         if (b < 0x80) {
             return (short) 1;
         }
