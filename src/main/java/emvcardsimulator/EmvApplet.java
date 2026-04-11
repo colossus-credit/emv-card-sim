@@ -1,9 +1,5 @@
 package emvcardsimulator;
 
-import emvcardsimulator.perso.AppletLifecycle;
-import emvcardsimulator.perso.Dgi0062Parser;
-import emvcardsimulator.perso.PersoSw;
-import emvcardsimulator.perso.RecordStore;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacardx.apdu.ExtendedLength;
@@ -102,14 +98,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
      */
     protected AppletLifecycle lifecycle;
 
-    /**
-     * Persistent record storage indexed by (SFI, recordNo). Replaces the
-     * EmvTag-keyed-by-P1P2 indirection for records loaded via the CPS
-     * STORE DATA path. The legacy {@code 0x8003 set_read_record_template}
-     * dev path still stores templates in EmvTag for backwards compat with
-     * existing fixtures.
-     */
-    protected RecordStore recordStore;
+    // Record storage is static (class-level) following the same pattern as
+    // EmvTag — see RecordStore.java. Call sites use RecordStore.setRecord(),
+    // RecordStore.getRecord(), RecordStore.preallocateSfi(), etc.
 
     protected TagTemplate responseTemplateGetProcessingOptions;
     protected TagTemplate responseTemplateDda;
@@ -149,9 +140,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         // Clear perso state and records so tests can re-personalize cleanly.
         // In a production build the dev factoryReset command is stripped, so
         // this path only runs at install time and from legitimate test harnesses.
-        if (recordStore != null) {
-            recordStore.clearAll();
-        }
+        RecordStore.clearAll();
         if (lifecycle != null) {
             lifecycle.resetForTesting();
         }
@@ -511,7 +500,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 dataLen = innerLen;
             }
 
-            recordStore.setRecord(sfi, recordNo, buf, dataOffset, dataLen);
+            RecordStore.setRecord(sfi, recordNo, buf, dataOffset, dataLen);
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
                    || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
             // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
@@ -537,22 +526,12 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             // Parse one or more 62-FCP TLVs and preallocate each SFI in the
             // record store. Subsequent record DGIs (XXYY) will be size-checked
             // against these declarations.
-            Dgi0062Parser.parse(buf, offset, length, recordStore);
+            Dgi0062Parser.parse(buf, offset, length);
         } else if (dgi == (short) 0x7FFF) {
             // CPS §4.3.5.2: DGI 7FFF carries the integrity MAC over the
             // personalization data. It must be accepted on the last STORE DATA
             // command. We don't verify the MAC (no MAC key plumbed yet) but we
             // accept it as a no-op so real perso bureau scripts don't fail.
-        } else if (dgiHigh == (short) 0x009F && dgiLow >= 0x60 && dgiLow <= 0x6F) {
-            // CPS reserved range 9F60-9F6F: payment system proprietary data
-            // Allow known tags (9F6C = CTQ), reject truly reserved ones
-            if (dgi == (short) 0x9F6C) {
-                JCSystem.beginTransaction();
-                EmvTag.setTag(dgi, buf, offset, length);
-                JCSystem.commitTransaction();
-            } else {
-                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
-            }
         } else if (dgi != (short) 0x0000) {
             // Everything else (non-zero) = EMV tag: DGI is the tag ID
             JCSystem.beginTransaction();
@@ -663,7 +642,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         // Path 1: Record stored via the CPS STORE DATA path as raw bytes in
         // the RecordStore. This is the production path — a real perso bureau
         // sends records via STORE DATA DGI XXYY.
-        byte[] recordBody = recordStore.getRecord(sfi, recordNo);
+        byte[] recordBody = RecordStore.getRecord(sfi, recordNo);
         short contentLen;
         if (recordBody != null) {
             contentLen = (short) recordBody.length;
@@ -721,9 +700,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         chunkBuffer = new byte[512];  // Persistent buffer for chunked transfers
 
-        // Instantiate perso state BEFORE factoryReset() so it can clear them safely.
+        // Instantiate lifecycle BEFORE factoryReset() so it can clear it safely.
+        // RecordStore is static — its arrays are initialized at class-load time.
         lifecycle = new AppletLifecycle();
-        recordStore = new RecordStore();
 
         factoryReset();
 

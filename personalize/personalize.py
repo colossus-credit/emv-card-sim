@@ -110,6 +110,11 @@ def run_personalization(
     # Commit the lifecycle on all applets personalized via CPS STORE DATA.
     # In dev-command mode (use_store_data=False) this is a no-op — the applet
     # stays in PERSO_PENDING and the dev 80xx commands remain accepted.
+    #
+    # Note: PPSE is deliberately excluded — its specialized STORE DATA handler
+    # only accepts DGI D001/D002 (its own proprietary format) and rejects
+    # DGI 7FFF with 6A86. PPSE doesn't have a lifecycle gate; it's fully
+    # configured as soon as the D001 directory entry is stored.
     if use_store_data:
         log.info("=== Finalizing personalization (committing lifecycle) ===")
         # Each applet has its own lifecycle, so we select each one and send
@@ -120,8 +125,6 @@ def run_personalization(
             card.select(contact_aid)
             card.finalize_personalization()
         card.select_pse()
-        card.finalize_personalization()
-        card.select_ppse()
         card.finalize_personalization()
 
     log.info("=== Personalization complete ===")
