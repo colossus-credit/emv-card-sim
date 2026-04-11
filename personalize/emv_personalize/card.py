@@ -265,6 +265,33 @@ class Card:
         else:
             self.builder.set_settings(SETTING_EC_PRIVATE, scalar, "EC P-256 private key")
 
+    # ---- Personalization Lifecycle ----
+
+    def finalize_personalization(self) -> None:
+        """Commit the applet's personalization lifecycle.
+
+        Sends a final STORE DATA command with bit 8 of P1 set (CPS v2.0
+        §4.3.4 Table 4-9). On receipt, the applet transitions from
+        PERSO_PENDING to PERSO_DONE (CPS §4.3.5.1). Once committed, any
+        further STORE DATA on the same applet returns 6985.
+
+        The payload is DGI 7FFF (personalization integrity MAC per CPS
+        §4.3.5.2). We don't compute a real MAC here — the applet accepts
+        DGI 7FFF as a no-op placeholder — but CPS recommends it be present
+        in the last STORE DATA command.
+
+        Should only be called in STORE DATA mode (use_store_data=True).
+        In dev-command mode the lifecycle stays PERSO_PENDING.
+        """
+        if not self.use_store_data:
+            log.debug("finalize_personalization() no-op in dev-command mode")
+            return
+        # DGI 7FFF placeholder payload (8 bytes of zeros). Real perso bureau
+        # would put the computed CPS integrity MAC here.
+        self.builder.store_data(0x7FFF, b"\x00" * 8,
+                                last=True,
+                                description="STORE_DATA DGI 7FFF (finalize perso)")
+
 
 # ---- Personalization Functions ----
 
