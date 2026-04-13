@@ -8,31 +8,37 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import javacard.framework.ISO7816;
-import javacard.framework.Util;
-
-import javax.smartcardio.CardException;
-import javax.smartcardio.ResponseAPDU;
-
 import java.math.BigInteger;
 import java.security.KeyFactory;
 import java.security.KeyPairGenerator;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
-import java.security.interfaces.ECPublicKey;
 import java.util.Arrays;
 
-import net.jqwik.api.*;
-import net.jqwik.api.constraints.*;
-import net.jqwik.api.lifecycle.*;
+import javacard.framework.ISO7816;
+
+import javax.smartcardio.CardException;
+import javax.smartcardio.ResponseAPDU;
+
+import net.jqwik.api.Arbitraries;
+import net.jqwik.api.Arbitrary;
+import net.jqwik.api.Assume;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.Provide;
+import net.jqwik.api.constraints.ByteRange;
+import net.jqwik.api.constraints.IntRange;
+import net.jqwik.api.constraints.ShortRange;
+import net.jqwik.api.constraints.Size;
 
 /**
- * Property-based tests for EMV card simulator.
+ * Property-based tests for EMV card applet.
  *
- * Instead of testing specific inputs/outputs, these tests define invariants
+ * <p>Instead of testing specific inputs/outputs, these tests define invariants
  * that must hold for ALL inputs. jqwik generates thousands of random inputs
  * and tries to break each property — then shrinks failures to minimal cases.
  */
@@ -1055,7 +1061,9 @@ public class PropertyTest {
 
     private boolean containsByte(byte[] data, byte target) {
         for (byte b : data) {
-            if (b == target) return true;
+            if (b == target) {
+                return true;
+            }
         }
         return false;
     }
@@ -1119,9 +1127,13 @@ public class PropertyTest {
         // Parse TLV to extract value
         int offset = ((tlv[0] & 0x1F) == 0x1F || (tlv[0] & 0xFF) >= 0x9F) ? 2 : 1;
         // Adjust for tags stored as 00xx
-        if (tlv[0] == 0x00) offset = 2;
+        if (tlv[0] == 0x00) {
+            offset = 2;
+        }
         // Simple heuristic: check if first byte is high byte of a 2-byte tag
-        if ((tagId & 0xFF00) != 0) offset = 2;
+        if ((tagId & 0xFF00) != 0) {
+            offset = 2;
+        }
 
         int len;
         if ((tlv[offset] & 0xFF) < 128) {
@@ -1135,7 +1147,9 @@ public class PropertyTest {
             offset += 3;
         }
 
-        if (offset + len > tlv.length) return null;
+        if (offset + len > tlv.length) {
+            return null;
+        }
         byte[] value = new byte[len];
         System.arraycopy(tlv, offset, value, 0, len);
         return value;
@@ -1209,9 +1223,13 @@ public class PropertyTest {
     }
 
     private boolean startsWith(byte[] arr, byte[] prefix) {
-        if (arr.length < prefix.length) return false;
+        if (arr.length < prefix.length) {
+            return false;
+        }
         for (int i = 0; i < prefix.length; i++) {
-            if (arr[i] != prefix[i]) return false;
+            if (arr[i] != prefix[i]) {
+                return false;
+            }
         }
         return true;
     }
@@ -1357,7 +1375,7 @@ public class PropertyTest {
         };
 
         // DGI = SFI << 8 | recordNum. SFI=1 → DGI = 0x01xx
-        short dgi = (short) ((sfi << 8) | (recordNum & 0xFF));
+        final short dgi = (short) ((sfi << 8) | (recordNum & 0xFF));
 
         // Wrap in tag 70 per CPS requirement
         byte[] wrappedData = new byte[2 + recordContent.length];
@@ -1412,7 +1430,7 @@ public class PropertyTest {
             @ForAll @IntRange(min = 128, max = 200) int dataLength
     ) throws CardException {
         selectAndReset();
-        short tagId = (short) 0x9F46; // ICC Public Key Certificate
+        final short tagId = (short) 0x9F46; // ICC Public Key Certificate
 
         byte[] value = new byte[dataLength];
         for (int i = 0; i < dataLength; i++) {
@@ -1889,15 +1907,19 @@ public class PropertyTest {
 
     private void loadRsaKey() throws CardException {
         byte[] modCmd = new byte[5 + 128];
-        modCmd[0] = (byte) 0x80; modCmd[1] = (byte) 0x04;
-        modCmd[2] = (byte) 0x00; modCmd[3] = (byte) 0x04;
+        modCmd[0] = (byte) 0x80;
+        modCmd[1] = (byte) 0x04;
+        modCmd[2] = (byte) 0x00;
+        modCmd[3] = (byte) 0x04;
         modCmd[4] = (byte) 0x80;
         System.arraycopy(RSA_MODULUS, 0, modCmd, 5, 128);
         SmartCard.transmitCommand(modCmd);
 
         byte[] expCmd = new byte[5 + 128];
-        expCmd[0] = (byte) 0x80; expCmd[1] = (byte) 0x04;
-        expCmd[2] = (byte) 0x00; expCmd[3] = (byte) 0x05;
+        expCmd[0] = (byte) 0x80;
+        expCmd[1] = (byte) 0x04;
+        expCmd[2] = (byte) 0x00;
+        expCmd[3] = (byte) 0x05;
         expCmd[4] = (byte) 0x80;
         System.arraycopy(RSA_EXPONENT, 0, expCmd, 5, 128);
         SmartCard.transmitCommand(expCmd);
@@ -1905,14 +1927,16 @@ public class PropertyTest {
 
     private void loadEcKey() throws CardException {
         byte[] cmd = new byte[5 + 32];
-        cmd[0] = (byte) 0x80; cmd[1] = (byte) 0x04;
-        cmd[2] = (byte) 0x00; cmd[3] = (byte) 0x0B;
+        cmd[0] = (byte) 0x80;
+        cmd[1] = (byte) 0x04;
+        cmd[2] = (byte) 0x00;
+        cmd[3] = (byte) 0x0B;
         cmd[4] = (byte) 0x20;
         System.arraycopy(EC_PRIVATE_KEY, 0, cmd, 5, 32);
         SmartCard.transmitCommand(cmd);
     }
 
-    /** Run full EMV flow: SELECT → GPO → GENERATE AC (CDA), return SDAD bytes. */
+    /** Run full EMV flow: SELECT, GPO, GENERATE AC (CDA), return SDAD bytes. */
     private byte[] runCdaTransactionAndGetSdad(short atc) throws CardException {
         setupCdaCard(atc);
 
@@ -1926,17 +1950,23 @@ public class PropertyTest {
         wrappedPdol[1] = (byte) pdolData.length;
         System.arraycopy(pdolData, 0, wrappedPdol, 2, pdolData.length);
         byte[] gpoCmd = new byte[5 + wrappedPdol.length];
-        gpoCmd[0] = (byte) 0x80; gpoCmd[1] = (byte) 0xA8;
-        gpoCmd[2] = (byte) 0x00; gpoCmd[3] = (byte) 0x00;
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[2] = (byte) 0x00;
+        gpoCmd[3] = (byte) 0x00;
         gpoCmd[4] = (byte) wrappedPdol.length;
         System.arraycopy(wrappedPdol, 0, gpoCmd, 5, wrappedPdol.length);
         ResponseAPDU gpoResp = SmartCard.transmitCommand(gpoCmd);
-        if (gpoResp.getSW() != 0x9000) return null;
+        if (gpoResp.getSW() != 0x9000) {
+            return null;
+        }
 
         // GENERATE AC with CDA
         byte[] cdolData = createMinimalCdolData();
         ResponseAPDU response = sendGenerateAc(cdolData, (byte) 0x90);
-        if (response.getSW() != 0x9000) return null;
+        if (response.getSW() != 0x9000) {
+            return null;
+        }
         return extractTagValue(response.getData(), (short) 0x9F4B);
     }
 
@@ -1946,8 +1976,10 @@ public class PropertyTest {
         wrappedPdol[1] = (byte) pdolData.length;
         System.arraycopy(pdolData, 0, wrappedPdol, 2, pdolData.length);
         byte[] cmd = new byte[5 + wrappedPdol.length];
-        cmd[0] = (byte) 0x80; cmd[1] = (byte) 0xA8;
-        cmd[2] = (byte) 0x00; cmd[3] = (byte) 0x00;
+        cmd[0] = (byte) 0x80;
+        cmd[1] = (byte) 0xA8;
+        cmd[2] = (byte) 0x00;
+        cmd[3] = (byte) 0x00;
         cmd[4] = (byte) wrappedPdol.length;
         System.arraycopy(wrappedPdol, 0, cmd, 5, wrappedPdol.length);
         return SmartCard.transmitCommand(cmd);
@@ -1994,35 +2026,37 @@ public class PropertyTest {
 
         org.bouncycastle.jce.spec.ECNamedCurveParameterSpec bcSpec =
             org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256r1");
-        org.bouncycastle.math.ec.ECPoint qPoint = bcSpec.getG().multiply(privateScalar).normalize();
+        org.bouncycastle.math.ec.ECPoint point = bcSpec.getG().multiply(privateScalar).normalize();
         ECPoint pubPoint = new ECPoint(
-            qPoint.getAffineXCoord().toBigInteger(),
-            qPoint.getAffineYCoord().toBigInteger());
+            point.getAffineXCoord().toBigInteger(),
+            point.getAffineYCoord().toBigInteger());
         ECPublicKeySpec pubSpec = new ECPublicKeySpec(pubPoint, ecSpec);
         return KeyFactory.getInstance("EC").generatePublic(pubSpec);
     }
 
     private byte[] rawToDerSignature(byte[] r, byte[] s) {
-        byte[] rDer = toUnsignedDerInteger(r);
-        byte[] sDer = toUnsignedDerInteger(s);
-        int seqLen = 2 + rDer.length + 2 + sDer.length;
+        byte[] rderBytes = toUnsignedDerInteger(r);
+        byte[] sderBytes = toUnsignedDerInteger(s);
+        int seqLen = 2 + rderBytes.length + 2 + sderBytes.length;
         byte[] der = new byte[2 + seqLen];
         int idx = 0;
         der[idx++] = 0x30;
         der[idx++] = (byte) seqLen;
         der[idx++] = 0x02;
-        der[idx++] = (byte) rDer.length;
-        System.arraycopy(rDer, 0, der, idx, rDer.length);
-        idx += rDer.length;
+        der[idx++] = (byte) rderBytes.length;
+        System.arraycopy(rderBytes, 0, der, idx, rderBytes.length);
+        idx += rderBytes.length;
         der[idx++] = 0x02;
-        der[idx++] = (byte) sDer.length;
-        System.arraycopy(sDer, 0, der, idx, sDer.length);
+        der[idx++] = (byte) sderBytes.length;
+        System.arraycopy(sderBytes, 0, der, idx, sderBytes.length);
         return der;
     }
 
     private byte[] toUnsignedDerInteger(byte[] val) {
         int start = 0;
-        while (start < val.length - 1 && val[start] == 0) { start++; }
+        while (start < val.length - 1 && val[start] == 0) {
+            start++;
+        }
         if ((val[start] & 0x80) != 0) {
             byte[] result = new byte[val.length - start + 1];
             result[0] = 0x00;
@@ -2088,7 +2122,7 @@ public class PropertyTest {
         return SmartCard.transmitCommand(selectCmd);
     }
 
-    /** Build a STORE DATA command: [CLA] E2 00 00 [LC] [DGI(2)] [LEN(1)] [DATA] */
+    /** Build a STORE DATA command. */
     private byte[] buildStoreDataCmd(byte cla, short dgi, byte[] data) {
         byte[] cmd = new byte[5 + 2 + 1 + data.length];
         cmd[0] = cla;

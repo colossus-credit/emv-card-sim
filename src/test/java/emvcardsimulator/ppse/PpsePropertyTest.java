@@ -7,20 +7,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import emvcardsimulator.SmartCard;
 
+import java.util.Arrays;
+
 import javacard.framework.ISO7816;
 
 import javax.smartcardio.CardException;
 import javax.smartcardio.ResponseAPDU;
 
-import java.util.Arrays;
-
-import net.jqwik.api.*;
-import net.jqwik.api.constraints.*;
+import net.jqwik.api.Assume;
+import net.jqwik.api.ForAll;
+import net.jqwik.api.Property;
+import net.jqwik.api.constraints.IntRange;
+import net.jqwik.api.constraints.Size;
 
 /**
  * Property-based tests for PPSE (Proximity Payment System Environment).
  *
- * Spec source: EMV Book B (Entry Point), Book A (Architecture).
+ * <p>Spec source: EMV Book B (Entry Point), Book A (Architecture).
  * PPSE responds to SELECT 2PAY.SYS.DDF01 with an FCI containing
  * directory entries that list available contactless payment applications.
  */
@@ -76,7 +79,7 @@ public class PpsePropertyTest {
         SmartCard.transmitCommand(cmd);
     }
 
-    /** Build a STORE DATA command for PPSE: [00 E2 00 00] [LC] [DGI(2)] [LEN(1)] [DATA] */
+    /** Build a STORE DATA command for PPSE. */
     private byte[] buildStoreDataCmd(short dgi, byte[] data) {
         byte[] cmd = new byte[5 + 2 + 1 + data.length];
         cmd[0] = (byte) 0x00;
@@ -253,7 +256,9 @@ public class PpsePropertyTest {
 
     private boolean containsByte(byte[] data, byte target) {
         for (byte b : data) {
-            if (b == target) return true;
+            if (b == target) {
+                return true;
+            }
         }
         return false;
     }
@@ -262,9 +267,14 @@ public class PpsePropertyTest {
         for (int i = 0; i <= data.length - seq.length; i++) {
             boolean match = true;
             for (int j = 0; j < seq.length; j++) {
-                if (data[i + j] != seq[j]) { match = false; break; }
+                if (data[i + j] != seq[j]) {
+                    match = false;
+                    break;
+                }
             }
-            if (match) return true;
+            if (match) {
+                return true;
+            }
         }
         return false;
     }
