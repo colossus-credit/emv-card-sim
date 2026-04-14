@@ -10,7 +10,7 @@ public class EmvTag {
     private static EmvTag head = null;
     private static EmvTag tail = null;
 
-    private byte[] tag;
+    private short  tagId;
     private byte[] data;
     private short  length;
 
@@ -20,11 +20,13 @@ public class EmvTag {
     byte fuzzOccurrence  = (byte) 0x00;
 
     protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
-        tag = new byte[2];
-        data = new byte[400];  // CDA+ECDSA response: SDAD(~261) + CID(4) + ATC(5) + IAD(35) + CED(35)
+        this.tagId = tagId;
+        // Right-size the buffer to avoid wasting EEPROM. Most tags are small
+        // (ATC=2B, PAN=10B) and never grow. Dynamic tags (9F6E, 9F10) may
+        // grow at runtime — setData handles reallocation when needed.
+        data = new byte[length > 0 ? length : 1];
         this.length = length;
 
-        Util.setShort(tag, (short) 0, tagId);
         if (this.length != 0) {
             setData(src, srcOffset, this.length);
         }
@@ -60,8 +62,7 @@ public class EmvTag {
      */
     public static EmvTag findTag(short tag) {
         for (EmvTag iter = EmvTag.head; iter != null; iter = iter.next) {
-            short iterTag = Util.getShort(iter.tag, (short) 0);
-            if (tag == iterTag) {
+            if (tag == iter.tagId) {
                 return iter;
             }
         }
@@ -76,7 +77,7 @@ public class EmvTag {
         short count = (short) 0;
 
         for (EmvTag iter = EmvTag.head; iter != null; ) {
-            short iterTag = Util.getShort(iter.tag, (short) 0);
+            short iterTag = iter.tagId;
 
             iter = iter.next;
 
@@ -138,8 +139,12 @@ public class EmvTag {
 
     /**
      * Set the data/value and length of the tag.
+     * Reallocates the buffer if the new value doesn't fit.
      */
     public void setData(byte[] src, short srcOffset, short length) {
+        if (length > (short) data.length) {
+            data = new byte[length];
+        }
         this.length = length;
         Util.arrayCopy(src, srcOffset, data, (short) 0, this.length);
     }
@@ -159,10 +164,10 @@ public class EmvTag {
     }
 
     /**
-     * Get tag name.
+     * Get tag ID as a short (2-byte tag ID, single-byte tags are 00-padded).
      */
-    public byte[] getTag() {
-        return tag;
+    public short getTagId() {
+        return tagId;
     }
 
     /**
@@ -185,13 +190,13 @@ public class EmvTag {
     public short copyToArray(byte[] dst, short dstOffset) {
         short copyOffset = dstOffset;
 
-        if (tag[0] == (byte) 0x00) {
-            // Single byte tag
-            dst[dstOffset] = tag[1];
+        if ((tagId & (short) 0xFF00) == (short) 0x0000) {
+            // Single byte tag (high byte is 0x00)
+            dst[dstOffset] = (byte) (tagId & 0xFF);
             copyOffset += (short) 1;
         } else {
             // Two byte tag
-            Util.arrayCopy(tag, (short) 0, dst, dstOffset, (short) 2);
+            Util.setShort(dst, dstOffset, tagId);
             copyOffset += (short) 2;
         }
 
