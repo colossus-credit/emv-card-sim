@@ -1265,9 +1265,7 @@ public class PaymentApplication extends EmvApplet {
         // Debug command: returns list of all stored tag IDs (2 bytes each)
         short offset = (short) 0;
         for (EmvTag iter = EmvTag.getHead(); iter != null; iter = iter.getNext()) {
-            byte[] tagBytes = iter.getTag();
-            tmpBuffer[offset] = tagBytes[0];
-            tmpBuffer[(short)(offset + 1)] = tagBytes[1];
+            Util.setShort(tmpBuffer, offset, iter.getTagId());
             offset += (short) 2;
             if (offset >= (short) 250) break; // Prevent buffer overflow
         }
