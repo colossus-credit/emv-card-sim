@@ -24,6 +24,7 @@ task generateBuildConfig {
     def outputDir = file("src/main/java/emvcardsimulator")
     def isProduction = (build_type == "production")
 
+    inputs.property("build_type", build_type)
     outputs.file(new File(outputDir, "BuildConfig.java"))
 
     doLast {

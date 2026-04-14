@@ -62,6 +62,9 @@ class Card:
         # Cache of raw tag values, populated as set_* methods are called.
         # Used by set_record_cps to build record inner TLVs without round-tripping.
         self._tag_cache: dict[int, bytes] = {}
+        # Tags that have been included in record DGIs — these don't need
+        # standalone DGI sends since their data is already on the card.
+        self._tags_in_records: set[int] = set()
 
     # ---- Tag cache ----
 
@@ -70,19 +73,19 @@ class Card:
         self._tag_cache[tag] = data
 
     def set_emv_tag(self, tag: int, data: bytes, description: str = "") -> None:
-        """Set a raw EMV tag value on the card, caching the value locally.
+        """Set a raw EMV tag value, caching locally for later record/DGI use.
 
-        Replaces direct ``card.builder.set_emv_tag(...)`` calls so the tag
-        value is both sent to the card AND remembered for later record
-        template expansion. Routes through STORE DATA or dev 80 01 depending
-        on ``use_store_data``.
+        In CPS mode (``use_store_data=True``), values are cached only.
+        Tags that belong in records are sent inside record DGIs by
+        ``set_record_cps()``. Remaining tags are sent as standalone DGIs
+        (DGI = tag ID, per CPS §3.2 bullet 7) by ``send_standalone_tags()``.
+
+        In dev mode (``use_store_data=False``), the value is sent immediately
+        via the proprietary ``80 01`` command.
         """
         self._cache_tag(tag, data)
-        desc = description or f"SET_TAG {tag_name(tag)}"
-        if self.use_store_data:
-            self.builder.store_data(tag, data,
-                                    description=f"STORE_DATA {desc}")
-        else:
+        if not self.use_store_data:
+            desc = description or f"SET_TAG {tag_name(tag)}"
             self.builder.set_emv_tag(tag, data, desc)
 
     # ---- Application Selection ----
@@ -123,6 +126,7 @@ class Card:
             else:
                 raise
         self._tag_cache.clear()
+        self._tags_in_records.clear()
 
     # ---- EMV Tag Setting ----
 
@@ -279,6 +283,7 @@ class Card:
                     f"SFI{sfi}/REC{record}"
                 )
             body.extend(build_tlv(tag_id, self._tag_cache[tag_id]))
+            self._tags_in_records.add(tag_id)
 
         dgi = (sfi << 8) | record
         self.builder.store_data(
@@ -407,6 +412,26 @@ class Card:
                                 last=True,
                                 description="STORE_DATA DGI 7FFF (finalize perso)")
 
+    def send_standalone_tags(self) -> None:
+        """Send standalone DGIs for cached tags not already in a record.
+
+        Per CPS §3.2 bullet 7, tags not contained in any record are sent
+        as standalone DGIs where DGI value == tag ID. This must be called
+        after all ``set_record_cps()`` calls so the record-membership set
+        is complete.
+
+        Only meaningful in CPS mode — in dev mode tags were already sent
+        individually by ``set_emv_tag()``.
+        """
+        if not self.use_store_data:
+            return
+        for tag_id, data in self._tag_cache.items():
+            if tag_id not in self._tags_in_records:
+                self.builder.store_data(
+                    tag_id, data,
+                    description=f"STORE_DATA standalone DGI {tag_id:#06X} ({tag_name(tag_id)})",
+                )
+
 
 # ---- Personalization Functions ----
 
@@ -439,6 +464,9 @@ def personalize_pse(
     # `61 LL <dir_entry>` from the cached tag and send STORE DATA DGI 0101.
     card.set_emv_tag(0x61, bytes(dir_entry), "PSE directory entry (61)")
     card.set_read_record_template(1, 1, ["61"])
+
+    # Send tags not in any record as standalone DGIs (CPS §3.2 bullet 7)
+    card.send_standalone_tags()
 
 
 def personalize_ppse(
@@ -620,3 +648,6 @@ def personalize_payment_app(
         sfi = sfi_def["sfi"]
         for rec_def in sfi_def["records"]:
             card.set_read_record_template(sfi, rec_def["record"], rec_def["tags"])
+
+    # Send tags not in any record as standalone DGIs (CPS §3.2 bullet 7)
+    card.send_standalone_tags()
