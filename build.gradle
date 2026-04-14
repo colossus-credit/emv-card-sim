@@ -33,6 +33,7 @@ task generateBuildConfig {
     def isProduction = (build_type == "production")
     def hasRsaCipher = (has_rsa_cipher == "true")
 
+    inputs.property("build_type", build_type)
     outputs.file(new File(outputDir, "BuildConfig.java"))
     outputs.file(new File(outputDir, "RsaSignerHelper.java"))
 

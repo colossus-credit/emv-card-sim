@@ -562,14 +562,53 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             // personalization data. It must be accepted on the last STORE DATA
             // command. We don't verify the MAC (no MAC key plumbed yet) but we
             // accept it as a no-op so real perso bureau scripts don't fail.
-        } else if (dgi != (short) 0x0000) {
-            // Everything else (non-zero) = EMV tag: DGI is the tag ID
-            JCSystem.beginTransaction();
+        } else if (dgi >= (short) 0x7FF0 && dgi <= (short) 0x7FFE) {
+            // CPS §3.2 bullet 10: reserved for application-independent processing
+            ISOException.throwIt(PersoSw.SW_UNRECOGNIZED_DGI);
+        } else if (isAcceptedTagDgi(dgi)) {
+            // CPS §3.2 bullet 7: DGI value == EMV tag → store directly.
+            // Only tags the applet actually uses are accepted; everything
+            // else is rejected per CPS §5.4.2.3.
             EmvTag.setTag(dgi, buf, offset, length);
-            JCSystem.commitTransaction();
         } else {
-            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            // CPS §5.4.2.3: unrecognised DGI
+            ISOException.throwIt(PersoSw.SW_UNRECOGNIZED_DGI);
         }
+    }
+
+    /**
+     * Whitelist of standalone tag DGIs accepted per CPS §3.2 bullet 7.
+     * These are tags NOT contained in any record but needed by the applet
+     * at transaction time (FCI SELECT, GPO, GenAC) or during perso.
+     */
+    private static final short[] ACCEPTED_TAG_DGIS = {
+        // FCI SELECT response tags
+        (short) 0x0050, // Application Label
+        (short) 0x0082, // Application Interchange Profile (AIP)
+        (short) 0x0084, // DF Name (AID)
+        (short) 0x0087, // Application Priority Indicator
+        (short) 0x0088, // SFI of Directory EF (PSE)
+        (short) 0x008E, // CVM List (PSE)
+        (short) 0x5F2D, // Language Preference
+        (short) 0x9F11, // Issuer Code Table Index
+        (short) 0x9F12, // Application Preferred Name (contactless)
+        (short) 0x9F38, // PDOL (contactless)
+        // GPO / GenAC response tags
+        (short) 0x0094, // Application File Locator (AFL)
+        (short) 0x9F10, // Issuer Application Data (IAD)
+        (short) 0x9F36, // Application Transaction Counter (ATC)
+        (short) 0x9F6C, // Card Transaction Qualifiers (CTQ, contactless)
+        // Internal / other
+        (short) 0x9F1F, // Track 1 Discretionary Data
+    };
+
+    private static boolean isAcceptedTagDgi(short dgi) {
+        for (short i = 0; i < ACCEPTED_TAG_DGIS.length; i++) {
+            if (ACCEPTED_TAG_DGIS[i] == dgi) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
