@@ -1,0 +1,13 @@
+# Setup PPSE (2PAY.SYS.DDF01) for contactless with default profile AID
+# Select PPSE
+- req: '00 A4 04 00 0E 32 50 41 59 2E 53 59 53 2E 44 44 46 30 31'
+  res: '90 00'
+# Factory reset
+- req: '80 05 00 00 00'
+  res: '90 00'
+# SET_DIRECTORY_ENTRY (80 01 00 61):
+#   4F 07 A0000009511010       (AID = default contactless)
+#   50 08 434F4C4F53535553      (label = COLOSSUS)
+#   87 01 01                    (priority)
+- req: '80 01 00 61 16 4F 07 A0 00 00 09 51 10 10 50 08 43 4F 4C 4F 53 53 55 53 87 01 01'
+  res: '90 00'

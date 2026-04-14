@@ -38,4 +38,4 @@ build
 !gradle/wrapper/gradle-wrapper.jar
 
 keys/*
-!keys/.gitkeep
+!keys/.gitkeepsrc/test/rust/simulator/.cargo/
