@@ -63,7 +63,6 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
 
     protected EmvTag emvTags;
-    protected ReadRecord readRecords;
 
     /**
      * Personalization lifecycle (CPS v2.0). Tracks PERSO_PENDING vs PERSO_DONE.
@@ -80,6 +79,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected TagTemplate tagBf0cFci;
 
     protected byte[] defaultReadRecord;
+
+    /** Scratch array for building RecordTemplate refs at STORE DATA time. */
+    protected static EmvTag[] tmpTagRefs;
 
 
     protected short responseTemplateTag;
@@ -104,8 +106,8 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         JCSystem.commitTransaction();
 
         ApduLog.clear();
-        ReadRecord.clear();
         EmvTag.clear();
+        RecordTemplate.clearAll();
 
         if (lifecycle != null) {
             lifecycle.resetForTesting();
@@ -356,9 +358,23 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             dataOffset = ISO7816.OFFSET_CDATA;
         }
 
-        JCSystem.beginTransaction();
-        EmvTag.setTag(canonicalKey, buf, dataOffset, dataLen);
-        JCSystem.commitTransaction();
+        // Parse the incoming tag-ID list: pairs of 2-byte tag IDs (single-byte
+        // tags are 00-padded, e.g., [00 57 00 5A 5F 24 9F 07]).
+        // Resolve each to a direct EmvTag reference for O(k) READ RECORD.
+        short refCount = (short) 0;
+        for (short i = (short) 0; i < dataLen; i += (short) 2) {
+            short tagId = Util.getShort(buf, (short) (dataOffset + i));
+            EmvTag ref = EmvTag.findTag(tagId);
+            if (ref == null) {
+                // Tag will be populated later via set_emv_tag (dev command 0x8001).
+                // Create an empty placeholder to hold the reference.
+                ref = new EmvTag(tagId, buf, (short) 0, (short) 0);
+            }
+            tmpTagRefs[refCount] = ref;
+            refCount++;
+        }
+
+        RecordTemplate.setTemplate(canonicalKey, tmpTagRefs, refCount);
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
@@ -470,26 +486,22 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 dataLen = innerLen;
             }
 
-            // Parse the inner TLV to extract tag IDs and values. Store each
-            // tag's value individually in EmvTag, and build a tag-ID template
-            // (2-byte pairs, single-byte tags 00-padded) for the record key.
-            //
-            // This matches the old dev-command format: processReadRecord does
-            // template expansion at READ time, looking up each tag's CURRENT
-            // value. This is critical for tags that are modified per-transaction
-            // (e.g., 9F6E gets the ECDSA s-value written at GPO time).
-            short templateLen = (short) 0;
+            // Parse inner TLV: store each tag's value in EmvTag, and collect
+            // direct EmvTag references into tmpTagRefs for the RecordTemplate.
+            // At READ RECORD time the template resolves each tag's CURRENT
+            // value via the stored reference — no linked-list walk needed.
+            // Dynamic tags (e.g., 9F6E updated at GPO) work because setData()
+            // modifies the EmvTag node in place; the reference stays valid.
+            short refCount = (short) 0;
             short pos = dataOffset;
             short endPos = (short) (dataOffset + dataLen);
             while (pos < endPos) {
                 // Read tag (1 or 2 bytes)
                 short tagId;
                 if ((buf[pos] & (byte) 0x1F) == (byte) 0x1F) {
-                    // 2-byte tag
                     tagId = Util.getShort(buf, pos);
                     pos += (short) 2;
                 } else {
-                    // 1-byte tag → store as 00 XX (matches EmvTag format)
                     tagId = (short) (buf[pos] & 0x00FF);
                     pos += (short) 1;
                 }
@@ -509,24 +521,17 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                     pos += (short) 1;
                 }
 
-                // Store this tag's value in EmvTag (individual tag entry)
-                EmvTag.setTag(tagId, buf, pos, tLen);
-
-                // Append tag ID to template in tmpBuffer
-                Util.setShort(tmpBuffer, templateLen, tagId);
-                templateLen += (short) 2;
+                // Store tag value and capture the direct reference
+                EmvTag ref = EmvTag.setTag(tagId, buf, pos, tLen);
+                tmpTagRefs[refCount] = ref;
+                refCount++;
 
                 pos += tLen;
             }
 
-            // Store the tag-ID template as EmvTag[recordKey]. The template
-            // format is 2-byte pairs where single-byte tags are 00-padded
-            // (e.g., [00 57 00 5A 5F 24 9F 07]). processReadRecord detects
-            // templates by checking data[0] == 0x00.
+            // Build RecordTemplate with direct EmvTag references — O(k) READ RECORD
             short recordKey = (short) ((recordNo << 8) | (sfi << 3));
-            JCSystem.beginTransaction();
-            EmvTag.setTag(recordKey, tmpBuffer, (short) 0, templateLen);
-            JCSystem.commitTransaction();
+            RecordTemplate.setTemplate(recordKey, tmpTagRefs, refCount);
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
                    || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
             // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
@@ -757,33 +762,19 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         // so stripping the low 3 bits gives a consistent lookup.
         short recordKey = (short) (p1p2 & (short) 0xFFF8);
 
-        // Look up record data in EmvTag keyed by canonical record key.
-        // Both CPS STORE DATA records and legacy dev 0x8003 records are stored
-        // as tag-ID templates and expanded at READ time.
-        EmvTag recordTag = EmvTag.findTag(recordKey);
-        if (recordTag == null) {
+        // Look up the pre-built record template. Both CPS STORE DATA records
+        // and legacy dev 0x8003 records store direct EmvTag references that
+        // are expanded at READ time via copyToArray — O(k) where k = number
+        // of tags in the record. Dynamic tags (e.g., 9F6E written at GPO time)
+        // are automatically resolved to their current value because setData()
+        // modifies the EmvTag node in place; the stored reference stays valid.
+        RecordTemplate template = RecordTemplate.findTemplate(recordKey);
+        if (template == null) {
             EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
         }
 
-        // Record data is a tag-ID template: pairs of 2-byte tag IDs where
-        // single-byte tags are 00-padded (e.g., [00 57 00 5A 5F 24 9F 07]).
-        // Both CPS STORE DATA records (parsed to templates in processOneDgi)
-        // and dev 0x8003 records use this format.
-        //
-        // Template expansion looks up each tag's CURRENT value in EmvTag.
-        // This is critical for tags modified per-transaction at runtime —
-        // e.g., 9F6E gets the ECDSA s-value written at GPO time.
-        byte[] recordData = recordTag.getData();
-        short recordLen = recordTag.getLength();
-        short contentLen = (short) 0;
-        for (short i = (short) 0; i < recordLen; i += (short) 2) {
-            short tagId = Util.getShort(recordData, i);
-            EmvTag tag = EmvTag.findTag(tagId);
-            if (tag == null) {
-                EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
-            }
-            contentLen = tag.copyToArray(tmpBuffer, contentLen);
-        }
+        // Expand all tag values into tmpBuffer — O(k) direct reference access
+        short contentLen = template.expandToArray(tmpBuffer, (short) 0);
 
         // Build tag 70 wrapper in chunkBuffer and send via sendBytesLong.
         // This matches the proven-working pattern from feat/applet-hardening:
@@ -810,6 +801,8 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected EmvApplet() {
         tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         chunkBuffer = new byte[512];  // Persistent buffer for chunked transfers
+        // Max tags per record is ~30 (typical EMV record has 4-8 tags).
+        tmpTagRefs = new EmvTag[30];
 
         // Instantiate lifecycle BEFORE factoryReset() so it can clear it safely.
         lifecycle = new AppletLifecycle();
@@ -822,10 +815,6 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         tag6fFci = new TagTemplate();
         tagA5Fci = new TagTemplate();
         tagBf0cFci = new TagTemplate();
-
-        //emvTags = EmvTag.setTag((short) 0x00, tmpBuffer, (short) 0, (byte) 0);
-
-        //readRecords = ReadRecord.setRecord((short) 0x00, tmpBuffer, (short) 0, (byte) 0);
 
         randomData = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
     }
