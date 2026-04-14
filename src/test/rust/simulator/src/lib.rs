@@ -2,7 +2,7 @@ use hex;
 use jni::objects::{GlobalRef, JClass, JObject};
 use jni::sys::jbyteArray;
 use jni::JNIEnv;
-use log::trace;
+use log::{trace, info, warn};
 use log::LevelFilter;
 use log4rs;
 use log4rs::{
@@ -94,8 +94,9 @@ impl ApduRequestResponse {
             let (response_trailer, _) = connection.send_apdu(&request);
             if &response_trailer[..] != &response[..] {
                 return Err(format!(
-                    "Response not what expected! setup_file:{}, expected:{:02X?}, actual:{:02X?}",
+                    "Response not what expected! setup_file:{}, req:{:02X?}, expected:{:02X?}, actual:{:02X?}",
                     setup_file,
+                    &request[..],
                     &response[..],
                     &response_trailer[..]
                 ));
@@ -212,6 +213,131 @@ pub extern "system" fn Java_emvcardsimulator_SimulatorTest_entryPoint(
             "../config/card_log_consume_apdus.yaml",
         )
         .unwrap();
+    }
+}
+
+// ============================================================
+// Contactless Mastercard Kernel 2 test entry point
+// ============================================================
+
+#[no_mangle]
+pub extern "system" fn Java_emvcardsimulator_ContactlessSimulatorTest_sendApduResponse(
+    env: JNIEnv,
+    _class: JClass,
+    response_apdu: jbyteArray,
+) {
+    unsafe {
+        APDU_RESPONSE.clear();
+        APDU_RESPONSE.extend_from_slice(&env.convert_byte_array(response_apdu).unwrap()[..]);
+        trace!("CL RESPONSE: {:02X?}", APDU_RESPONSE);
+    }
+}
+
+fn pse_application_select_contactless(applications: &Vec<EmvApplication>) -> Result<EmvApplication, ()> {
+    // Auto-select first application (for automated testing)
+    if applications.is_empty() {
+        warn!("No applications found in PPSE");
+        return Err(());
+    }
+    info!("Auto-selecting application: AID={:02X?}, label={:?}",
+        applications[0].aid,
+        String::from_utf8_lossy(&applications[0].label));
+    Ok(applications[0].clone())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_emvcardsimulator_ContactlessSimulatorTest_entryPointContactless(
+    env: JNIEnv<'static>,
+    _class: JClass,
+    callback: JObject,
+) {
+    let _ = init_logging();
+    info!("Contactless Kernel 2 simulator entry point called!");
+
+    unsafe {
+        ENV = Some(env);
+        let _jvm = ENV.as_ref().unwrap().get_java_vm().unwrap();
+        CALLBACK = Some(ENV.as_ref().unwrap().new_global_ref(callback).unwrap());
+
+        info!("JNI env and callback set up OK");
+
+        let mut connection = EmvConnection::new("../config/settings_contactless.yaml").unwrap();
+        info!("EmvConnection created OK, contactless_kernels={}", connection.settings.contactless_kernels.is_some());
+        let smart_card_connection = JavaSmartCardConnection {};
+        connection.interface = Some(&smart_card_connection);
+        connection.contactless = true;
+        connection.pse_application_select_callback = Some(&pse_application_select_contactless);
+        connection.pin_callback = Some(&pin_entry);
+        connection.settings.terminal.use_random = false;
+
+        // Setup PPSE data on the card
+        ApduRequestResponse::execute_setup_apdus(
+            &mut connection,
+            "../config/card_setup_ppse_apdus.yaml",
+        )
+        .unwrap();
+
+        // Select PPSE and get application list
+        let application = connection.select_payment_application().unwrap();
+        info!("Selected application: AID={:02X?}", application.aid);
+
+        // Setup the contactless MC payment app data
+        if let Err(e) = ApduRequestResponse::execute_setup_apdus(
+            &mut connection,
+            "../config/card_setup_mc_contactless_apdus.yaml",
+        ) {
+            panic!("MC contactless setup failed: {}", e);
+        }
+
+        // Process settings (sets default tags, date, time, unpredictable number)
+        connection.process_settings().unwrap();
+
+        // Force deterministic values for reproducible tests
+        connection.add_tag("9A", b"\x26\x04\x13".to_vec());
+        connection.add_tag("9F37", b"\xDE\xAD\xBE\xEF".to_vec());
+        connection.add_tag("9F02", b"\x00\x00\x00\x00\x10\x00".to_vec()); // $10.00
+
+        // Run the contactless transaction through Kernel 2
+        info!("=== Starting Mastercard Contactless Kernel 2 transaction ===");
+
+        match connection.handle_contactless_transaction(&application) {
+            Ok(outcome) => {
+                info!("Contactless transaction outcome: {}", outcome);
+
+                use emvpt::contactless::OutcomeType;
+
+                // Assert: transaction must reach ARQC (online request) or TC (approved)
+                // Any other outcome is a test failure
+                match outcome.outcome {
+                    OutcomeType::Approved => {
+                        info!("=== KERNEL 2 TEST PASSED: APPROVED (offline TC) ===");
+                    }
+                    OutcomeType::OnlineRequest => {
+                        info!("=== KERNEL 2 TEST PASSED: ONLINE REQUEST (ARQC) ===");
+                    }
+                    OutcomeType::Declined => {
+                        panic!("KERNEL 2 TEST FAILED: transaction declined (AAC)");
+                    }
+                    other => {
+                        panic!("KERNEL 2 TEST FAILED: unexpected outcome {:?}", other);
+                    }
+                }
+
+                // Assert: cryptogram data must be present
+                // Note: when CDA is used, 9F26 (AC) is embedded inside 9F4B (SDAD), not standalone
+                assert!(connection.get_tag_value("9F27").is_some(),
+                    "KERNEL 2 TEST FAILED: Cryptogram Information Data (9F27) missing");
+                assert!(connection.get_tag_value("9F36").is_some(),
+                    "KERNEL 2 TEST FAILED: Application Transaction Counter (9F36) missing");
+                assert!(connection.get_tag_value("9F10").is_some(),
+                    "KERNEL 2 TEST FAILED: Issuer Application Data (9F10) missing — ECDSA r expected here");
+            }
+            Err(e) => {
+                panic!("Contactless transaction failed: {}", e);
+            }
+        }
+
+        info!("=== Mastercard Contactless Kernel 2 test complete ===");
     }
 }
 
