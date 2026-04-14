@@ -568,7 +568,7 @@ public class PaymentApplication extends EmvApplet {
         // Don't clear logs here - it prevents reading logs via opensc-tool
         // The rolling log limit (maxCount=10) handles old logs
 
-        // Check if PAN (tag A5) exists in the ICC
+        // Check if PAN (tag 5A) exists in the ICC
         if (EmvTag.findTag((short) 0x5A) != null) {
             arrayRandomFill(challenge);
 
@@ -663,9 +663,9 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Send GENERATE AC response with CDA per EMV Book 2 Table 20.
-     * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD)
-     *                  + optional 9F6E (ECDSA s when EC key is loaded).
+     * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD).
      * Note: 9F26 (AC) is NOT included — AC is embedded inside the SDAD.
+     *       9F6E (ECDSA s) omitted — terminal rejects non-standard tag lengths.
      */
     private void sendGenerateAcResponseCda(APDU apdu, byte[] buf) {
         short offset = (short) 0;

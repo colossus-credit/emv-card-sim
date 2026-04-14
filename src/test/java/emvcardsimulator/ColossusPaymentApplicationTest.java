@@ -2949,5 +2949,426 @@ public class ColossusPaymentApplicationTest {
         byte[] data = response.getData();
         assertEquals((byte) 0x70, data[0], "Response must start with tag 70");
     }
+
+    // ========================================================================
+    // CPS Record + Full Contactless Transaction Flow
+    // ========================================================================
+
+    /**
+     * End-to-end test: CPS-mode personalization (matching the Python tool's
+     * STORE DATA DGI XXYY path) followed by a full contactless transaction
+     * flow (SELECT → GPO → READ RECORD per AFL → GENERATE AC).
+     *
+     * <p>This test validates that every READ RECORD response is well-formed
+     * tag-70 TLV — the exact thing the C-2 kernel parses. If there's a
+     * PARSING ERROR (L2=04), this test will catch it.
+     */
+    @Test
+    @DisplayName("CPS records: full contactless flow with READ RECORD per AFL")
+    public void testCpsRecordsFullContactlessFlow() throws Exception {
+        setupColossusCard();
+        setupRsaKey();
+
+        // ── Tags (matching default.yaml contactless profile) ──
+        assertStoreData(0x00, 0x84, new byte[] {
+            (byte) 0xA0, 0x00, 0x00, 0x00, 0x09, 0x51, 0x10, 0x10
+        }, "AID");
+        assertStoreData(0x00, 0x50, "COLOSSUS".getBytes(), "Label");
+        assertStoreData(0x00, 0x87, new byte[] { 0x01 }, "Priority");
+        assertStoreData(0x9F, 0x12, "COLOSSUS CREDIT".getBytes(), "Preferred Name");
+        assertStoreData(0x9F, 0x11, new byte[] { 0x01 }, "Issuer Code Table Index");
+        assertStoreData(0x5F, 0x2D, new byte[] { 0x65, 0x6E }, "Language Preference");
+        assertStoreData(0x00, 0x5A, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76
+        }, "PAN");
+        assertStoreData(0x5F, 0x24, new byte[] { 0x27, 0x12, 0x31 }, "Expiry");
+        assertStoreData(0x5F, 0x28, new byte[] { 0x08, 0x40 }, "Issuer Country");
+        assertStoreData(0x5F, 0x34, new byte[] { 0x01 }, "PAN Seq No");
+        assertStoreData(0x9F, 0x07, new byte[] { (byte) 0xAB, 0x00 }, "AUC");
+        assertStoreData(0x00, 0x57, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76,
+            (byte) 0xD2, 0x71, 0x22, 0x20, 0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x0F
+        }, "Track2");
+
+        // CDOL1 DOL
+        byte[] cdol1 = new byte[] {
+            (byte) 0x9F, 0x02, 0x06, (byte) 0x9F, 0x03, 0x06,
+            (byte) 0x9F, 0x1A, 0x02, (byte) 0x95, 0x05,
+            0x5F, 0x2A, 0x02, (byte) 0x9A, 0x03,
+            (byte) 0x9C, 0x01, (byte) 0x9F, 0x37, 0x04,
+            (byte) 0x9F, 0x1C, 0x08, (byte) 0x9F, 0x16, 0x0F,
+            (byte) 0x9F, 0x01, 0x06
+        };
+        assertStoreData(0x00, 0x8C, cdol1, "CDOL1");
+        // CDOL2
+        byte[] cdol2 = new byte[cdol1.length + 3];
+        cdol2[0] = (byte) 0x8A; cdol2[1] = 0x02; // Auth Response Code prefix
+        System.arraycopy(cdol1, 0, cdol2, 2, cdol1.length);
+        // Fix: length is cdol1.length+2, but cdol2 has room. Actually let's build it right:
+        byte[] cdol2Correct = new byte[] {
+            (byte) 0x8A, 0x02,
+            (byte) 0x9F, 0x02, 0x06, (byte) 0x9F, 0x03, 0x06,
+            (byte) 0x9F, 0x1A, 0x02, (byte) 0x95, 0x05,
+            0x5F, 0x2A, 0x02, (byte) 0x9A, 0x03,
+            (byte) 0x9C, 0x01, (byte) 0x9F, 0x37, 0x04,
+            (byte) 0x9F, 0x1C, 0x08, (byte) 0x9F, 0x16, 0x0F,
+            (byte) 0x9F, 0x01, 0x06
+        };
+        assertStoreData(0x00, 0x8D, cdol2Correct, "CDOL2");
+
+        // CVM List
+        assertStoreData(0x00, 0x8E, new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x42, 0x03, 0x1F, 0x00
+        }, "CVM List");
+        // IACs
+        assertStoreData(0x9F, 0x0D, new byte[] { (byte) 0xD8, 0x40, 0x00, (byte) 0xA8, 0x00 }, "IAC-Default");
+        assertStoreData(0x9F, 0x0E, new byte[] { 0x00, 0x10, 0x00, 0x00, 0x00 }, "IAC-Denial");
+        assertStoreData(0x9F, 0x0F, new byte[] { (byte) 0xD8, 0x40, 0x04, (byte) 0xF8, 0x00 }, "IAC-Online");
+        assertStoreData(0x9F, 0x4A, new byte[] { (byte) 0x82 }, "SDA Tag List");
+
+        // Cardholder Name
+        assertStoreData(0x5F, 0x20, "COLOSSUS/CARDHOLDER ".getBytes(), "Cardholder Name");
+        // Effective Date
+        assertStoreData(0x5F, 0x25, new byte[] { 0x24, 0x01, 0x01 }, "Effective Date");
+        // Service Code, Currency, etc.
+        assertStoreData(0x5F, 0x30, new byte[] { 0x07, 0x01 }, "Service Code");
+        assertStoreData(0x9F, 0x08, new byte[] { 0x00, 0x02 }, "App Version Number");
+        assertStoreData(0x9F, 0x42, new byte[] { 0x08, 0x40 }, "Currency Code");
+        assertStoreData(0x9F, 0x44, new byte[] { 0x02 }, "Currency Exponent");
+        // DDOL
+        assertStoreData(0x9F, 0x49, cdol1, "DDOL");
+        // Form Factor Indicator
+        assertStoreData(0x9F, 0x6E, new byte[] { 0x08, 0x40, 0x00, 0x00 }, "FFI");
+        // CTQ
+        assertStoreData(0x9F, 0x6C, new byte[] { (byte) 0x80, 0x00 }, "CTQ");
+        // IAD
+        assertStoreData(0x9F, 0x10, new byte[] { 0x06, 0x01, 0x0A, 0x03, (byte) 0xA4, (byte) 0xA0, 0x02 }, "IAD");
+        // Track 1 Discretionary Data
+        byte[] track1Disc = new byte[19];
+        assertStoreData(0x9F, 0x1F, track1Disc, "Track1 Disc Data");
+
+        // AIP (contactless = 1980)
+        assertStoreData(0x00, 0x82, new byte[] { 0x19, (byte) 0x80 }, "AIP");
+        // ATC
+        assertStoreData(0x9F, 0x36, new byte[] { 0x00, 0x01 }, "ATC");
+
+        // AFL: SFI1 recs 1-3 (ODA=0), SFI2 recs 1-2 (ODA=1), SFI3 recs 1-2 (ODA=0)
+        assertStoreData(0x00, 0x94, new byte[] {
+            0x08, 0x01, 0x03, 0x00,  // SFI1 recs 1-3, ODA=0
+            0x10, 0x01, 0x02, 0x01,  // SFI2 recs 1-2, ODA=1
+            0x18, 0x01, 0x02, 0x00   // SFI3 recs 1-2, ODA=0
+        }, "AFL");
+
+        // PDOL
+        assertStoreData(0x9F, 0x38, cdol1, "PDOL");
+
+        // Certificates (from the RSA key pair already loaded)
+        // Use dummy cert data for test — just needs valid TLV structure
+        byte[] dummyCert = new byte[128];
+        Arrays.fill(dummyCert, (byte) 0x6A); // cert padding byte
+        assertStoreData(0x00, 0x90, dummyCert, "Issuer PK Cert");
+        byte[] dummyRemainder = new byte[36];
+        Arrays.fill(dummyRemainder, (byte) 0xBB);
+        assertStoreData(0x00, 0x92, dummyRemainder, "Issuer PK Remainder");
+        assertStoreData(0x00, 0x8F, new byte[] { (byte) 0x92 }, "CAPK Index");
+        assertStoreData(0x9F, 0x32, new byte[] { 0x03 }, "Issuer PK Exp");
+        assertStoreData(0x9F, 0x47, new byte[] { 0x03 }, "ICC PK Exp");
+        assertStoreData(0x9F, 0x46, dummyCert, "ICC PK Cert");
+        assertStoreData(0x9F, 0x48, dummyRemainder, "ICC PK Remainder");
+
+        // EC private key
+        assertStoreData(0x82, 0x03, new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, 0x33, 0x41, 0x2E,
+            (byte) 0xBF, (byte) 0x9E, 0x0E, 0x34,
+            0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, 0x64, 0x32, (byte) 0xA7,
+            0x72, 0x66, (byte) 0xF0, 0x5D,
+            (byte) 0xA5, 0x00, 0x16, 0x00,
+            (byte) 0xC2, (byte) 0xE3, 0x51, 0x62
+        }, "EC key");
+
+        // Templates
+        assertStoreData(0xA0, 0x02, new byte[] { 0x00, (byte) 0x80 }, "Response template=Format1");
+        assertStoreData(0xA0, 0x03, new byte[] { 0x00, 0x01 }, "Flags");
+        assertStoreData(0xB0, 0x01, new byte[] {
+            0x00, (byte) 0x82, 0x00, (byte) 0x94
+        }, "GPO template (AIP+AFL)");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, 0x27, (byte) 0x9F, 0x36,
+            (byte) 0x9F, 0x26, (byte) 0x9F, 0x10
+        }, "GenAC template");
+        assertStoreData(0xB0, 0x05, new byte[] {
+            0x00, 0x50, 0x00, (byte) 0x87,
+            (byte) 0x9F, 0x12, (byte) 0x9F, 0x11,
+            0x5F, 0x2D, (byte) 0x9F, 0x38
+        }, "FCI A5 template");
+        assertStoreData(0xB0, 0x04, new byte[] {
+            0x00, (byte) 0x84, 0x00, (byte) 0xA5
+        }, "FCI 6F template");
+
+        // ── CPS Record DGIs (NO tag-70 wrapper — matching Python tool) ──
+        // SFI1/REC1: 57 + 5A + 5F24 + 5F28 + 5F34 + 9F07 + 8C
+        ByteArrayOutputStream sfi1rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec1, 0x57, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76,
+            (byte) 0xD2, 0x71, 0x22, 0x20, 0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x0F
+        });
+        writeTlv(sfi1rec1, 0x5A, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76
+        });
+        writeTlv(sfi1rec1, 0x5F24, new byte[] { 0x27, 0x12, 0x31 });
+        writeTlv(sfi1rec1, 0x5F28, new byte[] { 0x08, 0x40 });
+        writeTlv(sfi1rec1, 0x5F34, new byte[] { 0x01 });
+        writeTlv(sfi1rec1, 0x9F07, new byte[] { (byte) 0xAB, 0x00 });
+        writeTlv(sfi1rec1, 0x8C, cdol1);
+        assertStoreData(0x01, 0x01, sfi1rec1.toByteArray(), "SFI1/REC1");
+
+        // SFI1/REC2: 5F20 + 5F25 + 8D + 8E + 9F0D + 9F0E + 9F0F + 9F4A
+        ByteArrayOutputStream sfi1rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec2, 0x5F20, "COLOSSUS/CARDHOLDER ".getBytes());
+        writeTlv(sfi1rec2, 0x5F25, new byte[] { 0x24, 0x01, 0x01 });
+        writeTlv(sfi1rec2, 0x8D, cdol2Correct);
+        writeTlv(sfi1rec2, 0x8E, new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x42, 0x03, 0x1F, 0x00
+        });
+        writeTlv(sfi1rec2, 0x9F0D, new byte[] { (byte) 0xD8, 0x40, 0x00, (byte) 0xA8, 0x00 });
+        writeTlv(sfi1rec2, 0x9F0E, new byte[] { 0x00, 0x10, 0x00, 0x00, 0x00 });
+        writeTlv(sfi1rec2, 0x9F0F, new byte[] { (byte) 0xD8, 0x40, 0x04, (byte) 0xF8, 0x00 });
+        writeTlv(sfi1rec2, 0x9F4A, new byte[] { (byte) 0x82 });
+        assertStoreData(0x01, 0x02, sfi1rec2.toByteArray(), "SFI1/REC2");
+
+        // SFI1/REC3: 5F30 + 9F08 + 9F42 + 9F44 + 9F49 + 9F6E
+        ByteArrayOutputStream sfi1rec3 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec3, 0x5F30, new byte[] { 0x07, 0x01 });
+        writeTlv(sfi1rec3, 0x9F08, new byte[] { 0x00, 0x02 });
+        writeTlv(sfi1rec3, 0x9F42, new byte[] { 0x08, 0x40 });
+        writeTlv(sfi1rec3, 0x9F44, new byte[] { 0x02 });
+        writeTlv(sfi1rec3, 0x9F49, cdol1);
+        writeTlv(sfi1rec3, 0x9F6E, new byte[] { 0x08, 0x40, 0x00, 0x00 });
+        assertStoreData(0x01, 0x03, sfi1rec3.toByteArray(), "SFI1/REC3");
+
+        // SFI2/REC1: 8F + 92 + 9F32 + 9F47
+        ByteArrayOutputStream sfi2rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi2rec1, 0x8F, new byte[] { (byte) 0x92 });
+        writeTlv(sfi2rec1, 0x92, dummyRemainder);
+        writeTlv(sfi2rec1, 0x9F32, new byte[] { 0x03 });
+        writeTlv(sfi2rec1, 0x9F47, new byte[] { 0x03 });
+        assertStoreData(0x02, 0x01, sfi2rec1.toByteArray(), "SFI2/REC1");
+
+        // SFI2/REC2: 90 (Issuer PK Certificate, 128 bytes)
+        ByteArrayOutputStream sfi2rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi2rec2, 0x90, dummyCert);
+        assertStoreData(0x02, 0x02, sfi2rec2.toByteArray(), "SFI2/REC2");
+
+        // SFI3/REC1: 9F46 (ICC PK Certificate, 128 bytes)
+        ByteArrayOutputStream sfi3rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi3rec1, 0x9F46, dummyCert);
+        assertStoreData(0x03, 0x01, sfi3rec1.toByteArray(), "SFI3/REC1");
+
+        // SFI3/REC2: 9F48 (ICC PK Remainder)
+        ByteArrayOutputStream sfi3rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi3rec2, 0x9F48, dummyRemainder);
+        assertStoreData(0x03, 0x02, sfi3rec2.toByteArray(), "SFI3/REC2");
+
+        // ── SELECT contactless AID ──
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            0x00, (byte) 0xA4, 0x04, 0x00, 0x08,
+            (byte) 0xA0, 0x00, 0x00, 0x00, 0x09, 0x51, 0x10, 0x10
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
+        byte[] fci = response.getData();
+        assertValidTlv(fci, "SELECT FCI");
+        System.out.println("  SELECT: OK, FCI=" + bytesToHex(fci));
+
+        // ── GPO with PDOL ──
+        byte[] pdolData = new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x10, 0x00,  // Amount
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Amount Other
+            0x08, 0x40,                            // Country Code
+            0x00, 0x00, 0x00, 0x00, 0x00,          // TVR
+            0x08, 0x40,                            // Currency
+            0x26, 0x04, 0x03,                      // Date
+            0x00,                                  // Type
+            (byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF,  // UN
+            0x54, 0x45, 0x52, 0x4D, 0x30, 0x30, 0x30, 0x31,     // TermID
+            0x4D, 0x45, 0x52, 0x43, 0x48, 0x41, 0x4E, 0x54,     // MerchID
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31,
+            0x00, 0x00, 0x01, 0x23, 0x45, 0x67                   // AcqID
+        };
+        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[2] = 0x00;
+        gpoCmd[3] = 0x00;
+        gpoCmd[4] = (byte) (2 + pdolData.length);
+        gpoCmd[5] = (byte) 0x83;
+        gpoCmd[6] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        response = SmartCard.transmitCommand(gpoCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
+        byte[] gpoResp = response.getData();
+        System.out.println("  GPO: OK, resp=" + bytesToHex(gpoResp));
+
+        // Parse AIP + AFL from Format 1 response (tag 80)
+        assertEquals((byte) 0x80, gpoResp[0], "GPO should return Format 1 (tag 80)");
+        int gpoLen = gpoResp[1] & 0xFF;
+        byte[] aip = Arrays.copyOfRange(gpoResp, 2, 4);
+        byte[] afl = Arrays.copyOfRange(gpoResp, 4, 2 + gpoLen);
+        System.out.println("  AIP=" + bytesToHex(aip) + " AFL=" + bytesToHex(afl));
+
+        // ── READ RECORD per AFL ──
+        for (int i = 0; i < afl.length; i += 4) {
+            int aflByte = afl[i] & 0xFF;    // AFL byte: (SFI << 3) with low 3 bits zero
+            int firstRec = afl[i + 1] & 0xFF;
+            int lastRec = afl[i + 2] & 0xFF;
+            int odaCount = afl[i + 3] & 0xFF;
+            int sfi = (aflByte >> 3) & 0x1F;
+            // READ RECORD P2 = (SFI << 3) | 0x04, where 0x04 = "reference by SFI"
+            // per EMV Book 3 §6.5.11.4. The AFL byte has 0x00 in the low 3 bits.
+            int readP2 = aflByte | 0x04;
+
+            for (int rec = firstRec; rec <= lastRec; rec++) {
+                byte[] readCmd = new byte[] {
+                    0x00, (byte) 0xB2, (byte) rec, (byte) readP2, 0x00
+                };
+                response = SmartCard.transmitCommand(readCmd);
+                assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " should succeed");
+                byte[] recordData = response.getData();
+                assertNotNull(recordData, "READ RECORD SFI" + sfi + "/REC" + rec + " data must not be null");
+                assertTrue(recordData.length > 2,
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " must have >2 bytes");
+
+                // Must start with tag 70
+                assertEquals((byte) 0x70, recordData[0],
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " must start with tag 70");
+
+                // Validate tag 70 TLV structure
+                assertValidTlv(recordData,
+                    "READ RECORD SFI" + sfi + "/REC" + rec);
+
+                // Validate inner TLVs parse correctly
+                int innerOffset = 2; // tag(1) + len(1)
+                if ((recordData[1] & 0xFF) == 0x81) {
+                    innerOffset = 3; // tag(1) + 81(1) + len(1)
+                }
+                assertValidInnerTlvs(recordData, innerOffset, recordData.length,
+                    "SFI" + sfi + "/REC" + rec);
+
+                System.out.println("  READ RECORD SFI" + sfi + "/REC" + rec +
+                    ": OK, " + recordData.length + " bytes, inner TLVs valid");
+            }
+        }
+
+        // ── GENERATE AC ──
+        byte[] genAcCmd = new byte[5 + pdolData.length];
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x90;  // ARQC + CDA
+        genAcCmd[3] = 0x00;
+        genAcCmd[4] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, genAcCmd, 5, pdolData.length);
+        response = SmartCard.transmitCommand(genAcCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GENERATE AC should succeed");
+        byte[] genAcResp = response.getData();
+        assertValidTlv(genAcResp, "GENERATE AC response");
+        System.out.println("  GENERATE AC: OK, " + genAcResp.length + " bytes");
+    }
+
+    /** Write a BER-TLV to a stream. Handles 1-byte and 2-byte tags. */
+    private void writeTlv(ByteArrayOutputStream out, int tag, byte[] value) {
+        if (tag > 0xFF) {
+            out.write((tag >> 8) & 0xFF);
+            out.write(tag & 0xFF);
+        } else {
+            out.write(tag & 0xFF);
+        }
+        if (value.length >= 128) {
+            out.write(0x81);
+            out.write(value.length & 0xFF);
+        } else {
+            out.write(value.length);
+        }
+        out.write(value, 0, value.length);
+    }
+
+    /** Validate that a byte array is a well-formed BER-TLV. */
+    private void assertValidTlv(byte[] data, String context) {
+        assertTrue(data.length >= 2, context + ": TLV must be ≥2 bytes");
+        int tagLen = 1;
+        if ((data[0] & 0x1F) == 0x1F) {
+            tagLen = 2; // multi-byte tag
+        }
+        assertTrue(data.length > tagLen, context + ": TLV truncated after tag");
+        int lenByte = data[tagLen] & 0xFF;
+        int valueLen;
+        int valueOffset;
+        if (lenByte < 0x80) {
+            valueLen = lenByte;
+            valueOffset = tagLen + 1;
+        } else if (lenByte == 0x81) {
+            assertTrue(data.length > tagLen + 1, context + ": BER 81 length truncated");
+            valueLen = data[tagLen + 1] & 0xFF;
+            valueOffset = tagLen + 2;
+        } else if (lenByte == 0x82) {
+            assertTrue(data.length > tagLen + 2, context + ": BER 82 length truncated");
+            valueLen = ((data[tagLen + 1] & 0xFF) << 8) | (data[tagLen + 2] & 0xFF);
+            valueOffset = tagLen + 3;
+        } else {
+            throw new AssertionError(context + ": unsupported BER length byte 0x" +
+                Integer.toHexString(lenByte));
+        }
+        assertEquals(valueOffset + valueLen, data.length,
+            context + ": declared length " + valueLen + " from offset " + valueOffset +
+            " doesn't match actual data length " + data.length);
+    }
+
+    /** Validate that a region of a byte array contains well-formed concatenated TLVs. */
+    private void assertValidInnerTlvs(byte[] data, int start, int end, String context) {
+        int pos = start;
+        int count = 0;
+        while (pos < end) {
+            assertTrue(pos + 1 < end, context + ": inner TLV #" + count + " truncated at tag");
+            int tagLen = 1;
+            if ((data[pos] & 0x1F) == 0x1F) {
+                tagLen = 2;
+                assertTrue(pos + tagLen < end,
+                    context + ": inner TLV #" + count + " truncated at 2-byte tag");
+            }
+            int lenPos = pos + tagLen;
+            assertTrue(lenPos < end, context + ": inner TLV #" + count + " truncated at length");
+            int lenByte = data[lenPos] & 0xFF;
+            int valueLen;
+            int valueStart;
+            if (lenByte < 0x80) {
+                valueLen = lenByte;
+                valueStart = lenPos + 1;
+            } else if (lenByte == 0x81) {
+                assertTrue(lenPos + 1 < end,
+                    context + ": inner TLV #" + count + " BER 81 length truncated");
+                valueLen = data[lenPos + 1] & 0xFF;
+                valueStart = lenPos + 2;
+            } else {
+                throw new AssertionError(context + ": inner TLV #" + count +
+                    " unsupported length byte 0x" + Integer.toHexString(lenByte));
+            }
+            assertTrue(valueStart + valueLen <= end,
+                context + ": inner TLV #" + count + " (tag=0x" +
+                Integer.toHexString(data[pos] & 0xFF) + ") value extends past end: " +
+                "valueStart=" + valueStart + " valueLen=" + valueLen + " end=" + end);
+            pos = valueStart + valueLen;
+            count++;
+        }
+        assertEquals(end, pos,
+            context + ": inner TLV stream doesn't end cleanly (pos=" + pos + " end=" + end + ")");
+        assertTrue(count > 0, context + ": no inner TLVs found");
+    }
+
 }
 

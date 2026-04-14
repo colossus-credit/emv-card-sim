@@ -375,6 +375,12 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
 
+        // Canonicalize: strip the low 3 bits of P2 (reference control bits)
+        // so that the key matches processReadRecord's canonical lookup.
+        // P1 = record number, P2 = (SFI << 3) | ref_control.
+        // Python sends P2 = (SFI << 3) | 0x04; we store at (SFI << 3).
+        short canonicalKey = (short) (readRecordId & (short) 0xFFF8);
+
         // Use APDU methods for correct offset and length (works for both short and extended APDUs)
         short dataOffset = apdu.getOffsetCdata();
         short dataLen = apdu.getIncomingLength();
@@ -385,7 +391,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         }
 
         JCSystem.beginTransaction();
-        EmvTag.setTag(readRecordId, buf, dataOffset, dataLen);
+        EmvTag.setTag(canonicalKey, buf, dataOffset, dataLen);
         JCSystem.commitTransaction();
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
@@ -478,9 +484,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         if (dgiHigh >= 0x01 && dgiHigh <= 0x1E && dgiLow >= 0x01) {
             // CPS SFI-based record: DGI high byte = SFI, low byte = record number.
             // Data may be wrapped in a tag-70 TLV per CPS Annex A.5 / EMV Book 3
-            // §6.5.11. Strip the wrapper if present, then store raw record body
-            // bytes in the RecordStore. READ RECORD re-wraps with tag 70 when
-            // responding.
+            // §6.5.11. Strip the wrapper if present, then store raw record body.
             byte sfi = (byte) dgiHigh;
             byte recordNo = (byte) dgiLow;
 
@@ -500,7 +504,66 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 dataLen = innerLen;
             }
 
+            // Store raw body in RecordStore for CPS compliance
             RecordStore.setRecord(sfi, recordNo, buf, dataOffset, dataLen);
+
+            // Parse the inner TLV to extract tag IDs and values. Store each
+            // tag's value individually in EmvTag, and build a tag-ID template
+            // (2-byte pairs, single-byte tags 00-padded) for the record key.
+            //
+            // This matches the old dev-command format: processReadRecord does
+            // template expansion at READ time, looking up each tag's CURRENT
+            // value. This is critical for tags that are modified per-transaction
+            // (e.g., 9F6E gets the ECDSA s-value written at GPO time).
+            short templateLen = (short) 0;
+            short pos = dataOffset;
+            short endPos = (short) (dataOffset + dataLen);
+            while (pos < endPos) {
+                // Read tag (1 or 2 bytes)
+                short tagId;
+                if ((buf[pos] & (byte) 0x1F) == (byte) 0x1F) {
+                    // 2-byte tag
+                    tagId = Util.getShort(buf, pos);
+                    pos += (short) 2;
+                } else {
+                    // 1-byte tag → store as 00 XX (matches EmvTag format)
+                    tagId = (short) (buf[pos] & 0x00FF);
+                    pos += (short) 1;
+                }
+
+                // Read BER length
+                short tLen;
+                if ((buf[pos] & 0xFF) == 0x82) {
+                    pos += (short) 1;
+                    tLen = Util.getShort(buf, pos);
+                    pos += (short) 2;
+                } else if ((buf[pos] & 0xFF) == 0x81) {
+                    pos += (short) 1;
+                    tLen = (short) (buf[pos] & 0x00FF);
+                    pos += (short) 1;
+                } else {
+                    tLen = (short) (buf[pos] & 0x00FF);
+                    pos += (short) 1;
+                }
+
+                // Store this tag's value in EmvTag (individual tag entry)
+                EmvTag.setTag(tagId, buf, pos, tLen);
+
+                // Append tag ID to template in tmpBuffer
+                Util.setShort(tmpBuffer, templateLen, tagId);
+                templateLen += (short) 2;
+
+                pos += tLen;
+            }
+
+            // Store the tag-ID template as EmvTag[recordKey]. The template
+            // format is 2-byte pairs where single-byte tags are 00-padded
+            // (e.g., [00 57 00 5A 5F 24 9F 07]). processReadRecord detects
+            // templates by checking data[0] == 0x00.
+            short recordKey = (short) ((recordNo << 8) | (sfi << 3));
+            JCSystem.beginTransaction();
+            EmvTag.setTag(recordKey, tmpBuffer, (short) 0, templateLen);
+            JCSystem.commitTransaction();
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
                    || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
             // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
@@ -572,7 +635,6 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         if (responseTemplateTag == (short) 0x0077) {
             // Template 2, tag 77
             templateTagLength = template.expandTlvToArray(tmpBuffer, (short) 0);
-            // expandTlvToArray completed
         } else if (responseTemplateTag == (short) 0x0080) {
             // Template 1, tag 80
             templateTagLength = template.expandTagDataToArray(tmpBuffer, (short) 0);
@@ -634,51 +696,52 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected void processReadRecord(APDU apdu, byte[] buf) {
         short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
 
-        // Extract SFI and record number from P1P2. EMV Book 3 §6.5.11:
-        //   P1 = record number, P2 = (SFI << 3) | 0x04 (reference by SFI).
-        byte recordNo = (byte) ((p1p2 >> 8) & 0xFF);
-        byte sfi = (byte) ((p1p2 & 0xFF) >> 3);
+        // Canonicalize the lookup key: strip the low 3 bits of P2.
+        // P2 is (SFI << 3) | reference_control. Terminals send 0x04 ("by SFI")
+        // in the low 3 bits, but the AFL byte has 0x00. Both must resolve to the
+        // same record. We store records keyed by (recordNo << 8) | (SFI << 3),
+        // so stripping the low 3 bits gives a consistent lookup.
+        short recordKey = (short) (p1p2 & (short) 0xFFF8);
 
-        // Path 1: Record stored via the CPS STORE DATA path as raw bytes in
-        // the RecordStore. This is the production path — a real perso bureau
-        // sends records via STORE DATA DGI XXYY.
-        byte[] recordBody = RecordStore.getRecord(sfi, recordNo);
-        short contentLen;
-        if (recordBody != null) {
-            contentLen = (short) recordBody.length;
-            Util.arrayCopyNonAtomic(recordBody, (short) 0, tmpBuffer, (short) 0, contentLen);
-        } else {
-            // Path 2: Legacy template path. Records loaded via the dev
-            // 0x8003 set_read_record_template command are stored as a list of
-            // tag IDs in the EmvTag table, keyed by the literal P1P2 value.
-            // Expanded at read time by looking each tag up. Kept for backwards
-            // compat with existing test fixtures; will be removed once the
-            // Python personalize tool switches to the STORE DATA path.
-            EmvTag templateTag = EmvTag.findTag(p1p2);
-            if (templateTag == null) {
-                EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
-            }
-
-            byte[] templateData = templateTag.getData();
-            short templateLen = templateTag.getLength();
-            contentLen = (short) 0;
-            for (short i = (short) 0; i < templateLen; i += (short) 2) {
-                short tagId = Util.getShort(templateData, i);
-                EmvTag tag = EmvTag.findTag(tagId);
-                if (tag == null) {
-                    EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
-                }
-                contentLen = tag.copyToArray(tmpBuffer, contentLen);
-            }
+        // Look up record data in EmvTag keyed by canonical record key.
+        // This handles BOTH:
+        //   - CPS STORE DATA records: raw record body stored by processOneDgi
+        //     as EmvTag[recordKey] alongside RecordStore (dual-write, because
+        //     RecordStore byte[] arrays aren't reliably accessible over
+        //     contactless on some JCOP builds).
+        //   - Legacy dev 0x8003 records: tag ID list stored by
+        //     processSetReadRecordTemplate as EmvTag[recordKey], expanded below.
+        EmvTag recordTag = EmvTag.findTag(recordKey);
+        if (recordTag == null) {
+            EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
         }
 
-        // Debug: store SFI2/R1 (P1P2=0114) expanded content in DF04 for comparison
-        if (p1p2 == (short) 0x0114) {
-            short storeLen = (contentLen > (short) 200) ? (short) 200 : contentLen;
-            EmvTag.setTag((short) 0xDF04, tmpBuffer, (short) 0, storeLen);
+        // Record data is a tag-ID template: pairs of 2-byte tag IDs where
+        // single-byte tags are 00-padded (e.g., [00 57 00 5A 5F 24 9F 07]).
+        // Both CPS STORE DATA records (parsed to templates in processOneDgi)
+        // and dev 0x8003 records use this format.
+        //
+        // Template expansion looks up each tag's CURRENT value in EmvTag.
+        // This is critical for tags modified per-transaction at runtime —
+        // e.g., 9F6E gets the ECDSA s-value written at GPO time.
+        byte[] recordData = recordTag.getData();
+        short recordLen = recordTag.getLength();
+        short contentLen = (short) 0;
+        for (short i = (short) 0; i < recordLen; i += (short) 2) {
+            short tagId = Util.getShort(recordData, i);
+            EmvTag tag = EmvTag.findTag(tagId);
+            if (tag == null) {
+                EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
+            }
+            contentLen = tag.copyToArray(tmpBuffer, contentLen);
         }
 
-        // Build tag 70 wrapper in chunkBuffer, then copy content after it
+        // Build tag 70 wrapper in chunkBuffer and send via sendBytesLong.
+        // This matches the proven-working pattern from feat/applet-hardening:
+        // chunkBuffer is a persistent byte[] allocated at install time, and
+        // sendBytesLong is the standard JavaCard send path for non-APDU
+        // buffer data. Using the APDU buffer + setOutgoingAndSend was
+        // attempted as an optimization but doesn't improve NFC reliability.
         short respLen = (short) 0;
         chunkBuffer[respLen++] = (byte) 0x70;
         if (contentLen >= (short) 128) {
@@ -690,7 +753,6 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         Util.arrayCopy(tmpBuffer, (short) 0, chunkBuffer, respLen, contentLen);
         respLen += contentLen;
 
-        // Send directly from chunkBuffer — no EmvTag, no buf copy
         apdu.setOutgoing();
         apdu.setOutgoingLength(respLen);
         apdu.sendBytesLong(chunkBuffer, (short) 0, respLen);

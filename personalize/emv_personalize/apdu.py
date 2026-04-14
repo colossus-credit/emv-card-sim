@@ -38,10 +38,15 @@ INS_SET_SETTINGS_CHUNKED = 0x0A
 INS_SELECT = 0xA4
 INS_STORE_DATA = 0xE2
 
-# Maximum data bytes in a single short APDU
-MAX_SHORT_DATA = 250
+# Maximum data bytes in a single short APDU (Lc is 1 byte: 0x01..0xFF = 1..255).
+# NOTE: previously set to 250, which caused payloads of 251-255 bytes (e.g. the
+# 248-byte issuer certificate with DGI framing) to be chunked across two STORE
+# DATA commands. The applet does NOT support chunked/continuation STORE DATA, so
+# the second command was parsed as a new DGI with garbage data — silently
+# corrupting the certificate's last bytes and causing ODA failure on NFC taps.
+MAX_SHORT_DATA = 255
 # Maximum DGI payload per STORE DATA command (leaves room for DGI+length header)
-MAX_STORE_DATA_PAYLOAD = 240
+MAX_STORE_DATA_PAYLOAD = 251
 # Chunk size for chunked transfers (leaves room for length header in first chunk)
 CHUNK_SIZE = 200
 
