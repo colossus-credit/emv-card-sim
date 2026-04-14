@@ -1577,7 +1577,17 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("GENERATE AC always returns ARQC for online-only card")
     public void testGenerateAcAlwaysReturnsArqc() throws CardException {
         setupColossusCard();
-        // Even with P1=0xC0 (invalid in old code), card returns ARQC (online-only)
+
+        // Minimum state for GENERATE AC: ATC, AIP, IAD, response template, GenAC template
+        setEmvTagDev(0x9F, 0x36, new byte[] { 0x00, 0x01 }, "ATC");
+        setEmvTagDev(0x00, 0x82, new byte[] { 0x3C, 0x00 }, "AIP");
+        setEmvTagDev(0x9F, 0x10, new byte[] { 0x06, 0x01, 0x0A, 0x03, (byte) 0xA4, (byte) 0xA0, 0x02 }, "IAD");
+        assertStoreData(0xA0, 0x02, new byte[] { 0x00, 0x77 }, "Response template");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, 0x27, (byte) 0x9F, 0x36, (byte) 0x9F, 0x26, (byte) 0x9F, 0x10
+        }, "GenAC template");
+
+        // P1=0xC0 requests AAC (decline), but online-only card always returns ARQC
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xAE, (byte) 0xC0, (byte) 0x00,
             (byte) 0x00
