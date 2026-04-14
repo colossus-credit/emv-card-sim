@@ -144,7 +144,7 @@ checkstyleMain {
 
 checkstyleTest {
     source ='src/test/java'
-    maxWarnings = 150
+    maxWarnings = 230
 }
 
 

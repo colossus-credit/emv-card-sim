@@ -1,15 +1,26 @@
 package emvcardsimulator;
 
-import javax.smartcardio.*;
-import java.security.*;
-import java.security.spec.*;
-import java.util.*;
+import java.security.KeyFactory;
+import java.security.MessageDigest;
+import java.security.PublicKey;
+import java.security.spec.RSAPublicKeySpec;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import javax.crypto.Cipher;
+import javax.smartcardio.Card;
+import javax.smartcardio.CardChannel;
+import javax.smartcardio.CardTerminal;
+import javax.smartcardio.CommandAPDU;
+import javax.smartcardio.ResponseAPDU;
+import javax.smartcardio.TerminalFactory;
 
 /**
- * GENERATE AC (80 AE) with CDA Test Suite
+ * GENERATE AC (80 AE) with CDA Test Suite.
  *
- * Tests the card's response to GENERATE AC command and verifies:
+ * <p>Tests the card's response to GENERATE AC command and verifies:
  * - Response format (tag 77 with mandatory CDA tags)
  * - SDAD (9F4B) signature verification
  * - Transaction Data Hash Code binding
@@ -48,6 +59,12 @@ public class GenerateAcCdaTest {
     // Expected UN from CDOL1 data (bytes 29-32, 0-indexed)
     private static final byte[] EXPECTED_UN = hexToBytes("CD114BE5");
 
+    /**
+     * Runs all CDA tests sequentially against a physical card.
+     *
+     * @param args command-line arguments (unused)
+     * @throws Exception if the card communication fails
+     */
     public static void main(String[] args) throws Exception {
         GenerateAcCdaTest test = new GenerateAcCdaTest();
         test.setUp();
@@ -76,6 +93,11 @@ public class GenerateAcCdaTest {
         }
     }
 
+    /**
+     * Connects to the card and selects the payment application.
+     *
+     * @throws Exception if the card communication fails
+     */
     public void setUp() throws Exception {
         // Connect to card
         TerminalFactory factory = TerminalFactory.getDefault();
@@ -139,6 +161,11 @@ public class GenerateAcCdaTest {
         return out.toByteArray();
     }
 
+    /**
+     * Disconnects from the card.
+     *
+     * @throws Exception if the card communication fails
+     */
     public void tearDown() throws Exception {
         if (card != null) {
             card.disconnect(false);
@@ -146,7 +173,7 @@ public class GenerateAcCdaTest {
     }
 
     /**
-     * Retrieve ICC public key modulus from card (via diagnostic or certificate recovery)
+     * Retrieve ICC public key modulus from card (via diagnostic or certificate recovery).
      */
     private void retrieveIccPublicKey() throws Exception {
         // Option 1: Use diagnostic command to get key info
@@ -180,7 +207,9 @@ public class GenerateAcCdaTest {
     }
 
     /**
-     * Test A: CDOL1 parsing and GenAC request must match CDOL1 definition
+     * Test A: CDOL1 parsing and GenAC request must match CDOL1 definition.
+     *
+     * @throws Exception if the card communication fails
      */
     public void testA_Cdol1ParsingAndLength() throws Exception {
         System.out.println("Test A: CDOL1 Parsing and Length");
@@ -196,23 +225,36 @@ public class GenerateAcCdaTest {
         // Parse and display CDOL1 fields
         int offset = 0;
         System.out.println("  Parsed CDOL1 fields:");
-        System.out.println("    9F02 Amount Authorized: " + bytesToHex(TEST_CDOL1_DATA, offset, 6)); offset += 6;
-        System.out.println("    9F03 Amount Other:      " + bytesToHex(TEST_CDOL1_DATA, offset, 6)); offset += 6;
-        System.out.println("    9F1A Country Code:      " + bytesToHex(TEST_CDOL1_DATA, offset, 2)); offset += 2;
-        System.out.println("    95   TVR:               " + bytesToHex(TEST_CDOL1_DATA, offset, 5)); offset += 5;
-        System.out.println("    5F2A Currency Code:     " + bytesToHex(TEST_CDOL1_DATA, offset, 2)); offset += 2;
-        System.out.println("    9A   Transaction Date:  " + bytesToHex(TEST_CDOL1_DATA, offset, 3)); offset += 3;
-        System.out.println("    9C   Transaction Type:  " + bytesToHex(TEST_CDOL1_DATA, offset, 1)); offset += 1;
-        System.out.println("    9F37 Unpredictable Num: " + bytesToHex(TEST_CDOL1_DATA, offset, 4)); offset += 4;
-        System.out.println("    9F1C Terminal ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 8)); offset += 8;
-        System.out.println("    9F16 Merchant ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 15)); offset += 15;
-        System.out.println("    9F01 Acquirer ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 6)); offset += 6;
+        System.out.println("    9F02 Amount Authorized: " + bytesToHex(TEST_CDOL1_DATA, offset, 6));
+        offset += 6;
+        System.out.println("    9F03 Amount Other:      " + bytesToHex(TEST_CDOL1_DATA, offset, 6));
+        offset += 6;
+        System.out.println("    9F1A Country Code:      " + bytesToHex(TEST_CDOL1_DATA, offset, 2));
+        offset += 2;
+        System.out.println("    95   TVR:               " + bytesToHex(TEST_CDOL1_DATA, offset, 5));
+        offset += 5;
+        System.out.println("    5F2A Currency Code:     " + bytesToHex(TEST_CDOL1_DATA, offset, 2));
+        offset += 2;
+        System.out.println("    9A   Transaction Date:  " + bytesToHex(TEST_CDOL1_DATA, offset, 3));
+        offset += 3;
+        System.out.println("    9C   Transaction Type:  " + bytesToHex(TEST_CDOL1_DATA, offset, 1));
+        offset += 1;
+        System.out.println("    9F37 Unpredictable Num: " + bytesToHex(TEST_CDOL1_DATA, offset, 4));
+        offset += 4;
+        System.out.println("    9F1C Terminal ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 8));
+        offset += 8;
+        System.out.println("    9F16 Merchant ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 15));
+        offset += 15;
+        System.out.println("    9F01 Acquirer ID:       " + bytesToHex(TEST_CDOL1_DATA, offset, 6));
+        offset += 6;
 
         System.out.println("  Test A PASSED ✓\n");
     }
 
     /**
-     * Test B: Response must be Format 2 (77) with mandatory CDA tags
+     * Test B: Response must be Format 2 (77) with mandatory CDA tags.
+     *
+     * @throws Exception if the card communication fails
      */
     public void testB_ResponseFormat() throws Exception {
         System.out.println("Test B: Response Format Verification");
@@ -262,7 +304,9 @@ public class GenerateAcCdaTest {
                 while (response.getSW1() == 0x61 || (response.getSW() == 0x9000 && response.getData().length > 0)) {
                     getResponse = new byte[] { 0x00, (byte) 0xC0, 0x00, 0x00, 0x00 };
                     ResponseAPDU nextResp = channel.transmit(new CommandAPDU(getResponse));
-                    if (nextResp.getData().length == 0) break;
+                    if (nextResp.getData().length == 0) {
+                        break;
+                    }
                     System.out.println("  GET RESPONSE SW: " + String.format("%04X", nextResp.getSW()) + ", data: " + nextResp.getData().length + " bytes");
                     dataOut.write(nextResp.getData());
                     response = nextResp;
@@ -310,8 +354,8 @@ public class GenerateAcCdaTest {
             if (sdad.length == iccPublicKeyModulus.length) {
                 System.out.println("  SDAD length matches ICC key size ✓");
             } else {
-                System.out.println("  WARNING: SDAD length (" + sdad.length + ") != ICC modulus length (" +
-                    iccPublicKeyModulus.length + ") - response may be truncated");
+                System.out.println("  WARNING: SDAD length (" + sdad.length + ") != ICC modulus length ("
+                    + iccPublicKeyModulus.length + ") - response may be truncated");
                 System.out.println("  (This is typically due to Java Card GET RESPONSE chaining issues)");
             }
         }
@@ -332,9 +376,9 @@ public class GenerateAcCdaTest {
     }
 
     /**
-     * Test C: SDAD structure verification, CID/AC binding, and UN binding via hash
+     * Test C: SDAD structure verification, CID/AC binding, and UN binding via hash.
      *
-     * Per EMV Book 2 Table 18:
+     * <p>Per EMV Book 2 Table 18:
      * - Header (0x6A)
      * - Signed Data Format (0x05 for CDA)
      * - Hash Algorithm Indicator
@@ -343,6 +387,8 @@ public class GenerateAcCdaTest {
      * - Pad Pattern (0xBB)
      * - Hash Result = SHA-1(Format through Pad || UN)
      * - Trailer (0xBC)
+     *
+     * @throws Exception if the card communication fails
      */
     public void testC_SdadVerificationAndUnBinding() throws Exception {
         System.out.println("Test C: SDAD Verification and UN Binding");
@@ -359,8 +405,8 @@ public class GenerateAcCdaTest {
         }
 
         byte[] sdad = cachedTlvs.get(0x9F4B);
-        byte[] outerCid = cachedTlvs.get(0x9F27);
-        byte[] outerAc = cachedTlvs.get(0x9F26);
+        final byte[] outerCid = cachedTlvs.get(0x9F27);
+        final byte[] outerAc = cachedTlvs.get(0x9F26);
 
         if (sdad == null) {
             System.out.println("  FAILED: No SDAD in response");
@@ -368,8 +414,8 @@ public class GenerateAcCdaTest {
         }
 
         if (sdad.length != iccPublicKeyModulus.length) {
-            System.out.println("  SKIPPED: SDAD truncated (" + sdad.length + " bytes, need " +
-                iccPublicKeyModulus.length + "). Response chaining incomplete.");
+            System.out.println("  SKIPPED: SDAD truncated (" + sdad.length + " bytes, need "
+                + iccPublicKeyModulus.length + "). Response chaining incomplete.");
             return;
         }
 
@@ -460,14 +506,16 @@ public class GenerateAcCdaTest {
     private byte[] cachedPdolData;
 
     /**
-     * Test D: Transaction Data Hash Code verification
+     * Test D: Transaction Data Hash Code verification.
      *
-     * Per this card's implementation, Transaction Data Hash Code = SHA-1 over:
+     * <p>Per this card's implementation, Transaction Data Hash Code = SHA-1 over:
      * 1. PDOL data (33 bytes from GPO)
      * 2. CDOL1 data (58 bytes)
      * 3. Low byte of tag 77 length (if length >= 256)
      * 4. TLVs: 9F27, 9F36, 9F26, 9F10 (full Tag+Length+Value)
      * 5. 9F4B tag only (2 bytes, no length or value)
+     *
+     * @throws Exception if the card communication fails
      */
     public void testD_TransactionDataHashCode() throws Exception {
         System.out.println("Test D: Transaction Data Hash Code Verification");
@@ -551,7 +599,9 @@ public class GenerateAcCdaTest {
     }
 
     /**
-     * Test E: ICC Dynamic Data structure sanity
+     * Test E: ICC Dynamic Data structure sanity.
+     *
+     * @throws Exception if the card communication fails
      */
     public void testE_IccDynamicDataStructure() throws Exception {
         System.out.println("Test E: ICC Dynamic Data Structure");
@@ -569,7 +619,7 @@ public class GenerateAcCdaTest {
 
         // Use cached response (only one GENERATE AC per session)
         byte[] sdad = cachedTlvs.get(0x9F4B);
-        byte[] cid = cachedTlvs.get(0x9F27);
+        final byte[] cid = cachedTlvs.get(0x9F27);
 
         // Check if SDAD is complete
         if (sdad == null || sdad.length != iccPublicKeyModulus.length) {
@@ -670,14 +720,20 @@ public class GenerateAcCdaTest {
         // Skip outer tag 77 and its length
         if (offset < data.length && data[offset] == 0x77) {
             offset++;
-            if (offset >= data.length) return tlvs;
+            if (offset >= data.length) {
+                return tlvs;
+            }
 
             int len = data[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= data.length) return tlvs;
+                if (offset >= data.length) {
+                    return tlvs;
+                }
                 len = data[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= data.length) return tlvs;
+                if (offset + 1 >= data.length) {
+                    return tlvs;
+                }
                 len = ((data[offset++] & 0xFF) << 8) | (data[offset++] & 0xFF);
             }
             // Content ends at min of declared length and actual data
@@ -687,28 +743,38 @@ public class GenerateAcCdaTest {
         // Parse contained TLVs with bounds checking
         while (offset < contentEnd) {
             // Parse tag (1 or 2 bytes)
-            if (offset >= contentEnd) break;
+            if (offset >= contentEnd) {
+                break;
+            }
             int tag = data[offset++] & 0xFF;
             if ((tag & 0x1F) == 0x1F) {
-                if (offset >= contentEnd) break;
+                if (offset >= contentEnd) {
+                    break;
+                }
                 tag = (tag << 8) | (data[offset++] & 0xFF);
             }
 
             // Parse length
-            if (offset >= contentEnd) break;
+            if (offset >= contentEnd) {
+                break;
+            }
             int len = data[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= contentEnd) break;
+                if (offset >= contentEnd) {
+                    break;
+                }
                 len = data[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= contentEnd) break;
+                if (offset + 1 >= contentEnd) {
+                    break;
+                }
                 len = ((data[offset++] & 0xFF) << 8) | (data[offset++] & 0xFF);
             }
 
             // Check if we have enough data for the value
             if (offset + len > data.length) {
-                System.out.println("  Warning: TLV truncated at tag " + String.format("%04X", tag) +
-                    ", need " + len + " bytes but only " + (data.length - offset) + " available");
+                System.out.println("  Warning: TLV truncated at tag " + String.format("%04X", tag)
+                    + ", need " + len + " bytes but only " + (data.length - offset) + " available");
                 // Take what we can
                 len = Math.min(len, data.length - offset);
             }
@@ -728,14 +794,20 @@ public class GenerateAcCdaTest {
         int offset = 0;
         if (offset < data.length && data[offset] == 0x77) {
             offset++;
-            if (offset >= data.length) return new byte[0];
+            if (offset >= data.length) {
+                return new byte[0];
+            }
 
             int len = data[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= data.length) return new byte[0];
+                if (offset >= data.length) {
+                    return new byte[0];
+                }
                 len = data[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= data.length) return new byte[0];
+                if (offset + 1 >= data.length) {
+                    return new byte[0];
+                }
                 len = ((data[offset++] & 0xFF) << 8) | (data[offset++] & 0xFF);
             }
             // Take available data, even if less than declared length
@@ -755,21 +827,31 @@ public class GenerateAcCdaTest {
             int tagStart = offset;
 
             // Parse tag
-            if (offset >= tlvData.length) break;
+            if (offset >= tlvData.length) {
+                break;
+            }
             int tag = tlvData[offset++] & 0xFF;
             if ((tag & 0x1F) == 0x1F) {
-                if (offset >= tlvData.length) break;
+                if (offset >= tlvData.length) {
+                    break;
+                }
                 tag = (tag << 8) | (tlvData[offset++] & 0xFF);
             }
 
             // Parse length
-            if (offset >= tlvData.length) break;
+            if (offset >= tlvData.length) {
+                break;
+            }
             int len = tlvData[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= tlvData.length) break;
+                if (offset >= tlvData.length) {
+                    break;
+                }
                 len = tlvData[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= tlvData.length) break;
+                if (offset + 1 >= tlvData.length) {
+                    break;
+                }
                 len = ((tlvData[offset++] & 0xFF) << 8) | (tlvData[offset++] & 0xFF);
             }
 

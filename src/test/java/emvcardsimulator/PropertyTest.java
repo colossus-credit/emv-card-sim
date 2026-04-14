@@ -1327,15 +1327,23 @@ public class PropertyTest {
     // 31. EMV tag set via STORE DATA DGI is readable via GET_DATA
     // -----------------------------------------------------------------------
 
+    @Provide
+    Arbitrary<Short> acceptedStandaloneTag() {
+        // Standalone tag DGIs accepted by the applet whitelist (CPS §3.2 bullet 7)
+        return Arbitraries.of(
+            (short) 0x0050, (short) 0x0082, (short) 0x0084, (short) 0x0087,
+            (short) 0x0088, (short) 0x008E, (short) 0x0094,
+            (short) 0x5F2D, (short) 0x9F10, (short) 0x9F11, (short) 0x9F12,
+            (short) 0x9F1F, (short) 0x9F36, (short) 0x9F38, (short) 0x9F6C
+        );
+    }
+
     @Property(tries = 100)
     void storeDataTagRoundtrip(
-            @ForAll @ShortRange(min = 1, max = 127) short tagLow,
+            @ForAll("acceptedStandaloneTag") short tagId,
             @ForAll @Size(min = 1, max = 50) byte[] value
     ) throws CardException {
-        // Filter out reserved DGI range 9F60-9F6F (except 9F6C)
-        Assume.that(tagLow < 0x60 || tagLow > 0x6F || tagLow == 0x6C);
         selectAndReset();
-        short tagId = (short) (0x9F00 | (tagLow & 0xFF));
 
         // STORE DATA: [CLA E2 00 00] [LC] [DGI(2)] [LEN(1)] [DATA]
         byte[] storeCmd = buildStoreDataCmd((byte) 0x00, tagId, value);
@@ -1430,7 +1438,7 @@ public class PropertyTest {
             @ForAll @IntRange(min = 128, max = 200) int dataLength
     ) throws CardException {
         selectAndReset();
-        final short tagId = (short) 0x9F46; // ICC Public Key Certificate
+        final short tagId = (short) 0x9F10; // IAD (whitelisted standalone tag)
 
         byte[] value = new byte[dataLength];
         for (int i = 0; i < dataLength; i++) {
@@ -1471,7 +1479,7 @@ public class PropertyTest {
         selectAndReset();
 
         byte[] value = new byte[] { 0x42 };
-        short tagId = (short) 0x9F42; // Currency Code
+        short tagId = (short) 0x9F36; // ATC (whitelisted standalone tag)
 
         byte[] storeCmd = buildStoreDataCmd(cla, tagId, value);
         ResponseAPDU resp = SmartCard.transmitCommand(storeCmd);
