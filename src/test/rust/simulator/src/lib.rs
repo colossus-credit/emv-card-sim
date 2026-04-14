@@ -305,20 +305,32 @@ pub extern "system" fn Java_emvcardsimulator_ContactlessSimulatorTest_entryPoint
                 info!("Contactless transaction outcome: {}", outcome);
 
                 use emvpt::contactless::OutcomeType;
+
+                // Assert: transaction must reach ARQC (online request) or TC (approved)
+                // Any other outcome is a test failure
                 match outcome.outcome {
                     OutcomeType::Approved => {
-                        info!("=== KERNEL 2 TEST: APPROVED (offline) ===");
+                        info!("=== KERNEL 2 TEST PASSED: APPROVED (offline TC) ===");
                     }
                     OutcomeType::OnlineRequest => {
-                        info!("=== KERNEL 2 TEST: ONLINE REQUEST (ARQC) ===");
+                        info!("=== KERNEL 2 TEST PASSED: ONLINE REQUEST (ARQC) ===");
                     }
                     OutcomeType::Declined => {
-                        warn!("=== KERNEL 2 TEST: DECLINED ===");
+                        panic!("KERNEL 2 TEST FAILED: transaction declined (AAC)");
                     }
                     other => {
-                        warn!("=== KERNEL 2 TEST: {:?} ===", other);
+                        panic!("KERNEL 2 TEST FAILED: unexpected outcome {:?}", other);
                     }
                 }
+
+                // Assert: cryptogram data must be present
+                // Note: when CDA is used, 9F26 (AC) is embedded inside 9F4B (SDAD), not standalone
+                assert!(connection.get_tag_value("9F27").is_some(),
+                    "KERNEL 2 TEST FAILED: Cryptogram Information Data (9F27) missing");
+                assert!(connection.get_tag_value("9F36").is_some(),
+                    "KERNEL 2 TEST FAILED: Application Transaction Counter (9F36) missing");
+                assert!(connection.get_tag_value("9F10").is_some(),
+                    "KERNEL 2 TEST FAILED: Issuer Application Data (9F10) missing — ECDSA r expected here");
             }
             Err(e) => {
                 panic!("Contactless transaction failed: {}", e);
