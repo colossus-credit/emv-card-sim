@@ -9,10 +9,16 @@ If you need a payment terminal simulator for testing, try [emvpt](https://github
 ## Prerequisites
 
 ```bash
+# Xcode Command Line Tools (compiler toolchain, needed for native Python deps)
+xcode-select --install
+
 # Java 11 (required for Gradle and JavaCard SDK)
 brew install openjdk@11
 export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/$(ls /opt/homebrew/Cellar/openjdk@11/)/libexec/openjdk.jdk/Contents/Home
 # Add the export to ~/.zshrc to make permanent
+
+# swig (required by pyscard to compile its C-to-Python bindings)
+brew install swig
 
 # uv (required for Python personalization tool)
 curl -LsSf https://astral.sh/uv/install.sh | sh
