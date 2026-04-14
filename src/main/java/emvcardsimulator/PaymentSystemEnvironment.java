@@ -92,11 +92,9 @@ public class PaymentSystemEnvironment extends EmvApplet {
         // PSE SFI=1 special handling: record 2 returns empty 70 00
         if (isSfi1Properly && p1 == (byte) 2) {
             // Return empty record template: 70 00
-            tmpBuffer[0] = (byte) 0x70;
-            tmpBuffer[1] = (byte) 0x00;
-            apdu.setOutgoing();
-            apdu.setOutgoingLength((short) 2);
-            apdu.sendBytesLong(tmpBuffer, (short) 0, (short) 2);
+            buf[ISO7816.OFFSET_CDATA] = (byte) 0x70;
+            buf[(short)(ISO7816.OFFSET_CDATA + 1)] = (byte) 0x00;
+            apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) 2);
             return;
         }
 

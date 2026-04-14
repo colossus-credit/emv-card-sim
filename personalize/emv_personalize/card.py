@@ -106,14 +106,22 @@ class Card:
         Sends the proprietary ``0x8005 FACTORY_RESET`` dev command which
         wipes the applet's persistent state (EmvTag list, record store,
         lifecycle). On production builds this command is stripped and
-        the card will return an error — in that case the applet must be
-        re-installed instead.
+        the card will return 6D00 — in that case we skip the reset
+        (a freshly installed applet is already in PERSO_PENDING).
 
         Also clears the local Python tag-value cache so stale values from
         a previous applet (e.g. PSE) don't leak into records personalized
         on the next one.
         """
-        self.builder.factory_reset()
+        try:
+            self.builder.factory_reset()
+        except RuntimeError as exc:
+            if "6D00" in str(exc):
+                import logging
+                logging.info("factory_reset rejected (production build) — "
+                             "continuing with fresh applet state")
+            else:
+                raise
         self._tag_cache.clear()
 
     # ---- EMV Tag Setting ----
