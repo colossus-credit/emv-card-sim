@@ -167,6 +167,7 @@ dependencies {
 
     testImplementation 'com.klinec:jcardsim:latest.release'
     testImplementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+    testImplementation 'net.jqwik:jqwik:1.8.2'
     implementation 'com.klinec:jcardsim:latest.release'
     javacardAntTask 'com.github.martinpaljak:ant-javacard:latest.release'
 }
@@ -180,8 +181,9 @@ test {
         excludeEngines 'junit-vintage'
     }
     
-    // Exclude SimulatorTest by pattern
+    // Exclude native simulator tests (run separately via simulatorTest / contactlessTest tasks)
     exclude '**/SimulatorTest.class'
+    exclude '**/ContactlessSimulatorTest.class'
 
     testLogging {
         outputs.upToDateWhen { false }
@@ -208,6 +210,28 @@ test {
     ignoreFailures = false
 
     finalizedBy jacocoTestReport
+}
+
+task contactlessTest(type: Test) {
+    group "Verification"
+    description "Run Mastercard Contactless Kernel 2 integration test via jcardsim + JNI"
+    dependsOn buildSimulatorLibrary
+    workingDir 'src/test/java/emvcardsimulator'
+
+    useJUnitPlatform()
+
+    // Only run the ContactlessSimulatorTest
+    include '**/ContactlessSimulatorTest.class'
+
+    testLogging {
+        outputs.upToDateWhen { false }
+        events "started", "skipped", "failed", "passed"
+        exceptionFormat "full"
+        showStandardStreams true
+        showExceptions true
+        showCauses true
+        showStackTraces true
+    }
 }
 
 jacocoTestReport {
