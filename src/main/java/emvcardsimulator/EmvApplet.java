@@ -62,8 +62,6 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     }
 
 
-    protected EmvTag emvTags;
-
     /**
      * Personalization lifecycle (CPS v2.0). Tracks PERSO_PENDING vs PERSO_DONE.
      * Each applet instance gets its own lifecycle so PSE / PaymentApp / PPSE
