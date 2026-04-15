@@ -37,6 +37,7 @@ public class PaymentApplication extends EmvApplet {
     private Signature ecdsaSignature = null;
     private byte[] pinCode = null;
     private boolean useRandom = true;
+    private boolean isContactInterface = true; // default contact; set at SELECT from AID
 
     // P-256 (secp256r1) domain parameters
     private static final byte[] EC_P256_P = {
@@ -567,6 +568,16 @@ public class PaymentApplication extends EmvApplet {
         storedCdol1Length = 0;
         storedPdolLength = 0;
 
+        // Detect contact vs contactless from the SELECT AID.
+        // Contactless AID ends with 0x1010 (e.g. A0000009511010).
+        // Contact AID ends with 0x0001 (e.g. A0000009510001).
+        short aidLen = (short) (buf[ISO7816.OFFSET_LC] & 0xFF);
+        if (aidLen >= (short) 2) {
+            short suffixOffset = (short) (ISO7816.OFFSET_CDATA + aidLen - 2);
+            isContactInterface = !(buf[suffixOffset] == (byte) 0x10
+                                && buf[(short) (suffixOffset + 1)] == (byte) 0x10);
+        }
+
         // Don't clear logs here - it prevents reading logs via opensc-tool
         // The rolling log limit (maxCount=10) handles old logs
 
@@ -693,11 +704,43 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Send GENERATE AC response without CDA (no 9F4B).
-     * Uses responseTemplateGenerateAc (template 3) which is set during
-     * personalization to [9F27, 9F36, 9F26, 9F10].
+     * Contact: manual build with FFC6 (ECDSA s for RapidConnect).
+     * Contactless: original template path [9F27, 9F36, 9F26, 9F10].
      */
     private void sendGenerateAcResponseNoCda(APDU apdu, byte[] buf) {
-        sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+        if (!isContactInterface) {
+            // Contactless: unchanged template path
+            sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
+            return;
+        }
+
+        // Contact: manual build — 9F27 + 9F36 + 9F26 + 9F10 + FFC6 + 9F6E + FFC7
+        short offset = (short) 0;
+
+        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
+        if (cidTag != null) { offset = cidTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag != null) { offset = atcTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        if (acTag != null) { offset = acTag.copyToArray(tmpBuffer, offset); }
+
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
+
+        // ECDSA s in multiple tags for processor compatibility
+        EmvTag ffc6Tag = EmvTag.findTag((short) 0xFFC6);
+        if (ffc6Tag != null) { offset = ffc6Tag.copyToArray(tmpBuffer, offset); } // RapidConnect
+
+        EmvTag sTag = EmvTag.findTag((short) 0x9F6E);
+        if (sTag != null) { offset = sTag.copyToArray(tmpBuffer, offset); }       // TransIT/Elavon/TermLink
+
+        EmvTag ffc7Tag = EmvTag.findTag((short) 0xFFC7);
+        if (ffc7Tag != null) { offset = ffc7Tag.copyToArray(tmpBuffer, offset); } // redundancy
+
+        EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
+        sendResponse(apdu, buf, (short) 0x0077);
     }
 
     // Scratch offset in tmpBuffer for small temporary data (ICC DN, etc.)
@@ -738,6 +781,11 @@ public class PaymentApplication extends EmvApplet {
         // Store r in 9F10 (IAD — returned at GenAC), s in 9F6E (read via READ RECORD)
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
         EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
+        // Contact GenAC carries ECDSA s in multiple proprietary tags for processor compatibility
+        if (isContactInterface) {
+            EmvTag.setTag((short) 0xFFC6, ecdsaRawSig, (short) 32, (short) 32); // RapidConnect
+            EmvTag.setTag((short) 0xFFC7, ecdsaRawSig, (short) 32, (short) 32); // redundancy
+        }
     }
 
     /**
@@ -1003,20 +1051,6 @@ public class PaymentApplication extends EmvApplet {
         EmvTag.setTag((short) 0x9F4B, tmpBuffer, (short) 256, signedDataSize);
     }
 
-    private void externalAuthenticate(APDU apdu, byte[] buf) {
-        if (Util.getShort(buf, ISO7816.OFFSET_P1) != (short) 0x00) {
-            EmvApplet.logAndThrow(ISO7816.SW_INCORRECT_P1P2);
-        }
-
-        byte length = buf[ISO7816.OFFSET_LC];
-        if (length < (byte) 8 || length > (byte) 16) {
-            EmvApplet.logAndThrow(ISO7816.SW_DATA_INVALID);
-        }
-
-        // 6300 = Issuer authentication failed
-
-        EmvApplet.logAndThrow(ISO7816.SW_NO_ERROR);
-    }
 
     /**
      * TEST: Send 291 bytes of zeroes to isolate T=0 chaining issue.
@@ -1460,9 +1494,7 @@ public class PaymentApplication extends EmvApplet {
             case CMD_GENERATE_AC:
                 processGenerateAc(apdu, buf);
                 break;
-            case CMD_EXTERNAL_AUTHENTICATE:
-                externalAuthenticate(apdu, buf);
-                break;
+
             case CMD_GET_RESPONSE:
                 processGetResponse(apdu, buf);
                 break;

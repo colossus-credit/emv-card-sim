@@ -3390,5 +3390,204 @@ public class ColossusPaymentApplicationTest {
         assertTrue(count > 0, context + ": no inner TLVs found");
     }
 
+    // ========================================================================
+    // Contact Interface Detection + FFC6 Tests
+    // ========================================================================
+
+    /**
+     * Helper: find a tag in a TLV response by its 2-byte tag ID.
+     * Returns the value bytes, or null if not found.
+     */
+    private byte[] findTagInResponse(byte[] data, int tagHigh, int tagLow) {
+        for (int i = 0; i < data.length - 2; i++) {
+            if ((data[i] & 0xFF) == tagHigh && (data[i + 1] & 0xFF) == tagLow) {
+                int len = data[i + 2] & 0xFF;
+                if (i + 3 + len <= data.length) {
+                    return Arrays.copyOfRange(data, i + 3, i + 3 + len);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Helper: check if a 2-byte tag exists anywhere in a TLV response.
+     */
+    private boolean tagExistsInResponse(byte[] data, int tagHigh, int tagLow) {
+        return findTagInResponse(data, tagHigh, tagLow) != null;
+    }
+
+    /**
+     * Personalize a card with EC key for ECDSA and run SELECT → GPO → GENERATE AC (non-CDA).
+     * Returns the GenAC response data (inner content of tag 77).
+     */
+    private byte[] runContactGenAcFlow(byte[] selectAid) throws Exception {
+        setupColossusCard();
+
+        // --- Personalize ---
+        setEmvTagDev(0x00, 0x84, new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        }, "AID (84)");
+        setEmvTagDev(0x00, 0x5A, new byte[] {
+            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
+            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
+        }, "PAN (5A)");
+        setEmvTagDev(0x9F, 0x36, new byte[] { 0x00, 0x01 }, "ATC (9F36)");
+        setEmvTagDev(0x00, 0x82, new byte[] { (byte) 0x19, (byte) 0x80 }, "AIP (82)");
+        setEmvTagDev(0x00, 0x94, new byte[] {
+            (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
+        }, "AFL (94)");
+        setEmvTagDev(0x00, 0x8C, new byte[] {
+            (byte) 0x9F, (byte) 0x02, (byte) 0x06,
+            (byte) 0x9F, (byte) 0x03, (byte) 0x06,
+            (byte) 0x9F, (byte) 0x1A, (byte) 0x02,
+            (byte) 0x95, (byte) 0x05,
+            (byte) 0x5F, (byte) 0x2A, (byte) 0x02,
+            (byte) 0x9A, (byte) 0x03,
+            (byte) 0x9C, (byte) 0x01,
+            (byte) 0x9F, (byte) 0x37, (byte) 0x04,
+            (byte) 0x9F, (byte) 0x1C, (byte) 0x08,
+            (byte) 0x9F, (byte) 0x16, (byte) 0x0F,
+            (byte) 0x9F, (byte) 0x01, (byte) 0x06
+        }, "CDOL1 (8C)");
+
+        // EC private key
+        assertStoreData(0x82, 0x03, new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
+            (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
+            (byte) 0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, (byte) 0x64, (byte) 0x32, (byte) 0xA7,
+            (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
+            (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
+            (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
+        }, "EC private key (8203)");
+
+        // Templates — no CDA (no RSA key)
+        assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
+        assertStoreData(0xA0, 0x03, new byte[] { (byte) 0x00, (byte) 0x01 }, "Flags (randomness on)");
+        assertStoreData(0xB0, 0x01, new byte[] {
+            (byte) 0x00, (byte) 0x82, (byte) 0x00, (byte) 0x94
+        }, "GPO template (AIP+AFL)");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, (byte) 0x27, (byte) 0x9F, (byte) 0x36,
+            (byte) 0x9F, (byte) 0x26, (byte) 0x9F, (byte) 0x10
+        }, "GenAC template");
+        assertStoreData(0xB0, 0x05, new byte[] {
+            (byte) 0x00, (byte) 0x50, (byte) 0x00, (byte) 0x87
+        }, "FCI A5 template");
+        assertStoreData(0xB0, 0x04, new byte[] {
+            (byte) 0x00, (byte) 0x84, (byte) 0x00, (byte) 0xA5
+        }, "FCI 6F template");
+        setEmvTagDev(0x00, 0x50, new byte[] {
+            (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
+            (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
+        }, "App label (50)");
+        setEmvTagDev(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
+
+        // --- SELECT with the given AID ---
+        byte[] selectCmd = new byte[5 + selectAid.length];
+        selectCmd[0] = (byte) 0x00;
+        selectCmd[1] = (byte) 0xA4;
+        selectCmd[2] = (byte) 0x04;
+        selectCmd[3] = (byte) 0x00;
+        selectCmd[4] = (byte) selectAid.length;
+        System.arraycopy(selectAid, 0, selectCmd, 5, selectAid.length);
+        ResponseAPDU response = SmartCard.transmitCommand(selectCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
+
+        // --- GPO with 58-byte PDOL ---
+        byte[] pdolData = new byte[58];
+        pdolData[4] = (byte) 0x10; pdolData[5] = (byte) 0x00; // Amount
+        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[4] = (byte) (2 + pdolData.length);
+        gpoCmd[5] = (byte) 0x83;
+        gpoCmd[6] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        response = SmartCard.transmitCommand(gpoCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
+
+        // --- GENERATE AC (ARQC, no CDA: P1=0x80) ---
+        byte[] cdolData = new byte[58];
+        cdolData[4] = (byte) 0x10; cdolData[5] = (byte) 0x00;
+        byte[] genAcCmd = new byte[5 + cdolData.length];
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80; // ARQC, no CDA
+        genAcCmd[4] = (byte) cdolData.length;
+        System.arraycopy(cdolData, 0, genAcCmd, 5, cdolData.length);
+        response = SmartCard.transmitCommand(genAcCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GENERATE AC should succeed");
+
+        return response.getData();
+    }
+
+    @Test
+    @DisplayName("Contact GenAC includes FFC6 (ECDSA s) for RapidConnect")
+    public void testContactGenAcIncludesFfc6() throws Exception {
+        // Contact AID: A0000009510001
+        byte[] contactAid = new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09,
+            (byte) 0x51, (byte) 0x00, (byte) 0x01
+        };
+        byte[] genAcResponse = runContactGenAcFlow(contactAid);
+
+        // Standard tags
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x27), "CID (9F27) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x36), "ATC (9F36) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x26), "AC (9F26) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x10), "IAD/r (9F10) must be present");
+
+        // ECDSA s in three processor-specific tags
+        byte[] ffc6Value = findTagInResponse(genAcResponse, 0xFF, 0xC6);
+        assertNotNull(ffc6Value, "FFC6 (RapidConnect) must be present");
+        assertEquals(32, ffc6Value.length, "FFC6 must be 32 bytes");
+
+        byte[] s9f6eValue = findTagInResponse(genAcResponse, 0x9F, 0x6E);
+        assertNotNull(s9f6eValue, "9F6E (TransIT/Elavon) must be present");
+        assertEquals(32, s9f6eValue.length, "9F6E must be 32 bytes");
+
+        byte[] ffc7Value = findTagInResponse(genAcResponse, 0xFF, 0xC7);
+        assertNotNull(ffc7Value, "FFC7 (redundancy) must be present");
+        assertEquals(32, ffc7Value.length, "FFC7 must be 32 bytes");
+
+        // All three s tags must have the same value
+        assertArrayEquals(ffc6Value, s9f6eValue, "FFC6 and 9F6E must match");
+        assertArrayEquals(ffc6Value, ffc7Value, "FFC6 and FFC7 must match");
+
+        System.out.println("  Contact GenAC: FFC6 + 9F6E + FFC7 present, all 32 bytes, all match");
+    }
+
+    @Test
+    @DisplayName("Contactless GenAC does NOT include FFC6")
+    public void testContactlessGenAcExcludesFfc6() throws Exception {
+        // Contactless AID: A0000009511010
+        byte[] contactlessAid = new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09,
+            (byte) 0x51, (byte) 0x10, (byte) 0x10
+        };
+        byte[] genAcResponse = runContactGenAcFlow(contactlessAid);
+
+        // None of the contact-specific ECDSA s tags should be present
+        assertTrue(!tagExistsInResponse(genAcResponse, 0xFF, 0xC6),
+            "Contactless GenAC must NOT contain FFC6");
+        assertTrue(!tagExistsInResponse(genAcResponse, 0xFF, 0xC7),
+            "Contactless GenAC must NOT contain FFC7");
+        // 9F6E is delivered via READ RECORD for contactless, not in GenAC
+        assertTrue(!tagExistsInResponse(genAcResponse, 0x9F, 0x6E),
+            "Contactless GenAC must NOT contain 9F6E (delivered via READ RECORD)");
+
+        // Standard tags should still be present
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x27), "CID (9F27) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x36), "ATC (9F36) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x26), "AC (9F26) must be present");
+        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x10), "IAD (9F10) must be present");
+
+        System.out.println("  Contactless GenAC: FFC6/9F6E/FFC7 all absent (correct)");
+    }
+
 }
 
