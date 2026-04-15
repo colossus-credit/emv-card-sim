@@ -68,7 +68,7 @@ tags:
       Acquirer Identifier: 6
 
   # --- Simple tag values ---
-  Application Interchange Profile: "3C01"
+  Application Interchange Profile: "0000"  # Online-only, no ODA/CVM/TRM/IssuerAuth
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
@@ -87,13 +87,28 @@ tags:
   Form Factor Indicator: "08400000"
   CTQ: "8000"
 
+  PDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
 templates:
   gpo: ["AIP", "AFL"]
   dda: ["9F4B"]
   genac: ["9F27", "9F36", "9F26", "9F10"]
   fci:
     6f: ["DF Name", "A5"]
-    a5: ["Application Label", "Application Priority Indicator"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
 
 # Contactless overrides (merged on top of base tags/templates for contactless AID)
 contactless:
@@ -101,20 +116,6 @@ contactless:
     a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
   tags:
     Application Interchange Profile: "1980"
-    PDOL:
-      type: dol
-      value:
-        Amount Authorised: 6
-        Amount Other: 6
-        Terminal Country Code: 2
-        Terminal Verification Results: 5
-        Transaction Currency Code: 2
-        Transaction Date: 3
-        Transaction Type: 1
-        Unpredictable Number: 4
-        Terminal Identification: 8
-        Merchant Identifier: 15
-        Acquirer Identifier: 6
 
 records:
   - sfi: 1
