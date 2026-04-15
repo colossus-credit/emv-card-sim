@@ -411,11 +411,39 @@ task deployPaymentAppContactless(type: Exec) {
     commandLine 'java', '-jar', 'gp.jar', '--force', '--install', 'build/card/paymentapp_contactless.cap'
 }
 
-task deploy {
-    dependsOn deployPse, deployPpse, deployPaymentApp, deployPaymentAppContactless
+// Wipe all user packages from the card so a fresh deploy starts clean.
+// ISD package (A0000001515350) is preserved — that's JCOP v241-specific.
+// If you run this on a non-NXP card, update the grep filter accordingly.
+task wipe(type: Exec) {
+    dependsOn downloadGp
     group "JavaCard"
-    description "Build and deploy all applets to JavaCard"
+    description "Uninstall all user applets from the card (preserves ISD)"
+
+    commandLine 'bash', '-c', '''
+        set -euo pipefail
+        echo ">> Listing packages on card"
+        java -jar gp.jar --list 2>/dev/null \
+          | awk '/^PKG:/ {print $2}' \
+          | grep -v '^A0000001515350$' \
+          | while read pkg; do
+              echo ">> Deleting package $pkg"
+              java -jar gp.jar --force --delete "$pkg"
+            done
+        echo ">> Wipe complete"
+    '''
 }
+
+task deploy {
+    dependsOn wipe, deployPse, deployPpse, deployPaymentApp, deployPaymentAppContactless
+    group "JavaCard"
+    description "Wipe the card, build, and deploy all applets"
+}
+
+// Ensure wipe runs before any deploy task
+deployPse.mustRunAfter wipe
+deployPpse.mustRunAfter wipe
+deployPaymentApp.mustRunAfter wipe
+deployPaymentAppContactless.mustRunAfter wipe
 
 task personalize(type: Exec) {
     group "JavaCard"
@@ -423,11 +451,17 @@ task personalize(type: Exec) {
 
     def reader = project.hasProperty('reader') ? project.reader : 'Gemalto'
     def profile = project.hasProperty('profile') ? project.profile : 'personalize/profiles/default.yaml'
+    def keysDir = project.hasProperty('keysDir') ? project.keysDir : null
 
     def uvBin = System.getenv('HOME') + '/.local/bin/uv'
     if (!new File(uvBin).exists()) {
         uvBin = 'uv'  // fallback to PATH
     }
-    commandLine uvBin, 'run', '--project', 'personalize', 'python',
-        'personalize/personalize.py', '-p', profile, '--reader', reader
+
+    def args = [uvBin, 'run', '--project', 'personalize', 'python',
+                'personalize/personalize.py', '-p', profile, '--reader', reader]
+    if (keysDir != null) {
+        args += ['--keys-dir', keysDir]
+    }
+    commandLine args
 }
