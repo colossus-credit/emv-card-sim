@@ -18,9 +18,15 @@
 
 ### Manual Deployment Steps
 
-#### 1. Build and Deploy Applet
+#### 1. Build and Deploy Colossus Applet
+
+**IMPORTANT:** You must specify the Colossus AIDs - the defaults are test AIDs!
+
 ```bash
-./gradlew deployPaymentApp -Pjc_version=3.0.5
+./gradlew deployPaymentApp \
+  -Pjc_version=3.0.5 \
+  -Ppaymentapp_cap_aid=A00000095100 \
+  -Ppaymentapp_applet_aid=A0000009510001
 ```
 
 #### 2. Personalize Card
@@ -28,11 +34,34 @@
 ./personalize-colossus-card.sh
 ```
 
+#### 3. Verify Installation
+```bash
+java -jar gp.jar -l
+```
+
+Expected output:
+```
+APP: A0000009510001 (SELECTABLE)    # Colossus Payment App
+APP: 315041592E5359532E4444463031 (SELECTABLE)    # PSE
+PKG: A00000095100 (LOADED)    # Colossus package
+```
+
+## Critical: AID Configuration
+
+The gradle build has **default test AIDs** that are NOT the Colossus AIDs:
+
+| Parameter | Default (Test) | Colossus (Production) |
+|-----------|----------------|----------------------|
+| `paymentapp_cap_aid` | `AFFFFFFFFF0000` | `A00000095100` |
+| `paymentapp_applet_aid` | `AFFFFFFFFF1234` | `A0000009510001` |
+
+**Always specify Colossus AIDs when deploying for EMV terminal testing!**
+
 ## What Gets Deployed
 
-### Applet Configuration
-- **Package AID:** `AFFFFFFFFF0000`
-- **Applet AID:** `AFFFFFFFFF1234`
+### Colossus Applet Configuration
+- **Package AID:** `A00000095100` (RID: A000000951)
+- **Applet AID:** `A0000009510001`
 - **JavaCard Version:** 3.0.4 or 3.0.5
 
 ### Card Configuration (After Personalization)
@@ -83,6 +112,51 @@
 
 ## Troubleshooting
 
+### Wrong AID Deployed (Most Common Issue!)
+
+**Symptom:** Card list shows `AFFFFFFFFF1234` instead of `A0000009510001`
+```
+APP: AFFFFFFFFF1234 (SELECTABLE)    # WRONG - this is test AID
+```
+
+**Cause:** Deployed without specifying Colossus AIDs
+
+**Solution:**
+```bash
+# 1. Delete the wrong applet
+java -jar gp.jar --delete AFFFFFFFFF1234 --delete AFFFFFFFFF0000
+
+# 2. Redeploy with correct Colossus AIDs
+./gradlew deployPaymentApp \
+  -Ppaymentapp_cap_aid=A00000095100 \
+  -Ppaymentapp_applet_aid=A0000009510001
+
+# 3. Verify
+java -jar gp.jar -l | grep A0000009510001
+```
+
+### Colossus AID Missing After Deploy
+
+**Symptom:** Package loaded but no APP entry for A0000009510001
+
+**Cause:** `--install` only loads CAP, doesn't create instance
+
+**Solution:**
+```bash
+java -jar gp.jar --install build/paymentapp.cap \
+  --create A0000009510001 \
+  --package A00000095100 \
+  --applet A0000009510001
+```
+
+### "Could not delete AID - Some app still active"
+
+**Solution:** Select ISD first to deselect active applet:
+```bash
+java -jar gp.jar -a "00A4040000"
+java -jar gp.jar --delete <AID>
+```
+
 ### "No card reader found"
 - Check reader is connected
 - Verify card is inserted
@@ -93,13 +167,26 @@
 - Or install Java 8/11 for 3.0.4 support
 
 ### "Personalization failed"
-- Ensure applet was deployed first
+- Ensure applet was deployed first with **Colossus AID** (A0000009510001)
 - Check card has enough memory (needs ~10KB)
-- Verify card supports RSA-2048
+- Verify card supports RSA-1984
+
+### Card Returns Zeros Over T=0 (But Works Over T=1)
+
+**Symptom:** USB reader (T=1) shows correct data, but Verifone terminal (T=0) shows zeros
+
+**Cause:** Known T=0 protocol handling issue under investigation
+
+**Workaround:** None yet - active debugging in progress
+
+**Verify T=1 works:**
+```bash
+java -jar gp.jar -a "00A4040007A0000009510001" -a "00B2020C00" -d
+```
 
 ### "APDU response error"
 - Card may already be personalized
-- Run factory reset: `java -jar gp.jar --applet AFFFFFFFFF1234 --apdu 80050000`
+- Run factory reset: `java -jar gp.jar -a "00A4040007A0000009510001" -a "80050000"`
 - Then retry personalization
 
 ## Advanced Usage

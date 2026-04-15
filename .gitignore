@@ -37,4 +37,5 @@ build
 # Needed for gradlew to function
 !gradle/wrapper/gradle-wrapper.jar
 
-keys/
+keys/*
+!keys/.gitkeepsrc/test/rust/simulator/.cargo/

@@ -21,13 +21,22 @@ public class PaymentSystemEnvironment extends EmvApplet {
 
     private void processSetSettings(APDU apdu, byte[] buf) {
         short settingsId = Util.getShort(buf, ISO7816.OFFSET_P1);
+
+        // Use APDU methods for correct offset and length
+        short dataOffset = apdu.getOffsetCdata();
+        short dataLength = apdu.getIncomingLength();
+        // Fallback for platforms where getIncomingLength returns 0
+        if (dataLength == 0) {
+            dataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
+            dataOffset = ISO7816.OFFSET_CDATA;
+        }
+
         switch (settingsId) {
             // FALLBACK READ RECORD
             case 0x0006:
-                short dataLength = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
                 defaultReadRecord = null;
                 defaultReadRecord = new byte[dataLength];
-                Util.arrayCopy(buf, (short) ISO7816.OFFSET_CDATA, defaultReadRecord, (short) 0, dataLength);
+                Util.arrayCopy(buf, dataOffset, defaultReadRecord, (short) 0, dataLength);
                 break;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -41,6 +50,9 @@ public class PaymentSystemEnvironment extends EmvApplet {
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
+        // Clear old logs at start of new transaction (rolling logs)
+        ApduLog.clear();
+        
         // Check if AID (tag 84) exists in the ICC
         if (EmvTag.findTag((short) 0x84) != null) {
             if (tagBf0cFci != null) {
@@ -69,27 +81,34 @@ public class PaymentSystemEnvironment extends EmvApplet {
 
     protected void processReadRecord(APDU apdu, byte[] buf) {
         short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
+        byte p1 = buf[ISO7816.OFFSET_P1];  // Record number
+        byte p2 = buf[ISO7816.OFFSET_P2];  // SFI encoding
 
-        ReadRecord readRecord = ReadRecord.findRecord(p1p2);
-        if (readRecord == null) {
-            if (defaultReadRecord != null) {
-                short p1p2Fallback = Util.getShort(defaultReadRecord, (short) 0);
-                readRecord = ReadRecord.findRecord(p1p2Fallback);
-            }
+        // Check if this is SFI=1 with proper encoding: (P2 & 0x07) == 0x04
+        // SFI = (P2 & 0xF8) >> 3
+        byte sfi = (byte) ((p2 & 0xF8) >> 3);
+        boolean isSfi1Properly = (sfi == (byte) 1) && ((p2 & 0x07) == 0x04);
 
-            if (readRecord == null) {
-                EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
-            }
+        // PSE SFI=1 special handling: record 2 returns empty 70 00
+        if (isSfi1Properly && p1 == (byte) 2) {
+            // Return empty record template: 70 00
+            tmpBuffer[0] = (byte) 0x70;
+            tmpBuffer[1] = (byte) 0x00;
+            apdu.setOutgoing();
+            apdu.setOutgoingLength((short) 2);
+            apdu.sendBytesLong(tmpBuffer, (short) 0, (short) 2);
+            return;
         }
 
-        short tag70Length = readRecord.copyDataToArray(tmpBuffer, (short) 0);
-
-        EmvTag tag = EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, (byte) tag70Length);
-
-        if (buf[ISO7816.OFFSET_LC] != (byte) 0x00 && buf[ISO7816.OFFSET_LC] != tag.getLength()) {
-            EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);
+        // Record data stored as EmvTag entry keyed by P1P2
+        EmvTag recordTag = EmvTag.findTag(p1p2);
+        if (recordTag == null) {
+            EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
         }
 
+        // Copy raw record data and wrap in tag 70
+        short recordLen = recordTag.copyDataToArray(tmpBuffer, (short) 0);
+        EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, recordLen);
         sendResponse(apdu, buf, (short) 0x0070);
     }
 
@@ -97,9 +116,49 @@ public class PaymentSystemEnvironment extends EmvApplet {
      * Process PSE application selection and read records.
      */
     public void process(APDU apdu) {
-        byte[] buf = apdu.getBuffer(); 
+        byte[] buf = apdu.getBuffer();
 
-        ApduLog.addLogEntry(buf, (short) 0, (byte) (buf[ISO7816.OFFSET_LC] + 5));
+        // Determine if this command has incoming data
+        byte ins = buf[ISO7816.OFFSET_INS];
+        boolean hasCommandData;
+        switch (ins) {
+            case (byte)0xA4:  // SELECT
+            case (byte)0x01:  // SET_EMV_TAG
+            case (byte)0x02:  // SET_TAG_TEMPLATE
+            case (byte)0x03:  // SET_READ_RECORD_TEMPLATE
+            case (byte)0x04:  // SET_SETTINGS
+            case (byte)0x06:  // SET_EMV_TAG_FUZZ
+            case (byte)0xE2:  // STORE DATA (GP personalization)
+                hasCommandData = true;
+                break;
+            default:
+                hasCommandData = false;
+                break;
+        }
+
+        if (hasCommandData) {
+            // Receive incoming data
+            short bytesReceived = apdu.setIncomingAndReceive();
+            short actualLc = apdu.getIncomingLength();
+
+            // For large data, receive remaining bytes
+            while (bytesReceived < actualLc) {
+                short more = apdu.receiveBytes((short)(apdu.getOffsetCdata() + bytesReceived));
+                if (more <= 0) break;
+                bytesReceived += more;
+            }
+        }
+
+        // Log the APDU
+        short logLen = hasCommandData ? (short)(5 + apdu.getIncomingLength()) : (short)5;
+        if (logLen > 255) logLen = 255;
+        ApduLog.addLogEntry(buf, (short) 0, (byte) logLen);
+
+        // STORE DATA (INS E2) — accept CLA 00, 80, or 84 per CPS v2.0
+        if (buf[ISO7816.OFFSET_INS] == (byte) 0xE2) {
+            processStoreData(apdu, buf);
+            return;
+        }
 
         short cmd = Util.getShort(buf, ISO7816.OFFSET_CLA);
 
@@ -107,38 +166,47 @@ public class PaymentSystemEnvironment extends EmvApplet {
             case CMD_SELECT:
                 processSelect(apdu, buf);
                 return;
-            case CMD_SET_SETTINGS:
-                processSetSettings(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG:
-                processSetEmvTag(apdu, buf);
-                return;
-            case CMD_SET_EMV_TAG_FUZZ:
-                processSetEmvTagFuzz(apdu, buf);
-                return;
-            case CMD_SET_TAG_TEMPLATE:
-                processSetTagTemplate(apdu, buf);
-                return;
-            case CMD_SET_READ_RECORD_TEMPLATE:
-                processSetReadRecordTemplate(apdu, buf);
-                return;
-            case CMD_FACTORY_RESET:
-                factoryReset(apdu, buf);
-                return;
-            case CMD_FUZZ_RESET:
-                fuzzReset(apdu, buf);
-                return;
-            case CMD_LOG_CONSUME:
-                consumeLogs(apdu, buf);
-                return;
             default:
                 break;
+        }
+
+        // Dev-only admin/personalization commands
+        if (!BuildConfig.PRODUCTION) {
+            switch (cmd) {
+                case CMD_SET_SETTINGS:
+                    processSetSettings(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG:
+                    processSetEmvTag(apdu, buf);
+                    return;
+                case CMD_SET_EMV_TAG_FUZZ:
+                    processSetEmvTagFuzz(apdu, buf);
+                    return;
+                case CMD_SET_TAG_TEMPLATE:
+                    processSetTagTemplate(apdu, buf);
+                    return;
+                case CMD_SET_READ_RECORD_TEMPLATE:
+                    processSetReadRecordTemplate(apdu, buf);
+                    return;
+                case CMD_FACTORY_RESET:
+                    factoryReset(apdu, buf);
+                    return;
+                case CMD_FUZZ_RESET:
+                    fuzzReset(apdu, buf);
+                    return;
+                case CMD_LOG_CONSUME:
+                    consumeLogs(apdu, buf);
+                    return;
+                default:
+                    break;
+            }
         }
 
         if (selectingApplet()) {
             return;
         }
 
+        // EMV runtime commands — always available
         switch (cmd) {
             case CMD_READ_RECORD:
                 processReadRecord(apdu, buf);

@@ -12,22 +12,21 @@ public class EmvTag {
 
     private byte[] tag;
     private byte[] data;
-    private byte   length;
+    private short  length;
 
-    public byte fuzzOffset      = (byte) 0x00;
-    public byte fuzzLength      = (byte) 0x00;
-    public byte fuzzFlags       = (byte) 0x00;
-    public byte fuzzOccurrence  = (byte) 0x00;
+    byte fuzzOffset      = (byte) 0x00;
+    byte fuzzLength      = (byte) 0x00;
+    byte fuzzFlags       = (byte) 0x00;
+    byte fuzzOccurrence  = (byte) 0x00;
 
-    protected EmvTag(short tagId, byte[] src, short srcOffset, byte length) {
+    protected EmvTag(short tagId, byte[] src, short srcOffset, short length) {
         tag = new byte[2];
-        data = new byte[255];
+        data = new byte[400];  // CDA+ECDSA response: SDAD(~261) + CID(4) + ATC(5) + IAD(35) + CED(35)
         this.length = length;
 
         Util.setShort(tag, (short) 0, tagId);
         if (this.length != 0) {
-            // Inline setData to avoid this-escape warning
-            Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
+            setData(src, srcOffset, this.length);
         }
 
         next = null;
@@ -45,7 +44,7 @@ public class EmvTag {
     /**
      * Add or update BER-TLV EMV tag to memory.
      */
-    public static EmvTag setTag(short tagId, byte[] src, short srcOffset, byte length) {
+    public static EmvTag setTag(short tagId, byte[] src, short srcOffset, short length) {
         EmvTag tag = EmvTag.findTag(tagId);
         if (tag == null) {
             tag = new EmvTag(tagId, src, srcOffset, length);
@@ -140,9 +139,9 @@ public class EmvTag {
     /**
      * Set the data/value and length of the tag.
      */
-    public final void setData(byte[] src, short srcOffset, byte length) {
+    public void setData(byte[] src, short srcOffset, short length) {
         this.length = length;
-        Util.arrayCopy(src, srcOffset, data, (short) 0, (short) (this.length & 0x00FF));
+        Util.arrayCopy(src, srcOffset, data, (short) 0, this.length);
     }
 
     /**
@@ -176,7 +175,7 @@ public class EmvTag {
     /**
      * Get data length.
      */
-    public byte getLength() {
+    public short getLength() {
         return length;
     }
 
@@ -187,32 +186,36 @@ public class EmvTag {
         short copyOffset = dstOffset;
 
         if (tag[0] == (byte) 0x00) {
-            Util.arrayCopy(tag, (short) 1, dst, dstOffset, (short) 1);
+            // Single byte tag
+            dst[dstOffset] = tag[1];
             copyOffset += (short) 1;
         } else {
+            // Two byte tag
             Util.arrayCopy(tag, (short) 0, dst, dstOffset, (short) 2);
             copyOffset += (short) 2;
         }
 
-        short shortLength = (short) (length & 0x00FF);
-        if (shortLength >= 128) {
+        // TLV length encoding
+        if (length > 255) {
+            // 82 XX XX format for lengths > 255
+            dst[copyOffset] = (byte) 0x82;
+            dst[(short)(copyOffset + 1)] = (byte) ((length >> 8) & 0xFF);
+            dst[(short)(copyOffset + 2)] = (byte) (length & 0xFF);
+            copyOffset += (short) 3;
+        } else if (length >= 128) {
+            // 81 XX format for lengths 128-255
             dst[copyOffset] = (byte) 0x81;
+            dst[(short)(copyOffset + 1)] = (byte) (length & 0xFF);
+            copyOffset += (short) 2;
+        } else {
+            // Single byte for lengths < 128
+            dst[copyOffset] = (byte) (length & 0xFF);
             copyOffset += (short) 1;
         }
-
-        short lengthOffset = copyOffset;
-        copyOffset += (short) 1;
         copyOffset = copyDataToArray(dst, copyOffset);
 
-        dst[lengthOffset] = length;
-
-        // re-write tag length with fuzz overflow?
-        if (fuzzLength > 0x00 && (fuzzFlags & (1 << 0)) == 1) {
-            // TODO: How to handle the case that tag length would need to be represented as two bytes instead of one?
-            dst[lengthOffset] = (byte) (copyOffset - lengthOffset - 1);
-        }
-
-
+        // Note: Fuzz length override not implemented for extended length encoding
+        // TODO: Implement fuzz length handling for TLV length > 127
 
         return copyOffset;
     }
@@ -221,10 +224,9 @@ public class EmvTag {
      * Serialize tag's data to array, i.e. no BER-TLV header.
      */
     public short copyDataToArray(byte[] dst, short dstOffset) {
-        short shortLength = (short) (length & 0x00FF);
+        Util.arrayCopy(data, (short) 0, dst, dstOffset, length);
 
-        Util.arrayCopy(data, (short) 0, dst, dstOffset, shortLength);
-
+        short copyLength = length;
         if (fuzzLength > (byte) 0x00) {
             byte doFuzzing = (byte) 0x00;
 
@@ -236,12 +238,12 @@ public class EmvTag {
             if (doFuzzing == (byte) 0x00) {
                 EmvApplet.randomData.generateData(dst, (short) (dstOffset + (fuzzOffset & 0x00FF)), (short) (fuzzLength & 0x00FF));
 
-                if (fuzzLength + fuzzOffset > shortLength) {
-                    shortLength = (short) ((fuzzLength & 0x00FF) + (fuzzOffset & 0x00FF));
+                if ((short)((fuzzLength & 0xFF) + (fuzzOffset & 0xFF)) > copyLength) {
+                    copyLength = (short) ((fuzzLength & 0x00FF) + (fuzzOffset & 0x00FF));
                 }
             }
         }
 
-        return (short) (dstOffset + shortLength);
+        return (short) (dstOffset + copyLength);
     }
 }
