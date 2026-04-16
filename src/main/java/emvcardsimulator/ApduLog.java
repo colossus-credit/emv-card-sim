@@ -13,7 +13,7 @@ public class ApduLog {
     private byte[] data;
     private byte   length;
 
-    private static short maxCount = 20;
+    private static short maxCount = 20;  // Enable for NFC debugging
     private static short count = 0;
 
     protected ApduLog(byte[] src, short srcOffset, byte length) {
@@ -47,7 +47,13 @@ public class ApduLog {
      * Add APDU log entry.
      */
     public static void addLogEntry(byte[] src, short srcOffset, byte length) {
-        if (maxCount == (short) 0) {
+        // APDU logging disabled in production builds: each log entry allocates
+        // persistent EEPROM (new byte[N] + linked-list node + transaction for
+        // eviction). On contactless, these writes exceed the NFC Frame Waiting
+        // Time (~77ms at FWI=4), causing the terminal to receive partial or no
+        // response data — which the C-2 kernel flags as PARSING ERROR (DF8115
+        // L2=04).
+        if (BuildConfig.PRODUCTION || maxCount == (short) 0) {
             return;
         }
 

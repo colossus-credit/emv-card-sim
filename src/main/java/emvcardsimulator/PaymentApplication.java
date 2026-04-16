@@ -530,10 +530,12 @@ public class PaymentApplication extends EmvApplet {
         storedPdolData = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
         storedPdolLength = 0;
 
-        // DEBUG: Storage for hash input (256 bytes should be enough) and output (32 bytes for SHA-256)
-        debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
+        // DEBUG: Storage for hash input/output — only allocated in dev builds
+        if (!BuildConfig.PRODUCTION) {
+            debugHashInput = JCSystem.makeTransientByteArray((short) 256, JCSystem.CLEAR_ON_DESELECT);
+            debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
+        }
         debugHashInputLength = 0;
-        debugHashOutput = JCSystem.makeTransientByteArray((short) 20, JCSystem.CLEAR_ON_DESELECT);
 
         // Chunked settings buffer for RSA key on T=0 cards (persistent)
         settingsChunkBuffer = new byte[512];
@@ -568,7 +570,7 @@ public class PaymentApplication extends EmvApplet {
         // Don't clear logs here - it prevents reading logs via opensc-tool
         // The rolling log limit (maxCount=10) handles old logs
 
-        // Check if PAN (tag A5) exists in the ICC
+        // Check if PAN (tag 5A) exists in the ICC
         if (EmvTag.findTag((short) 0x5A) != null) {
             arrayRandomFill(challenge);
 
@@ -663,9 +665,9 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Send GENERATE AC response with CDA per EMV Book 2 Table 20.
-     * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD)
-     *                  + optional 9F6E (ECDSA s when EC key is loaded).
+     * Response tag 77: 9F27 (CID) + 9F36 (ATC) + 9F4B (SDAD) + 9F10 (IAD).
      * Note: 9F26 (AC) is NOT included — AC is embedded inside the SDAD.
+     *       9F6E (ECDSA s) omitted — terminal rejects non-standard tag lengths.
      */
     private void sendGenerateAcResponseCda(APDU apdu, byte[] buf) {
         short offset = (short) 0;
@@ -691,82 +693,11 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Send GENERATE AC response without CDA (no 9F4B).
-     * Response contains: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (IAD) in tag 77 template.
+     * Uses responseTemplateGenerateAc (template 3) which is set during
+     * personalization to [9F27, 9F36, 9F26, 9F10].
      */
     private void sendGenerateAcResponseNoCda(APDU apdu, byte[] buf) {
-        short offset = (short) 0;
-
-        // Build response content in tmpBuffer
-        // 9F27 (CID) - 1 byte
-        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
-        if (cidTag != null) {
-            offset = cidTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F36 (ATC) - 2 bytes
-        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
-        if (atcTag != null) {
-            offset = atcTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F26 (AC) - 8 bytes
-        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
-        if (acTag != null) {
-            offset = acTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F10 (IAD) - variable length
-        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
-        if (iadTag != null) {
-            offset = iadTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // Build tag 77 template wrapper
-        short contentLen = offset;
-        short responseOffset = (short) 0;
-
-        // Response goes in buf starting at OFFSET_CDATA
-        buf[ISO7816.OFFSET_CDATA] = (byte) 0x77;
-        responseOffset = (short) (ISO7816.OFFSET_CDATA + 1);
-
-        // Length encoding
-        if (contentLen > (short) 127) {
-            buf[responseOffset++] = (byte) 0x81;
-            buf[responseOffset++] = (byte) (contentLen & 0xFF);
-        } else {
-            buf[responseOffset++] = (byte) contentLen;
-        }
-
-        // Copy content
-        Util.arrayCopy(tmpBuffer, (short) 0, buf, responseOffset, contentLen);
-        responseOffset += contentLen;
-
-        short totalLen = (short) (responseOffset - ISO7816.OFFSET_CDATA);
-        ApduLog.addLogEntry(buf, ISO7816.OFFSET_CDATA, (byte) (totalLen & 0xFF));
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, totalLen);
-    }
-
-    /**
-     * Generate ECDSA P-256 signature over ICC_DN || CDOL data during GENERATE AC.
-     * Signs the full CDOL data as provided by the terminal, prepended with ICC Dynamic Number.
-     * Raw r component stored in tag 9F10 (IAD), s in tag 9F6E, ICC_DN in 9F4C.
-     */
-    private void generateEcdsaForGenAc(byte[] buf, short cdolLen) {
-        // Generate random ICC Dynamic Number (3 bytes)
-        arrayRandomFill(tag9f4cDynamicNumber);
-        EmvTag.setTag((short) 0x9F4C, tag9f4cDynamicNumber, (short) 0, (byte) tag9f4cDynamicNumber.length);
-
-        // Sign: ICC_DN(3) || CDOL data (cdolLen bytes from GENERATE AC command)
-        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(tag9f4cDynamicNumber, (short) 0, (short) tag9f4cDynamicNumber.length);
-        short sigLen = ecdsaSignature.sign(buf, ISO7816.OFFSET_CDATA, cdolLen, ecdsaSigBuffer, (short) 0);
-
-        // Strip DER → raw r||s (64 bytes)
-        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
-
-        // Store r in 9F10 (IAD), s in 9F6E
-        EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
-        EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
+        sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
     }
 
     // Scratch offset in tmpBuffer for small temporary data (ICC DN, etc.)
@@ -783,33 +714,6 @@ public class PaymentApplication extends EmvApplet {
             Util.arrayFillNonAtomic(tmpBuffer, TMP_SCRATCH_OFFSET, (short) 8, (byte) 0xAB);
         }
         EmvTag.setTag((short) 0x9F4C, tmpBuffer, TMP_SCRATCH_OFFSET, (short) 8);
-    }
-
-    /**
-     * Generate ECDSA P-256 signature for CDA+ECDSA merged flow.
-     * Must be called BEFORE generateSdad() so that the Transaction Data Hash
-     * in the SDAD correctly includes the ECDSA r component as 9F10 (IAD).
-     * Uses ICC Dynamic Number from 9F4C (set by generateIccDynamicNumber).
-     * Signs: ICC_DN(8) || CDOL data. r stored in 9F10, s in 9F6E.
-     */
-    private void generateEcdsaForCda(byte[] buf, short cdolLen) {
-        EmvTag iccDnTag = EmvTag.findTag((short) 0x9F4C);
-        if (iccDnTag == null) return;
-
-        byte[] iccDn = iccDnTag.getData();
-        short iccDnLen = iccDnTag.getLength();
-
-        // Sign: ICC_DN(8) || CDOL data
-        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
-        ecdsaSignature.update(iccDn, (short) 0, iccDnLen);
-        short sigLen = ecdsaSignature.sign(buf, ISO7816.OFFSET_CDATA, cdolLen, ecdsaSigBuffer, (short) 0);
-
-        // Strip DER → raw r||s (64 bytes)
-        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
-
-        // Store r in 9F10 (IAD), s in 9F6E
-        EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
-        EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
     }
 
     /**
@@ -834,71 +738,6 @@ public class PaymentApplication extends EmvApplet {
         // Store r in 9F10 (IAD — returned at GenAC), s in 9F6E (read via READ RECORD)
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
         EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
-    }
-
-    /**
-     * Build GENERATE AC response with ECDSA signature tags.
-     * Response tag 77: 9F27 (CID), 9F36 (ATC), 9F26 (AC), 9F10 (r), 9F6E (s), 9F4C (ICC_DN)
-     */
-    private void sendGenerateAcResponseEcdsa(APDU apdu, byte[] buf) {
-        short offset = (short) 0;
-
-        // 9F27 (CID)
-        EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
-        if (cidTag != null) {
-            offset = cidTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F36 (ATC)
-        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
-        if (atcTag != null) {
-            offset = atcTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F26 (AC)
-        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
-        if (acTag != null) {
-            offset = acTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F10 (IAD = ECDSA r, 32 bytes)
-        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
-        if (iadTag != null) {
-            offset = iadTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F6E (ECDSA s, 32 bytes)
-        EmvTag ecdsaSTag = EmvTag.findTag((short) 0x9F6E);
-        if (ecdsaSTag != null) {
-            offset = ecdsaSTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // 9F4C (ICC Dynamic Number, 3 bytes)
-        EmvTag dnTag = EmvTag.findTag((short) 0x9F4C);
-        if (dnTag != null) {
-            offset = dnTag.copyToArray(tmpBuffer, offset);
-        }
-
-        // Build tag 77 template wrapper
-        short contentLen = offset;
-        short responseOffset = (short) 0;
-
-        buf[ISO7816.OFFSET_CDATA] = (byte) 0x77;
-        responseOffset = (short) (ISO7816.OFFSET_CDATA + 1);
-
-        if (contentLen > (short) 127) {
-            buf[responseOffset++] = (byte) 0x81;
-            buf[responseOffset++] = (byte) (contentLen & 0xFF);
-        } else {
-            buf[responseOffset++] = (byte) contentLen;
-        }
-
-        Util.arrayCopy(tmpBuffer, (short) 0, buf, responseOffset, contentLen);
-        responseOffset += contentLen;
-
-        short totalLen = (short) (responseOffset - ISO7816.OFFSET_CDATA);
-        ApduLog.addLogEntry(buf, ISO7816.OFFSET_CDATA, (byte) (totalLen & 0xFF));
-        apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, totalLen);
     }
 
     /**
@@ -994,18 +833,15 @@ public class PaymentApplication extends EmvApplet {
         // PDOL data + CDOL1 data + [CDOL2 data] + separator byte + TLV of response tags
         shaMessageDigest.reset();
 
-        // DEBUG: Clear and prepare to record hash input
-        debugHashInputLength = 0;
+        if (!BuildConfig.PRODUCTION) { debugHashInputLength = 0; }
 
         // 1. Include PDOL data first (stored from GPO)
-        // Use the defined PDOL length, not the received length
         // PDOL: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)+9F1C(8)+9F16(15)+9F01(6) = 58
         short pdolDefinedLength = 58;
         if (storedPdolLength > 0) {
             short pdolHashLen = (storedPdolLength < pdolDefinedLength) ? storedPdolLength : pdolDefinedLength;
             shaMessageDigest.update(storedPdolData, (short) 0, pdolHashLen);
-            // DEBUG: Record PDOL data
-            if ((short)(debugHashInputLength + pdolHashLen) <= (short) 256) {
+            if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + pdolHashLen) <= (short) 256) {
                 Util.arrayCopy(storedPdolData, (short) 0, debugHashInput, debugHashInputLength, pdolHashLen);
                 debugHashInputLength = (short)(debugHashInputLength + pdolHashLen);
             }
@@ -1017,31 +853,25 @@ public class PaymentApplication extends EmvApplet {
 
         if (isSecondGenerateAc) {
             // Second GENERATE AC: Include stored CDOL1 first, then CDOL2
-            // 2a. Include stored CDOL1 data (padded to 58 bytes)
             if (storedCdol1Length > 0) {
                 shaMessageDigest.update(storedCdol1Data, (short) 0, storedCdol1Length);
-                // DEBUG
-                if ((short)(debugHashInputLength + storedCdol1Length) <= (short) 256) {
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + storedCdol1Length) <= (short) 256) {
                     Util.arrayCopy(storedCdol1Data, (short) 0, debugHashInput, debugHashInputLength, storedCdol1Length);
                     debugHashInputLength = (short)(debugHashInputLength + storedCdol1Length);
                 }
             }
-            // Pad CDOL1 if needed
             if (storedCdol1Length < cdol1ExpectedLen) {
                 short padLen = (short)(cdol1ExpectedLen - storedCdol1Length);
                 Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
                 shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
-                // DEBUG
-                if ((short)(debugHashInputLength + padLen) <= (short) 256) {
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + padLen) <= (short) 256) {
                     Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
                     debugHashInputLength = (short)(debugHashInputLength + padLen);
                 }
             }
-            // 2b. Include current CDOL2 data (60 bytes, no padding needed)
             if (cdolLen > 0) {
                 shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
-                // DEBUG
-                if ((short)(debugHashInputLength + cdolLen) <= (short) 256) {
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + cdolLen) <= (short) 256) {
                     Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolLen);
                     debugHashInputLength = (short)(debugHashInputLength + cdolLen);
                 }
@@ -1052,24 +882,19 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, storedCdol1Data, (short) 0, cdolLen);
                 storedCdol1Length = cdolLen;
             }
-            // 2. Include CDOL1 data (capped to expected length, similar to PDOL)
-            // Terminal may send more bytes than expected (e.g., 61 vs 58), use min
             if (cdolLen > 0) {
                 short cdolHashLen = (cdolLen < cdol1ExpectedLen) ? cdolLen : cdol1ExpectedLen;
                 shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolHashLen);
-                // DEBUG
-                if ((short)(debugHashInputLength + cdolHashLen) <= (short) 256) {
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + cdolHashLen) <= (short) 256) {
                     Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolHashLen);
                     debugHashInputLength = (short)(debugHashInputLength + cdolHashLen);
                 }
             }
-            // Pad with zeros if CDOL data is less than expected
             if (cdolLen < cdol1ExpectedLen) {
                 short padLen = (short)(cdol1ExpectedLen - cdolLen);
                 Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
                 shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
-                // DEBUG
-                if ((short)(debugHashInputLength + padLen) <= (short) 256) {
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + padLen) <= (short) 256) {
                     Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
                     debugHashInputLength = (short)(debugHashInputLength + padLen);
                 }
@@ -1083,26 +908,23 @@ public class PaymentApplication extends EmvApplet {
         short iadLenForCalc = (iadTagForLen != null) ? (short) (iadTagForLen.getLength() & 0xFF) : 0;
         short sdadLengthBytes = (rsaPrivateKeyByteSize >= (short) 256) ? (short) 3 : (short) 2;
         short responseContentLen = (short) (4 + 5 + 2 + sdadLengthBytes + rsaPrivateKeyByteSize + 3 + iadLenForCalc);
-        // Only include low byte if length requires 82 XX YY encoding (>= 256)
         if (responseContentLen >= (short) 256) {
             tmpBuffer[400] = (byte) (responseContentLen & 0xFF);
             shaMessageDigest.update(tmpBuffer, (short) 400, (short) 1);
-            // DEBUG: Record length byte
-            if (debugHashInputLength < (short) 256) {
+            if (!BuildConfig.PRODUCTION && debugHashInputLength < (short) 256) {
                 debugHashInput[debugHashInputLength] = (byte) (responseContentLen & 0xFF);
                 debugHashInputLength = (short)(debugHashInputLength + 1);
             }
         }
 
-        // 4. Include response TLV tags (EMV Book 2 Section 6.5.1.4)
+        // 4. Include response TLV tags in TDH (EMV Book 2 Section 6.5.1.4)
         // 9F27 (CID) - 1 byte value
         tmpBuffer[400] = (byte) 0x9F;
         tmpBuffer[401] = (byte) 0x27;
         tmpBuffer[402] = (byte) 0x01;
         tmpBuffer[403] = cryptogramInfoData;
         shaMessageDigest.update(tmpBuffer, (short) 400, (short) 4);
-        // DEBUG: Record 9F27
-        if ((short)(debugHashInputLength + 4) <= (short) 256) {
+        if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + 4) <= (short) 256) {
             Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 4);
             debugHashInputLength = (short)(debugHashInputLength + 4);
         }
@@ -1116,8 +938,7 @@ public class PaymentApplication extends EmvApplet {
             Util.arrayCopy(atcTag.getData(), (short) 0, tmpBuffer, (short) 403, (short) 2);
         }
         shaMessageDigest.update(tmpBuffer, (short) 400, (short) 5);
-        // DEBUG: Record 9F36
-        if ((short)(debugHashInputLength + 5) <= (short) 256) {
+        if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + 5) <= (short) 256) {
             Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) 5);
             debugHashInputLength = (short)(debugHashInputLength + 5);
         }
@@ -1136,19 +957,18 @@ public class PaymentApplication extends EmvApplet {
             tmpBuffer[402] = (byte) iadLen;
             Util.arrayCopy(iadTag.getData(), (short) 0, tmpBuffer, (short) 403, iadLen);
             shaMessageDigest.update(tmpBuffer, (short) 400, (short) (3 + iadLen));
-            // DEBUG: Record 9F10
-            if ((short)(debugHashInputLength + 3 + iadLen) <= (short) 256) {
+            if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + 3 + iadLen) <= (short) 256) {
                 Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, (short) (3 + iadLen));
                 debugHashInputLength = (short)(debugHashInputLength + 3 + iadLen);
             }
         }
 
-        // 9F4B (SDAD) is excluded per EMV Book 2 Section 6.6.3 Step 10:
-        // "with the exception of the Signed Dynamic Application Data"
+        // 9F4B (SDAD) excluded per EMV Book 2 Section 6.6.3 Step 10
 
         shaMessageDigest.doFinal(tmpBuffer, (short) 0, (short) 0, tmpBuffer, offset);
-        // DEBUG: Store the Transaction Data Hash output
-        Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
+        if (!BuildConfig.PRODUCTION && debugHashOutput != null) {
+            Util.arrayCopy(tmpBuffer, offset, debugHashOutput, (short) 0, (short) 20);
+        }
         offset = (short) (offset + 20);
 
         // Trailer at end
@@ -1265,9 +1085,7 @@ public class PaymentApplication extends EmvApplet {
         // Debug command: returns list of all stored tag IDs (2 bytes each)
         short offset = (short) 0;
         for (EmvTag iter = EmvTag.getHead(); iter != null; iter = iter.getNext()) {
-            byte[] tagBytes = iter.getTag();
-            tmpBuffer[offset] = tagBytes[0];
-            tmpBuffer[(short)(offset + 1)] = tagBytes[1];
+            Util.setShort(tmpBuffer, offset, iter.getTagId());
             offset += (short) 2;
             if (offset >= (short) 250) break; // Prevent buffer overflow
         }
@@ -1324,7 +1142,7 @@ public class PaymentApplication extends EmvApplet {
     }
 
     /* qVSDC removed — full EMV mode for all contactless transactions.
-     * ECDSA signing now happens in processGenerateAc() via generateEcdsaForGenAc().
+     * ECDSA signing happens at GPO time via generateEcdsaAtGpo().
      */
 
     private void processDynamicDataAuthentication(APDU apdu, byte[] buf) {

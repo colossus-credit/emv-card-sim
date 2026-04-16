@@ -5,39 +5,38 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import javacard.framework.ISO7816;
-
-import javax.smartcardio.CardException;
-import javax.smartcardio.CommandAPDU;
-import javax.smartcardio.ResponseAPDU;
-import javax.crypto.Cipher;
+import java.io.ByteArrayOutputStream;
+import java.math.BigInteger;
 import java.security.KeyFactory;
-import java.security.PublicKey;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
-import java.security.spec.RSAPublicKeySpec;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
-import java.security.spec.ECPrivateKeySpec;
 import java.security.spec.ECPoint;
 import java.security.spec.ECPublicKeySpec;
-import java.security.interfaces.ECPublicKey;
-import java.security.KeyPairGenerator;
-import java.security.Signature;
-import java.math.BigInteger;
+import java.security.spec.RSAPublicKeySpec;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.io.ByteArrayOutputStream;
+
+import javacard.framework.ISO7816;
+import javax.crypto.Cipher;
+import javax.smartcardio.CardException;
+import javax.smartcardio.CommandAPDU;
+import javax.smartcardio.ResponseAPDU;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * Test suite for Colossus Credit Card Network CDA transactions.
- * 
- * Colossus Network Specifications:
+ *
+ * <p>Colossus Network Specifications:
  * - AID: A0000000951
  * - BIN: 67676767
  * - RSA-2048 only (no RSA-1024)
@@ -350,7 +349,7 @@ public class ColossusPaymentApplicationTest {
 
     private void setupRsaKey() throws CardException {
         // RSA-1024 modulus (128 bytes)
-        byte[] modulus = new byte[] {
+        final byte[] modulus = new byte[] {
             (byte) 0xA4, (byte) 0xC9, (byte) 0x0D, (byte) 0x48, (byte) 0x83, (byte) 0x21, (byte) 0xF7, (byte) 0x51,
             (byte) 0xCC, (byte) 0xBF, (byte) 0xF3, (byte) 0xA9, (byte) 0xCB, (byte) 0x15, (byte) 0x6A, (byte) 0xD1,
             (byte) 0xC9, (byte) 0x05, (byte) 0xF8, (byte) 0x69, (byte) 0xBD, (byte) 0xFC, (byte) 0xF3, (byte) 0x2C,
@@ -370,7 +369,7 @@ public class ColossusPaymentApplicationTest {
         };
 
         // RSA-1024 private exponent (128 bytes)
-        byte[] exponent = new byte[] {
+        final byte[] exponent = new byte[] {
             (byte) 0x82, (byte) 0x06, (byte) 0x22, (byte) 0x75, (byte) 0x15, (byte) 0x03, (byte) 0xB8, (byte) 0x22,
             (byte) 0xD3, (byte) 0x6C, (byte) 0xA2, (byte) 0xD7, (byte) 0x57, (byte) 0x67, (byte) 0x8E, (byte) 0xE1,
             (byte) 0xF9, (byte) 0xBC, (byte) 0xBC, (byte) 0x46, (byte) 0xB3, (byte) 0xA2, (byte) 0xE4, (byte) 0x3E,
@@ -446,17 +445,36 @@ public class ColossusPaymentApplicationTest {
         cdolCmd[idx++] = (byte) 0x1E;  // LC = 30 bytes (0x1E)
         
         // CDOL structure: tag + length for each field (3 bytes per entry)
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x02; cdolCmd[idx++] = (byte) 0x06;  // Amount, Authorised
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x03; cdolCmd[idx++] = (byte) 0x06;  // Amount, Other
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x1A; cdolCmd[idx++] = (byte) 0x02;  // Terminal Country
-        cdolCmd[idx++] = (byte) 0x95; cdolCmd[idx++] = (byte) 0x05;  // TVR (2 bytes tag + 1 byte length)
-        cdolCmd[idx++] = (byte) 0x5F; cdolCmd[idx++] = (byte) 0x2A; cdolCmd[idx++] = (byte) 0x02;  // Currency
-        cdolCmd[idx++] = (byte) 0x9A; cdolCmd[idx++] = (byte) 0x03;  // Date (1 byte tag + 1 byte length)
-        cdolCmd[idx++] = (byte) 0x9C; cdolCmd[idx++] = (byte) 0x01;  // Type (1 byte tag + 1 byte length)
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x37; cdolCmd[idx++] = (byte) 0x04;  // UN
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x1C; cdolCmd[idx++] = (byte) 0x08;  // Terminal ID
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x16; cdolCmd[idx++] = (byte) 0x0F;  // Merchant ID
-        cdolCmd[idx++] = (byte) 0x9F; cdolCmd[idx++] = (byte) 0x01; cdolCmd[idx++] = (byte) 0x06;  // Acquirer ID
+        cdolCmd[idx++] = (byte) 0x9F; // Amount, Authorised
+        cdolCmd[idx++] = (byte) 0x02;
+        cdolCmd[idx++] = (byte) 0x06;
+        cdolCmd[idx++] = (byte) 0x9F; // Amount, Other
+        cdolCmd[idx++] = (byte) 0x03;
+        cdolCmd[idx++] = (byte) 0x06;
+        cdolCmd[idx++] = (byte) 0x9F; // Terminal Country
+        cdolCmd[idx++] = (byte) 0x1A;
+        cdolCmd[idx++] = (byte) 0x02;
+        cdolCmd[idx++] = (byte) 0x95; // TVR
+        cdolCmd[idx++] = (byte) 0x05;
+        cdolCmd[idx++] = (byte) 0x5F; // Currency
+        cdolCmd[idx++] = (byte) 0x2A;
+        cdolCmd[idx++] = (byte) 0x02;
+        cdolCmd[idx++] = (byte) 0x9A; // Date
+        cdolCmd[idx++] = (byte) 0x03;
+        cdolCmd[idx++] = (byte) 0x9C; // Type
+        cdolCmd[idx++] = (byte) 0x01;
+        cdolCmd[idx++] = (byte) 0x9F; // UN
+        cdolCmd[idx++] = (byte) 0x37;
+        cdolCmd[idx++] = (byte) 0x04;
+        cdolCmd[idx++] = (byte) 0x9F; // Terminal ID
+        cdolCmd[idx++] = (byte) 0x1C;
+        cdolCmd[idx++] = (byte) 0x08;
+        cdolCmd[idx++] = (byte) 0x9F; // Merchant ID
+        cdolCmd[idx++] = (byte) 0x16;
+        cdolCmd[idx++] = (byte) 0x0F;
+        cdolCmd[idx++] = (byte) 0x9F; // Acquirer ID
+        cdolCmd[idx++] = (byte) 0x01;
+        cdolCmd[idx++] = (byte) 0x06;
         
         ResponseAPDU response = SmartCard.transmitCommand(cdolCmd);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), 
@@ -1189,14 +1207,20 @@ public class ColossusPaymentApplicationTest {
         // Skip outer tag 77 and its length
         if (offset < data.length && data[offset] == 0x77) {
             offset++;
-            if (offset >= data.length) return tlvs;
+            if (offset >= data.length) {
+                return tlvs;
+            }
 
             int len = data[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= data.length) return tlvs;
+                if (offset >= data.length) {
+                    return tlvs;
+                }
                 len = data[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= data.length) return tlvs;
+                if (offset + 1 >= data.length) {
+                    return tlvs;
+                }
                 len = ((data[offset++] & 0xFF) << 8) | (data[offset++] & 0xFF);
             }
             contentEnd = Math.min(offset + len, data.length);
@@ -1204,20 +1228,30 @@ public class ColossusPaymentApplicationTest {
 
         // Parse contained TLVs
         while (offset < contentEnd) {
-            if (offset >= contentEnd) break;
+            if (offset >= contentEnd) {
+                break;
+            }
             int tag = data[offset++] & 0xFF;
             if ((tag & 0x1F) == 0x1F) {
-                if (offset >= contentEnd) break;
+                if (offset >= contentEnd) {
+                    break;
+                }
                 tag = (tag << 8) | (data[offset++] & 0xFF);
             }
 
-            if (offset >= contentEnd) break;
+            if (offset >= contentEnd) {
+                break;
+            }
             int len = data[offset++] & 0xFF;
             if (len == 0x81) {
-                if (offset >= contentEnd) break;
+                if (offset >= contentEnd) {
+                    break;
+                }
                 len = data[offset++] & 0xFF;
             } else if (len == 0x82) {
-                if (offset + 1 >= contentEnd) break;
+                if (offset + 1 >= contentEnd) {
+                    break;
+                }
                 len = ((data[offset++] & 0xFF) << 8) | (data[offset++] & 0xFF);
             }
 
@@ -1412,7 +1446,9 @@ public class ColossusPaymentApplicationTest {
                     (byte) 0x00, (byte) 0xC0, (byte) 0x00, (byte) 0x00, (byte) toFetch
                 };
                 response = SmartCard.transmitCommand(getResponseCmd);
-                if (response.getData().length == 0) break; // No more data
+                if (response.getData().length == 0) {
+                    break; // No more data
+                }
                 fullResponse.write(response.getData());
                 sw = response.getSW();
                 System.out.println("GET RESPONSE SW: " + String.format("%04X", sw));
@@ -1577,7 +1613,17 @@ public class ColossusPaymentApplicationTest {
     @DisplayName("GENERATE AC always returns ARQC for online-only card")
     public void testGenerateAcAlwaysReturnsArqc() throws CardException {
         setupColossusCard();
-        // Even with P1=0xC0 (invalid in old code), card returns ARQC (online-only)
+
+        // Minimum state for GENERATE AC: ATC, AIP, IAD, response template, GenAC template
+        setEmvTagDev(0x9F, 0x36, new byte[] { 0x00, 0x01 }, "ATC");
+        setEmvTagDev(0x00, 0x82, new byte[] { 0x3C, 0x00 }, "AIP");
+        setEmvTagDev(0x9F, 0x10, new byte[] { 0x06, 0x01, 0x0A, 0x03, (byte) 0xA4, (byte) 0xA0, 0x02 }, "IAD");
+        assertStoreData(0xA0, 0x02, new byte[] { 0x00, 0x77 }, "Response template");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, 0x27, (byte) 0x9F, 0x36, (byte) 0x9F, 0x26, (byte) 0x9F, 0x10
+        }, "GenAC template");
+
+        // P1=0xC0 requests AAC (decline), but online-only card always returns ARQC
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xAE, (byte) 0xC0, (byte) 0x00,
             (byte) 0x00
@@ -1656,36 +1702,35 @@ public class ColossusPaymentApplicationTest {
     // ========================================================================
 
     @Test
-    @DisplayName("STORE DATA: set EMV tag via DGI")
-    public void testStoreDataEmvTag() throws CardException {
+    @DisplayName("STORE DATA: reserved DGI 7FF0-7FFE returns 6A88 per CPS §3.2 bullet 10")
+    public void testStoreDataReservedDgiRange() throws CardException {
         setupColossusCard();
-        // STORE DATA with DGI=005A (PAN tag), length=08, data=6767676712345678
-        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
-            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
-            (byte) 0x0B,  // LC = 2 (DGI) + 1 (len) + 8 (data)
-            (byte) 0x00, (byte) 0x5A,  // DGI = tag 5A (PAN)
-            (byte) 0x08,               // length
-            (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
-            (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
-        });
-        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "STORE DATA with EMV tag DGI should succeed");
-    }
-
-    @Test
-    @DisplayName("STORE DATA: reject invalid DGI")
-    public void testStoreDataInvalidDgi() throws CardException {
-        setupColossusCard();
-        // STORE DATA with DGI=0000 (invalid)
+        // STORE DATA with DGI=7FF5 — reserved for application-independent processing
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
             (byte) 0x04,
-            (byte) 0x00, (byte) 0x00,  // DGI = 0x0000 (invalid)
+            (byte) 0x7F, (byte) 0xF5,  // DGI = 7FF5 (reserved)
             (byte) 0x01,               // length
             (byte) 0xAA
         });
-        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
-            "STORE DATA with DGI 0x0000 should return 6A86");
+        assertEquals(PersoSw.SW_UNRECOGNIZED_DGI, (short) response.getSW(),
+            "STORE DATA with reserved DGI 7FF5 should return 6A88");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: standalone tag DGI accepted per CPS §3.2 bullet 7")
+    public void testStoreDataStandaloneTagDgi() throws CardException {
+        setupColossusCard();
+        // STORE DATA with DGI=0082 (AIP tag) — accepted as standalone tag DGI
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x00, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x00, (byte) 0x82,  // DGI = 0082 (AIP)
+            (byte) 0x02,               // length
+            (byte) 0x3C, (byte) 0x01   // AIP value
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "STORE DATA with standalone tag DGI (AIP) should succeed");
     }
 
     @Test
@@ -1754,6 +1799,24 @@ public class ColossusPaymentApplicationTest {
             "STORE DATA " + desc + " should succeed");
     }
 
+    /**
+     * Set an EMV tag via dev command (80 01 P1=tagHigh P2=tagLow Lc data).
+     * Convenient for individual tag writes in tests without building
+     * full STORE DATA DGI payloads.
+     */
+    private void setEmvTagDev(int tagHigh, int tagLow, byte[] data, String desc) throws CardException {
+        byte[] cmd = new byte[5 + data.length];
+        cmd[0] = (byte) 0x80;
+        cmd[1] = (byte) 0x01;
+        cmd[2] = (byte) tagHigh;
+        cmd[3] = (byte) tagLow;
+        cmd[4] = (byte) data.length;
+        System.arraycopy(data, 0, cmd, 5, data.length);
+        ResponseAPDU response = SmartCard.transmitCommand(cmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "SET_EMV_TAG " + desc + " should succeed");
+    }
+
     @Test
     @DisplayName("End-to-end: personalize via STORE DATA then run ARQC transaction")
     public void testStoreDataEndToEndTransaction() throws CardException {
@@ -1763,29 +1826,29 @@ public class ColossusPaymentApplicationTest {
         // --- Personalize entirely via STORE DATA ---
 
         // AID (tag 84)
-        assertStoreData(0x00, 0x84, new byte[] {
+        setEmvTagDev(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID (84)");
 
         // PAN (tag 5A)
-        assertStoreData(0x00, 0x5A, new byte[] {
+        setEmvTagDev(0x00, 0x5A, new byte[] {
             (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
             (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
         }, "PAN (5A)");
 
         // ATC (tag 9F36)
-        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
+        setEmvTagDev(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
 
         // AIP (tag 82) — no CDA for this test
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x3C, (byte) 0x00 }, "AIP (82)");
+        setEmvTagDev(0x00, 0x82, new byte[] { (byte) 0x3C, (byte) 0x00 }, "AIP (82)");
 
         // IAD (tag 9F10)
-        assertStoreData(0x9F, 0x10, new byte[] {
+        setEmvTagDev(0x9F, 0x10, new byte[] {
             (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
         }, "IAD (9F10)");
 
         // CDOL1 (tag 8C)
-        assertStoreData(0x00, 0x8C, new byte[] {
+        setEmvTagDev(0x00, 0x8C, new byte[] {
             (byte) 0x9F, (byte) 0x02, (byte) 0x06,  // Amount
             (byte) 0x9F, (byte) 0x03, (byte) 0x06,  // Amount Other
             (byte) 0x9F, (byte) 0x1A, (byte) 0x02,  // Country
@@ -1827,16 +1890,16 @@ public class ColossusPaymentApplicationTest {
         }, "FCI 6F template (B004)");
 
         // App label (tag 50)
-        assertStoreData(0x00, 0x50, new byte[] {
+        setEmvTagDev(0x00, 0x50, new byte[] {
             (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
             (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
         }, "App label (50)");
 
         // Priority (tag 87)
-        assertStoreData(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
+        setEmvTagDev(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
 
         // AFL (tag 94) — no records for this minimal test
-        assertStoreData(0x00, 0x94, new byte[] {
+        setEmvTagDev(0x00, 0x94, new byte[] {
             (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
         }, "AFL (94)");
 
@@ -1892,25 +1955,25 @@ public class ColossusPaymentApplicationTest {
         setupRsaKey();   // CDA requires RSA + EC
 
         // --- Personalize via STORE DATA ---
-        assertStoreData(0x00, 0x84, new byte[] {
+        setEmvTagDev(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID (84)");
-        assertStoreData(0x00, 0x5A, new byte[] {
+        setEmvTagDev(0x00, 0x5A, new byte[] {
             (byte) 0x67, (byte) 0x67, (byte) 0x67, (byte) 0x67,
             (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78
         }, "PAN (5A)");
-        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
+        setEmvTagDev(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC (9F36)");
 
         // AIP = 1980 (CDA supported in byte 1 bit 0)
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x19, (byte) 0x80 }, "AIP (82)");
+        setEmvTagDev(0x00, 0x82, new byte[] { (byte) 0x19, (byte) 0x80 }, "AIP (82)");
 
         // AFL: SFI1 rec1 (for READ RECORD)
-        assertStoreData(0x00, 0x94, new byte[] {
+        setEmvTagDev(0x00, 0x94, new byte[] {
             (byte) 0x08, (byte) 0x01, (byte) 0x01, (byte) 0x00
         }, "AFL (94)");
 
         // CDOL1: Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6) = 58 bytes
-        assertStoreData(0x00, 0x8C, new byte[] {
+        setEmvTagDev(0x00, 0x8C, new byte[] {
             (byte) 0x9F, (byte) 0x02, (byte) 0x06,
             (byte) 0x9F, (byte) 0x03, (byte) 0x06,
             (byte) 0x9F, (byte) 0x1A, (byte) 0x02,
@@ -1948,11 +2011,11 @@ public class ColossusPaymentApplicationTest {
         assertStoreData(0xB0, 0x04, new byte[] {
             (byte) 0x00, (byte) 0x84, (byte) 0x00, (byte) 0xA5
         }, "FCI 6F template");
-        assertStoreData(0x00, 0x50, new byte[] {
+        setEmvTagDev(0x00, 0x50, new byte[] {
             (byte) 0x43, (byte) 0x4F, (byte) 0x4C, (byte) 0x4F,
             (byte) 0x53, (byte) 0x53, (byte) 0x55, (byte) 0x53
         }, "App label (50)");
-        assertStoreData(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
+        setEmvTagDev(0x00, 0x87, new byte[] { (byte) 0x01 }, "Priority (87)");
 
         // --- Run full EMV contactless transaction ---
 
@@ -2076,7 +2139,7 @@ public class ColossusPaymentApplicationTest {
         });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GET DATA 9F6E should succeed");
         byte[] sigSTlv = response.getData();
-        byte[] sigS = Arrays.copyOfRange(sigSTlv, 3, 3 + 32);
+        final byte[] sigS = Arrays.copyOfRange(sigSTlv, 3, 3 + 32);
         System.out.println("  Found 9F6E (ECDSA s) via GET DATA: 32 bytes");
 
         // Get ATC pre-increment value: GenAC ATC is N+1, ECDSA signed over N
@@ -2122,10 +2185,10 @@ public class ColossusPaymentApplicationTest {
 
         org.bouncycastle.jce.spec.ECNamedCurveParameterSpec bcSpec =
             org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256r1");
-        org.bouncycastle.math.ec.ECPoint qPoint = bcSpec.getG().multiply(privateScalar).normalize();
+        org.bouncycastle.math.ec.ECPoint pubEcPoint = bcSpec.getG().multiply(privateScalar).normalize();
         ECPoint pubPoint = new ECPoint(
-            qPoint.getAffineXCoord().toBigInteger(),
-            qPoint.getAffineYCoord().toBigInteger());
+            pubEcPoint.getAffineXCoord().toBigInteger(),
+            pubEcPoint.getAffineYCoord().toBigInteger());
         ECPublicKeySpec pubSpec = new ECPublicKeySpec(pubPoint, ecSpec);
         java.security.PublicKey pubKey = kf.generatePublic(pubSpec);
 
@@ -2146,29 +2209,31 @@ public class ColossusPaymentApplicationTest {
      */
     private byte[] rawToDerSignature(byte[] r, byte[] s) {
         // Ensure r and s are positive (prepend 0x00 if high bit set)
-        byte[] rDer = toUnsignedDerInteger(r);
-        byte[] sDer = toUnsignedDerInteger(s);
+        byte[] derR = toUnsignedDerInteger(r);
+        byte[] derS = toUnsignedDerInteger(s);
 
         // DER: 30 <len> 02 <rlen> <r> 02 <slen> <s>
-        int seqLen = 2 + rDer.length + 2 + sDer.length;
+        int seqLen = 2 + derR.length + 2 + derS.length;
         byte[] der = new byte[2 + seqLen];
         int idx = 0;
         der[idx++] = 0x30;
         der[idx++] = (byte) seqLen;
         der[idx++] = 0x02;
-        der[idx++] = (byte) rDer.length;
-        System.arraycopy(rDer, 0, der, idx, rDer.length);
-        idx += rDer.length;
+        der[idx++] = (byte) derR.length;
+        System.arraycopy(derR, 0, der, idx, derR.length);
+        idx += derR.length;
         der[idx++] = 0x02;
-        der[idx++] = (byte) sDer.length;
-        System.arraycopy(sDer, 0, der, idx, sDer.length);
+        der[idx++] = (byte) derS.length;
+        System.arraycopy(derS, 0, der, idx, derS.length);
         return der;
     }
 
     private byte[] toUnsignedDerInteger(byte[] val) {
         // Strip leading zeros
         int start = 0;
-        while (start < val.length - 1 && val[start] == 0) { start++; }
+        while (start < val.length - 1 && val[start] == 0) {
+            start++;
+        }
         // If high bit set, prepend 0x00
         if ((val[start] & 0x80) != 0) {
             byte[] result = new byte[val.length - start + 1];
@@ -2189,11 +2254,11 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set minimal card data but NO EC key
-        assertStoreData(0x00, 0x84, new byte[] {
+        setEmvTagDev(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID");
-        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
-        assertStoreData(0x9F, 0x10, new byte[] {
+        setEmvTagDev(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
+        setEmvTagDev(0x9F, 0x10, new byte[] {
             (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
         }, "IAD (9F10)");
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
@@ -2211,8 +2276,10 @@ public class ColossusPaymentApplicationTest {
         // GENERATE AC — no EC key loaded, should fall back to plain response (no 9F6E)
         byte[] cdolData = new byte[10];
         byte[] genAcCmd = new byte[5 + cdolData.length];
-        genAcCmd[0] = (byte) 0x80; genAcCmd[1] = (byte) 0xAE;
-        genAcCmd[2] = (byte) 0x80; genAcCmd[3] = (byte) 0x00;
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80;
+        genAcCmd[3] = (byte) 0x00;
         genAcCmd[4] = (byte) cdolData.length;
 
         ResponseAPDU response = SmartCard.transmitCommand(genAcCmd);
@@ -2237,11 +2304,11 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set minimal data
-        assertStoreData(0x00, 0x84, new byte[] {
+        setEmvTagDev(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID");
-        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
-        assertStoreData(0x9F, 0x10, new byte[] {
+        setEmvTagDev(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
+        setEmvTagDev(0x9F, 0x10, new byte[] {
             (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
         }, "IAD");
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
@@ -2253,8 +2320,10 @@ public class ColossusPaymentApplicationTest {
         // Skip GPO entirely — go straight to GENERATE AC
         byte[] cdolData = new byte[10]; // arbitrary data
         byte[] genAcCmd = new byte[5 + cdolData.length];
-        genAcCmd[0] = (byte) 0x80; genAcCmd[1] = (byte) 0xAE;
-        genAcCmd[2] = (byte) 0x80; genAcCmd[3] = (byte) 0x00; // ARQC
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80; // ARQC
+        genAcCmd[3] = (byte) 0x00;
         genAcCmd[4] = (byte) cdolData.length;
 
         ResponseAPDU response = SmartCard.transmitCommand(genAcCmd);
@@ -2269,15 +2338,15 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set up card
-        assertStoreData(0x00, 0x84, new byte[] {
+        setEmvTagDev(0x00, 0x84, new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
         }, "AID");
-        assertStoreData(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
-        assertStoreData(0x00, 0x82, new byte[] { (byte) 0x3C, (byte) 0x00 }, "AIP");
-        assertStoreData(0x9F, 0x10, new byte[] {
+        setEmvTagDev(0x9F, 0x36, new byte[] { (byte) 0x00, (byte) 0x01 }, "ATC");
+        setEmvTagDev(0x00, 0x82, new byte[] { (byte) 0x3C, (byte) 0x00 }, "AIP");
+        setEmvTagDev(0x9F, 0x10, new byte[] {
             (byte) 0x06, (byte) 0x01, (byte) 0x0A, (byte) 0x03, (byte) 0xA4, (byte) 0xA0, (byte) 0x02
         }, "IAD");
-        assertStoreData(0x00, 0x8C, new byte[] {
+        setEmvTagDev(0x00, 0x8C, new byte[] {
             (byte) 0x9F, (byte) 0x02, (byte) 0x06, (byte) 0x9F, (byte) 0x03, (byte) 0x06,
             (byte) 0x9F, (byte) 0x1A, (byte) 0x02, (byte) 0x95, (byte) 0x05,
             (byte) 0x5F, (byte) 0x2A, (byte) 0x02, (byte) 0x9A, (byte) 0x03,
@@ -2303,8 +2372,10 @@ public class ColossusPaymentApplicationTest {
         // First GENERATE AC
         byte[] cdolData = createColossusCdolData();
         byte[] genAcCmd = new byte[5 + cdolData.length];
-        genAcCmd[0] = (byte) 0x80; genAcCmd[1] = (byte) 0xAE;
-        genAcCmd[2] = (byte) 0x80; genAcCmd[3] = (byte) 0x00;
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x80;
+        genAcCmd[3] = (byte) 0x00;
         genAcCmd[4] = (byte) cdolData.length;
         System.arraycopy(cdolData, 0, genAcCmd, 5, cdolData.length);
 
@@ -2406,8 +2477,8 @@ public class ColossusPaymentApplicationTest {
         byte[] diag = response.getData();
         assertEquals((byte) 0x01, diag[0], "RSA key should be present");
         assertEquals((byte) 0x01, diag[3], "RSA key should be initialized");
-        System.out.println("  RSA key loaded via STORE DATA: size=" +
-            (((diag[1] & 0xFF) << 8) | (diag[2] & 0xFF)) + " bytes, initialized=" + diag[3]);
+        System.out.println("  RSA key loaded via STORE DATA: size="
+            + (((diag[1] & 0xFF) << 8) | (diag[2] & 0xFF)) + " bytes, initialized=" + diag[3]);
     }
 
     @Test
@@ -2448,12 +2519,12 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Create a 130-byte payload — forces BER 0x81 length encoding in STORE DATA handler
-        byte[] largeTag = new byte[130];
-        Arrays.fill(largeTag, (byte) 0xAA);
+        byte[] largePayload = new byte[130];
+        Arrays.fill(largePayload, (byte) 0xAA);
 
-        // Use buildStoreDataExtended which handles BER length
+        // Use CPS DGI 9000 (KCV, accepted as no-op) to test BER length parsing
         ResponseAPDU response = SmartCard.transmitCommand(
-            buildStoreDataExtended(0x9F, 0x1F, largeTag));
+            buildStoreDataExtended(0x90, 0x00, largePayload));
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
             "STORE DATA with BER 0x81 length encoding should succeed");
     }
@@ -2469,7 +2540,8 @@ public class ColossusPaymentApplicationTest {
 
         byte[] modulus = new byte[128];
         Arrays.fill(modulus, (byte) 0xAB);
-        modulus[0] = (byte) 0x00; modulus[1] = (byte) 0xB4;
+        modulus[0] = (byte) 0x00;
+        modulus[1] = (byte) 0xB4;
         assertStoreData(0x82, 0x01, modulus, "RSA modulus (CPS 8201)");
 
         byte[] exponent = new byte[128];
@@ -2519,18 +2591,195 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("STORE DATA: DGI 0062 (file structure creation) accepted as no-op")
+    @DisplayName("STORE DATA: DGI 0062 (file structure creation) accepts valid FCP")
     public void testStoreDataDgi0062() throws CardException {
         setupColossusCard();
 
-        // DGI 0062 with some dummy FCP data — should be accepted silently
+        // CPS v2.0 Annex A.5 Table A-27. Minimum valid FCP:
+        //   62 0B
+        //     80 02 00 10      file size 16 bytes
+        //     82 02 0A 01      file descriptor + data coding (linear fixed, T=1)
+        //     88 01 01         SFI = 1
+        // Inner is 11 bytes, outer FCP TLV (with tag+len) = 13 bytes.
+        // DGI 0062 content = 13 bytes, DGI triplet (2+1+13) = 16 bytes.
+        // STORE DATA Lc = 16 (0x10).
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
-            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x10,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0D,
+            (byte) 0x62, (byte) 0x0B,
+            (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+            (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01,
+            (byte) 0x88, (byte) 0x01, (byte) 0x01
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "Valid DGI 0062 FCP should be accepted");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: malformed DGI 0062 returns 6A80")
+    public void testStoreDataDgi0062Malformed() throws CardException {
+        setupColossusCard();
+
+        // Garbage payload — not a valid 62-FCP TLV. Must be rejected with
+        // 6A80 (incorrect parameters in data field) per CPS Table A-27.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
             (byte) 0x06,
             (byte) 0x00, (byte) 0x62, (byte) 0x03, (byte) 0xAA, (byte) 0xBB, (byte) 0xCC
         });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "Malformed DGI 0062 should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 with missing tag 88 (SFI) returns 6A80")
+    public void testStoreDataDgi0062MissingSfi() throws CardException {
+        setupColossusCard();
+
+        // Valid FCP structure except mandatory tag 88 is absent. Per CPS
+        // Annex A.5 Table A-27, tag 88 is mandatory — must reject with 6A80.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x0D,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0A,
+            (byte) 0x62, (byte) 0x08,
+            (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+            (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01
+        });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "DGI 0062 missing mandatory tag 88 should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 0062 with SFI out of range (0x1F) returns 6A80")
+    public void testStoreDataDgi0062SfiOutOfRange() throws CardException {
+        setupColossusCard();
+
+        // Tag 88 value = 0x1F (above max SFI 0x1E per Table A-27).
+        // Must reject with 6A80.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x10,
+            (byte) 0x00, (byte) 0x62, (byte) 0x0D,
+            (byte) 0x62, (byte) 0x0B,
+            (byte) 0x80, (byte) 0x02, (byte) 0x00, (byte) 0x10,
+            (byte) 0x82, (byte) 0x02, (byte) 0x0A, (byte) 0x01,
+            (byte) 0x88, (byte) 0x01, (byte) 0x1F
+        });
+        assertEquals((short) 0x6A80, (short) response.getSW(),
+            "DGI 0062 with SFI out of range should return 6A80");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: last STORE DATA (P1 b8=1) commits perso, next STORE DATA returns 6985")
+    public void testStoreDataLifecycleCommit() throws CardException {
+        setupColossusCard();
+
+        // Send a non-last STORE DATA first — should succeed
+        ResponseAPDU first = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xAA, (byte) 0xBB
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) first.getSW(),
+            "Non-last STORE DATA should be accepted");
+
+        // Send a last STORE DATA (P1 b8 = 1) — should commit lifecycle
+        ResponseAPDU last = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xCC, (byte) 0xDD
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) last.getSW(),
+            "Last STORE DATA should also be accepted");
+
+        // Third STORE DATA after lifecycle is committed — should be rejected
+        ResponseAPDU rejected = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0xEE, (byte) 0xFF
+        });
+        assertEquals((short) 0x6985, (short) rejected.getSW(),
+            "STORE DATA after PERSO_DONE should return 6985 per CPS §4.3.5.4");
+
+        // factoryReset should move back to PERSO_PENDING
+        SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0x05, (byte) 0x00, (byte) 0x00, (byte) 0x00
+        });
+        ResponseAPDU afterReset = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x05,
+            (byte) 0x90, (byte) 0x00, (byte) 0x02, (byte) 0x11, (byte) 0x22
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) afterReset.getSW(),
+            "factoryReset should return lifecycle to PERSO_PENDING");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: DGI 7FFF (integrity MAC) accepted as no-op")
+    public void testStoreDataDgi7fff() throws CardException {
+        setupColossusCard();
+
+        // DGI 7FFF carries the personalization data integrity MAC per CPS
+        // §4.3.5.2. We don't verify it yet, but must accept it so real bureau
+        // scripts don't fail.
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x0B,
+            (byte) 0x7F, (byte) 0xFF, (byte) 0x08,
+            (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04,
+            (byte) 0x05, (byte) 0x06, (byte) 0x07, (byte) 0x08
+        });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
-            "DGI 0062 should be accepted as no-op");
+            "DGI 7FFF should be accepted as no-op");
+    }
+
+    @Test
+    @DisplayName("STORE DATA: record DGI 010C stored as EmvTag template, readable via READ RECORD")
+    public void testStoreDataRecordRoundTrip() throws CardException {
+        setupColossusCard();
+
+        // SELECT is a prereq because the Colossus applet's PSE wrapper sends
+        // SELECT to enter transaction mode. But for this test we just need to
+        // load a record and read it back directly via READ RECORD.
+
+        // Store a record via DGI 010C: SFI=01 (0x01), record number = 12 (0x0C).
+        // Record body (inside tag 70) is just 5A 02 12 34 (PAN tag with 2 bytes).
+        // The applet strips the tag-70 wrapper and stores 5A 02 12 34 raw.
+        //
+        //   Record body: 5A 02 12 34    (4 bytes)
+        //   Wrapped:     70 04 5A 02 12 34    (6 bytes)
+        //   DGI 010C L=06 wrapped = 0E bytes total
+        byte[] storeCmd = new byte[] {
+            (byte) 0x80, (byte) 0xE2, (byte) 0x00, (byte) 0x00,
+            (byte) 0x09,
+            (byte) 0x01, (byte) 0x0C, (byte) 0x06,
+            (byte) 0x70, (byte) 0x04,
+            (byte) 0x5A, (byte) 0x02, (byte) 0x12, (byte) 0x34
+        };
+        ResponseAPDU storeResponse = SmartCard.transmitCommand(storeCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) storeResponse.getSW(),
+            "STORE DATA DGI 010C should succeed");
+
+        // READ RECORD P1=0x0C (record 12), P2=(1<<3)|0x04 = 0x0C
+        byte[] readCmd = new byte[] {
+            (byte) 0x00, (byte) 0xB2, (byte) 0x0C, (byte) 0x0C, (byte) 0x00
+        };
+        ResponseAPDU readResponse = SmartCard.transmitCommand(readCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) readResponse.getSW(),
+            "READ RECORD should find the stored record");
+        byte[] readData = readResponse.getData();
+        assertNotNull(readData, "READ RECORD response should have data");
+
+        // Expected: tag 70, len 04, body 5A 02 12 34
+        assertEquals(6, readData.length, "Record response should be 6 bytes (tag 70 wrapped)");
+        assertEquals((byte) 0x70, readData[0], "Response should start with tag 70");
+        assertEquals((byte) 0x04, readData[1], "Tag 70 length should be 4");
+        assertEquals((byte) 0x5A, readData[2], "Body byte 0 should be 5A");
+        assertEquals((byte) 0x02, readData[3], "Body byte 1 should be 02");
+        assertEquals((byte) 0x12, readData[4], "Body byte 2 should be 12");
+        assertEquals((byte) 0x34, readData[5], "Body byte 3 should be 34");
     }
 
     @Test
@@ -2548,17 +2797,19 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("STORE DATA: reserved DGI 9F60-9F6F should be rejected")
-    public void testStoreDataReservedDgi() throws CardException {
+    @DisplayName("STORE DATA: reserved DGI 7FF0 returns 6A88")
+    public void testStoreDataReservedDgi7FF0() throws CardException {
         setupColossusCard();
 
+        // CPS §3.2 bullet 10: DGIs 7FF0-7FFE are reserved for
+        // application-independent personalisation processing.
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
             (byte) 0x04,
-            (byte) 0x9F, (byte) 0x65, (byte) 0x01, (byte) 0xAA
+            (byte) 0x7F, (byte) 0xF0, (byte) 0x01, (byte) 0xAA
         });
-        assertEquals(ISO7816.SW_INCORRECT_P1P2, (short) response.getSW(),
-            "Reserved DGI 9F65 should return 6A86");
+        assertEquals(PersoSw.SW_UNRECOGNIZED_DGI, (short) response.getSW(),
+            "DGI 7FF0 should return 6A88 (reserved range)");
     }
 
     @Test
@@ -2566,11 +2817,11 @@ public class ColossusPaymentApplicationTest {
     public void testStoreDataCla80() throws CardException {
         setupColossusCard();
 
-        // Same as setting a tag but with CLA=80 instead of CLA=00
+        // Test CLA=80 with a valid DGI (9000 = KCV, accepted as no-op)
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0xE2, (byte) 0x80, (byte) 0x00,
             (byte) 0x07,
-            (byte) 0x9F, (byte) 0x36, (byte) 0x04, (byte) 0x00, (byte) 0x01, (byte) 0x00, (byte) 0x02
+            (byte) 0x90, (byte) 0x00, (byte) 0x04, (byte) 0x00, (byte) 0x01, (byte) 0x00, (byte) 0x02
         });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
             "STORE DATA with CLA 80 should succeed per CPS");
@@ -2584,7 +2835,7 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set a tag value
-        assertStoreData(0x00, 0x50, new byte[] {
+        setEmvTagDev(0x00, 0x50, new byte[] {
             (byte) 0x54, (byte) 0x45, (byte) 0x53, (byte) 0x54
         }, "App label (50) = TEST");
 
@@ -2623,8 +2874,8 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set tag values
-        assertStoreData(0x00, 0x50, new byte[] { 0x41, 0x42 }, "Label AB");
-        assertStoreData(0x00, 0x87, new byte[] { 0x01 }, "Priority 01");
+        setEmvTagDev(0x00, 0x50, new byte[] { 0x41, 0x42 }, "Label AB");
+        setEmvTagDev(0x00, 0x87, new byte[] { 0x01 }, "Priority 01");
 
         // SFI1/R1: tag 50
         SmartCard.transmitCommand(new byte[] {
@@ -2661,7 +2912,7 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set a tag and record template
-        assertStoreData(0x00, 0x50, new byte[] { 0x58 }, "Label X");
+        setEmvTagDev(0x00, 0x50, new byte[] { 0x58 }, "Label X");
         SmartCard.transmitCommand(new byte[] {
             (byte) 0x80, (byte) 0x03, (byte) 0x01, (byte) 0x0C,
             (byte) 0x02, (byte) 0x00, (byte) 0x50
@@ -2693,10 +2944,10 @@ public class ColossusPaymentApplicationTest {
         setupColossusCard();
 
         // Set tag values first
-        assertStoreData(0x00, 0x50, new byte[] {
+        setEmvTagDev(0x00, 0x50, new byte[] {
             (byte) 0x43, (byte) 0x41, (byte) 0x52, (byte) 0x44
         }, "Label = CARD");
-        assertStoreData(0x00, 0x87, new byte[] { 0x01 }, "Priority");
+        setEmvTagDev(0x00, 0x87, new byte[] { 0x01 }, "Priority");
 
         // Store record template via STORE DATA DGI 0101 (SFI1/R1)
         // DGI 0101: dgiHigh=01 (SFI), dgiLow=01 (record)
@@ -2717,5 +2968,427 @@ public class ColossusPaymentApplicationTest {
         byte[] data = response.getData();
         assertEquals((byte) 0x70, data[0], "Response must start with tag 70");
     }
+
+    // ========================================================================
+    // CPS Record + Full Contactless Transaction Flow
+    // ========================================================================
+
+    /**
+     * End-to-end test: CPS-mode personalization (matching the Python tool's
+     * STORE DATA DGI XXYY path) followed by a full contactless transaction
+     * flow (SELECT → GPO → READ RECORD per AFL → GENERATE AC).
+     *
+     * <p>This test validates that every READ RECORD response is well-formed
+     * tag-70 TLV — the exact thing the C-2 kernel parses. If there's a
+     * PARSING ERROR (L2=04), this test will catch it.
+     */
+    @Test
+    @DisplayName("CPS records: full contactless flow with READ RECORD per AFL")
+    public void testCpsRecordsFullContactlessFlow() throws Exception {
+        setupColossusCard();
+        setupRsaKey();
+
+        // ── Tags (matching default.yaml contactless profile) ──
+        setEmvTagDev(0x00, 0x84, new byte[] {
+            (byte) 0xA0, 0x00, 0x00, 0x00, 0x09, 0x51, 0x10, 0x10
+        }, "AID");
+        setEmvTagDev(0x00, 0x50, "COLOSSUS".getBytes(), "Label");
+        setEmvTagDev(0x00, 0x87, new byte[] { 0x01 }, "Priority");
+        setEmvTagDev(0x9F, 0x12, "COLOSSUS CREDIT".getBytes(), "Preferred Name");
+        setEmvTagDev(0x9F, 0x11, new byte[] { 0x01 }, "Issuer Code Table Index");
+        setEmvTagDev(0x5F, 0x2D, new byte[] { 0x65, 0x6E }, "Language Preference");
+        setEmvTagDev(0x00, 0x5A, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76
+        }, "PAN");
+        setEmvTagDev(0x5F, 0x24, new byte[] { 0x27, 0x12, 0x31 }, "Expiry");
+        setEmvTagDev(0x5F, 0x28, new byte[] { 0x08, 0x40 }, "Issuer Country");
+        setEmvTagDev(0x5F, 0x34, new byte[] { 0x01 }, "PAN Seq No");
+        setEmvTagDev(0x9F, 0x07, new byte[] { (byte) 0xAB, 0x00 }, "AUC");
+        setEmvTagDev(0x00, 0x57, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76,
+            (byte) 0xD2, 0x71, 0x22, 0x20, 0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x0F
+        }, "Track2");
+
+        // CDOL1 DOL
+        byte[] cdol1 = new byte[] {
+            (byte) 0x9F, 0x02, 0x06, (byte) 0x9F, 0x03, 0x06,
+            (byte) 0x9F, 0x1A, 0x02, (byte) 0x95, 0x05,
+            0x5F, 0x2A, 0x02, (byte) 0x9A, 0x03,
+            (byte) 0x9C, 0x01, (byte) 0x9F, 0x37, 0x04,
+            (byte) 0x9F, 0x1C, 0x08, (byte) 0x9F, 0x16, 0x0F,
+            (byte) 0x9F, 0x01, 0x06
+        };
+        setEmvTagDev(0x00, 0x8C, cdol1, "CDOL1");
+        // CDOL2
+        byte[] cdol2 = new byte[cdol1.length + 3];
+        cdol2[0] = (byte) 0x8A; // Auth Response Code prefix
+        cdol2[1] = 0x02;
+        System.arraycopy(cdol1, 0, cdol2, 2, cdol1.length);
+        // Fix: length is cdol1.length+2, but cdol2 has room. Actually let's build it right:
+        byte[] cdol2Correct = new byte[] {
+            (byte) 0x8A, 0x02,
+            (byte) 0x9F, 0x02, 0x06, (byte) 0x9F, 0x03, 0x06,
+            (byte) 0x9F, 0x1A, 0x02, (byte) 0x95, 0x05,
+            0x5F, 0x2A, 0x02, (byte) 0x9A, 0x03,
+            (byte) 0x9C, 0x01, (byte) 0x9F, 0x37, 0x04,
+            (byte) 0x9F, 0x1C, 0x08, (byte) 0x9F, 0x16, 0x0F,
+            (byte) 0x9F, 0x01, 0x06
+        };
+        setEmvTagDev(0x00, 0x8D, cdol2Correct, "CDOL2");
+
+        // CVM List
+        setEmvTagDev(0x00, 0x8E, new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x42, 0x03, 0x1F, 0x00
+        }, "CVM List");
+        // IACs
+        setEmvTagDev(0x9F, 0x0D, new byte[] { (byte) 0xD8, 0x40, 0x00, (byte) 0xA8, 0x00 }, "IAC-Default");
+        setEmvTagDev(0x9F, 0x0E, new byte[] { 0x00, 0x10, 0x00, 0x00, 0x00 }, "IAC-Denial");
+        setEmvTagDev(0x9F, 0x0F, new byte[] { (byte) 0xD8, 0x40, 0x04, (byte) 0xF8, 0x00 }, "IAC-Online");
+        setEmvTagDev(0x9F, 0x4A, new byte[] { (byte) 0x82 }, "SDA Tag List");
+
+        // Cardholder Name
+        setEmvTagDev(0x5F, 0x20, "COLOSSUS/CARDHOLDER ".getBytes(), "Cardholder Name");
+        // Effective Date
+        setEmvTagDev(0x5F, 0x25, new byte[] { 0x24, 0x01, 0x01 }, "Effective Date");
+        // Service Code, Currency, etc.
+        setEmvTagDev(0x5F, 0x30, new byte[] { 0x07, 0x01 }, "Service Code");
+        setEmvTagDev(0x9F, 0x08, new byte[] { 0x00, 0x02 }, "App Version Number");
+        setEmvTagDev(0x9F, 0x42, new byte[] { 0x08, 0x40 }, "Currency Code");
+        setEmvTagDev(0x9F, 0x44, new byte[] { 0x02 }, "Currency Exponent");
+        // DDOL
+        setEmvTagDev(0x9F, 0x49, cdol1, "DDOL");
+        // Form Factor Indicator
+        setEmvTagDev(0x9F, 0x6E, new byte[] { 0x08, 0x40, 0x00, 0x00 }, "FFI");
+        // CTQ
+        setEmvTagDev(0x9F, 0x6C, new byte[] { (byte) 0x80, 0x00 }, "CTQ");
+        // IAD
+        setEmvTagDev(0x9F, 0x10, new byte[] { 0x06, 0x01, 0x0A, 0x03, (byte) 0xA4, (byte) 0xA0, 0x02 }, "IAD");
+        // Track 1 Discretionary Data
+        byte[] track1Disc = new byte[19];
+        setEmvTagDev(0x9F, 0x1F, track1Disc, "Track1 Disc Data");
+
+        // AIP (contactless = 1980)
+        setEmvTagDev(0x00, 0x82, new byte[] { 0x19, (byte) 0x80 }, "AIP");
+        // ATC
+        setEmvTagDev(0x9F, 0x36, new byte[] { 0x00, 0x01 }, "ATC");
+
+        // AFL: SFI1 recs 1-3 (ODA=0), SFI2 recs 1-2 (ODA=1), SFI3 recs 1-2 (ODA=0)
+        setEmvTagDev(0x00, 0x94, new byte[] {
+            0x08, 0x01, 0x03, 0x00,  // SFI1 recs 1-3, ODA=0
+            0x10, 0x01, 0x02, 0x01,  // SFI2 recs 1-2, ODA=1
+            0x18, 0x01, 0x02, 0x00   // SFI3 recs 1-2, ODA=0
+        }, "AFL");
+
+        // PDOL
+        setEmvTagDev(0x9F, 0x38, cdol1, "PDOL");
+
+        // Certificates (from the RSA key pair already loaded)
+        // Use dummy cert data for test — just needs valid TLV structure
+        byte[] dummyCert = new byte[128];
+        Arrays.fill(dummyCert, (byte) 0x6A); // cert padding byte
+        setEmvTagDev(0x00, 0x90, dummyCert, "Issuer PK Cert");
+        byte[] dummyRemainder = new byte[36];
+        Arrays.fill(dummyRemainder, (byte) 0xBB);
+        setEmvTagDev(0x00, 0x92, dummyRemainder, "Issuer PK Remainder");
+        setEmvTagDev(0x00, 0x8F, new byte[] { (byte) 0x92 }, "CAPK Index");
+        setEmvTagDev(0x9F, 0x32, new byte[] { 0x03 }, "Issuer PK Exp");
+        setEmvTagDev(0x9F, 0x47, new byte[] { 0x03 }, "ICC PK Exp");
+        setEmvTagDev(0x9F, 0x46, dummyCert, "ICC PK Cert");
+        setEmvTagDev(0x9F, 0x48, dummyRemainder, "ICC PK Remainder");
+
+        // EC private key
+        assertStoreData(0x82, 0x03, new byte[] {
+            (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
+            (byte) 0xC5, 0x33, 0x41, 0x2E,
+            (byte) 0xBF, (byte) 0x9E, 0x0E, 0x34,
+            0x73, (byte) 0x99, (byte) 0xB6, (byte) 0xEC,
+            (byte) 0xB8, 0x64, 0x32, (byte) 0xA7,
+            0x72, 0x66, (byte) 0xF0, 0x5D,
+            (byte) 0xA5, 0x00, 0x16, 0x00,
+            (byte) 0xC2, (byte) 0xE3, 0x51, 0x62
+        }, "EC key");
+
+        // Templates
+        assertStoreData(0xA0, 0x02, new byte[] { 0x00, (byte) 0x80 }, "Response template=Format1");
+        assertStoreData(0xA0, 0x03, new byte[] { 0x00, 0x01 }, "Flags");
+        assertStoreData(0xB0, 0x01, new byte[] {
+            0x00, (byte) 0x82, 0x00, (byte) 0x94
+        }, "GPO template (AIP+AFL)");
+        assertStoreData(0xB0, 0x03, new byte[] {
+            (byte) 0x9F, 0x27, (byte) 0x9F, 0x36,
+            (byte) 0x9F, 0x26, (byte) 0x9F, 0x10
+        }, "GenAC template");
+        assertStoreData(0xB0, 0x05, new byte[] {
+            0x00, 0x50, 0x00, (byte) 0x87,
+            (byte) 0x9F, 0x12, (byte) 0x9F, 0x11,
+            0x5F, 0x2D, (byte) 0x9F, 0x38
+        }, "FCI A5 template");
+        assertStoreData(0xB0, 0x04, new byte[] {
+            0x00, (byte) 0x84, 0x00, (byte) 0xA5
+        }, "FCI 6F template");
+
+        // ── CPS Record DGIs (NO tag-70 wrapper — matching Python tool) ──
+        // SFI1/REC1: 57 + 5A + 5F24 + 5F28 + 5F34 + 9F07 + 8C
+        ByteArrayOutputStream sfi1rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec1, 0x57, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76,
+            (byte) 0xD2, 0x71, 0x22, 0x20, 0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x0F
+        });
+        writeTlv(sfi1rec1, 0x5A, new byte[] {
+            0x66, (byte) 0x90, 0x75, 0x00, 0x12, 0x34, 0x56, 0x76
+        });
+        writeTlv(sfi1rec1, 0x5F24, new byte[] { 0x27, 0x12, 0x31 });
+        writeTlv(sfi1rec1, 0x5F28, new byte[] { 0x08, 0x40 });
+        writeTlv(sfi1rec1, 0x5F34, new byte[] { 0x01 });
+        writeTlv(sfi1rec1, 0x9F07, new byte[] { (byte) 0xAB, 0x00 });
+        writeTlv(sfi1rec1, 0x8C, cdol1);
+        assertStoreData(0x01, 0x01, sfi1rec1.toByteArray(), "SFI1/REC1");
+
+        // SFI1/REC2: 5F20 + 5F25 + 8D + 8E + 9F0D + 9F0E + 9F0F + 9F4A
+        ByteArrayOutputStream sfi1rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec2, 0x5F20, "COLOSSUS/CARDHOLDER ".getBytes());
+        writeTlv(sfi1rec2, 0x5F25, new byte[] { 0x24, 0x01, 0x01 });
+        writeTlv(sfi1rec2, 0x8D, cdol2Correct);
+        writeTlv(sfi1rec2, 0x8E, new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x42, 0x03, 0x1F, 0x00
+        });
+        writeTlv(sfi1rec2, 0x9F0D, new byte[] { (byte) 0xD8, 0x40, 0x00, (byte) 0xA8, 0x00 });
+        writeTlv(sfi1rec2, 0x9F0E, new byte[] { 0x00, 0x10, 0x00, 0x00, 0x00 });
+        writeTlv(sfi1rec2, 0x9F0F, new byte[] { (byte) 0xD8, 0x40, 0x04, (byte) 0xF8, 0x00 });
+        writeTlv(sfi1rec2, 0x9F4A, new byte[] { (byte) 0x82 });
+        assertStoreData(0x01, 0x02, sfi1rec2.toByteArray(), "SFI1/REC2");
+
+        // SFI1/REC3: 5F30 + 9F08 + 9F42 + 9F44 + 9F49 + 9F6E
+        ByteArrayOutputStream sfi1rec3 = new ByteArrayOutputStream();
+        writeTlv(sfi1rec3, 0x5F30, new byte[] { 0x07, 0x01 });
+        writeTlv(sfi1rec3, 0x9F08, new byte[] { 0x00, 0x02 });
+        writeTlv(sfi1rec3, 0x9F42, new byte[] { 0x08, 0x40 });
+        writeTlv(sfi1rec3, 0x9F44, new byte[] { 0x02 });
+        writeTlv(sfi1rec3, 0x9F49, cdol1);
+        writeTlv(sfi1rec3, 0x9F6E, new byte[] { 0x08, 0x40, 0x00, 0x00 });
+        assertStoreData(0x01, 0x03, sfi1rec3.toByteArray(), "SFI1/REC3");
+
+        // SFI2/REC1: 8F + 92 + 9F32 + 9F47
+        ByteArrayOutputStream sfi2rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi2rec1, 0x8F, new byte[] { (byte) 0x92 });
+        writeTlv(sfi2rec1, 0x92, dummyRemainder);
+        writeTlv(sfi2rec1, 0x9F32, new byte[] { 0x03 });
+        writeTlv(sfi2rec1, 0x9F47, new byte[] { 0x03 });
+        assertStoreData(0x02, 0x01, sfi2rec1.toByteArray(), "SFI2/REC1");
+
+        // SFI2/REC2: 90 (Issuer PK Certificate, 128 bytes)
+        ByteArrayOutputStream sfi2rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi2rec2, 0x90, dummyCert);
+        assertStoreData(0x02, 0x02, sfi2rec2.toByteArray(), "SFI2/REC2");
+
+        // SFI3/REC1: 9F46 (ICC PK Certificate, 128 bytes)
+        ByteArrayOutputStream sfi3rec1 = new ByteArrayOutputStream();
+        writeTlv(sfi3rec1, 0x9F46, dummyCert);
+        assertStoreData(0x03, 0x01, sfi3rec1.toByteArray(), "SFI3/REC1");
+
+        // SFI3/REC2: 9F48 (ICC PK Remainder)
+        ByteArrayOutputStream sfi3rec2 = new ByteArrayOutputStream();
+        writeTlv(sfi3rec2, 0x9F48, dummyRemainder);
+        assertStoreData(0x03, 0x02, sfi3rec2.toByteArray(), "SFI3/REC2");
+
+        // ── SELECT contactless AID ──
+        ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
+            0x00, (byte) 0xA4, 0x04, 0x00, 0x08,
+            (byte) 0xA0, 0x00, 0x00, 0x00, 0x09, 0x51, 0x10, 0x10
+        });
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
+        byte[] fci = response.getData();
+        assertValidTlv(fci, "SELECT FCI");
+        System.out.println("  SELECT: OK, FCI=" + bytesToHex(fci));
+
+        // ── GPO with PDOL ──
+        byte[] pdolData = new byte[] {
+            0x00, 0x00, 0x00, 0x00, 0x10, 0x00,  // Amount
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Amount Other
+            0x08, 0x40,                            // Country Code
+            0x00, 0x00, 0x00, 0x00, 0x00,          // TVR
+            0x08, 0x40,                            // Currency
+            0x26, 0x04, 0x03,                      // Date
+            0x00,                                  // Type
+            (byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF,  // UN
+            0x54, 0x45, 0x52, 0x4D, 0x30, 0x30, 0x30, 0x31,     // TermID
+            0x4D, 0x45, 0x52, 0x43, 0x48, 0x41, 0x4E, 0x54,     // MerchID
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31,
+            0x00, 0x00, 0x01, 0x23, 0x45, 0x67                   // AcqID
+        };
+        byte[] gpoCmd = new byte[5 + 2 + pdolData.length];
+        gpoCmd[0] = (byte) 0x80;
+        gpoCmd[1] = (byte) 0xA8;
+        gpoCmd[2] = 0x00;
+        gpoCmd[3] = 0x00;
+        gpoCmd[4] = (byte) (2 + pdolData.length);
+        gpoCmd[5] = (byte) 0x83;
+        gpoCmd[6] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, gpoCmd, 7, pdolData.length);
+        response = SmartCard.transmitCommand(gpoCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "GPO should succeed");
+        byte[] gpoResp = response.getData();
+        System.out.println("  GPO: OK, resp=" + bytesToHex(gpoResp));
+
+        // Parse AIP + AFL from Format 1 response (tag 80)
+        assertEquals((byte) 0x80, gpoResp[0], "GPO should return Format 1 (tag 80)");
+        int gpoLen = gpoResp[1] & 0xFF;
+        byte[] aip = Arrays.copyOfRange(gpoResp, 2, 4);
+        byte[] afl = Arrays.copyOfRange(gpoResp, 4, 2 + gpoLen);
+        System.out.println("  AIP=" + bytesToHex(aip) + " AFL=" + bytesToHex(afl));
+
+        // ── READ RECORD per AFL ──
+        for (int i = 0; i < afl.length; i += 4) {
+            int aflByte = afl[i] & 0xFF;    // AFL byte: (SFI << 3) with low 3 bits zero
+            int firstRec = afl[i + 1] & 0xFF;
+            int lastRec = afl[i + 2] & 0xFF;
+            int odaCount = afl[i + 3] & 0xFF;
+            int sfi = (aflByte >> 3) & 0x1F;
+            // READ RECORD P2 = (SFI << 3) | 0x04, where 0x04 = "reference by SFI"
+            // per EMV Book 3 §6.5.11.4. The AFL byte has 0x00 in the low 3 bits.
+            int readP2 = aflByte | 0x04;
+
+            for (int rec = firstRec; rec <= lastRec; rec++) {
+                byte[] readCmd = new byte[] {
+                    0x00, (byte) 0xB2, (byte) rec, (byte) readP2, 0x00
+                };
+                response = SmartCard.transmitCommand(readCmd);
+                assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " should succeed");
+                byte[] recordData = response.getData();
+                assertNotNull(recordData, "READ RECORD SFI" + sfi + "/REC" + rec + " data must not be null");
+                assertTrue(recordData.length > 2,
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " must have >2 bytes");
+
+                // Must start with tag 70
+                assertEquals((byte) 0x70, recordData[0],
+                    "READ RECORD SFI" + sfi + "/REC" + rec + " must start with tag 70");
+
+                // Validate tag 70 TLV structure
+                assertValidTlv(recordData,
+                    "READ RECORD SFI" + sfi + "/REC" + rec);
+
+                // Validate inner TLVs parse correctly
+                int innerOffset = 2; // tag(1) + len(1)
+                if ((recordData[1] & 0xFF) == 0x81) {
+                    innerOffset = 3; // tag(1) + 81(1) + len(1)
+                }
+                assertValidInnerTlvs(recordData, innerOffset, recordData.length,
+                    "SFI" + sfi + "/REC" + rec);
+
+                System.out.println("  READ RECORD SFI" + sfi + "/REC" + rec
+                    + ": OK, " + recordData.length + " bytes, inner TLVs valid");
+            }
+        }
+
+        // ── GENERATE AC ──
+        byte[] genAcCmd = new byte[5 + pdolData.length];
+        genAcCmd[0] = (byte) 0x80;
+        genAcCmd[1] = (byte) 0xAE;
+        genAcCmd[2] = (byte) 0x90;  // ARQC + CDA
+        genAcCmd[3] = 0x00;
+        genAcCmd[4] = (byte) pdolData.length;
+        System.arraycopy(pdolData, 0, genAcCmd, 5, pdolData.length);
+        response = SmartCard.transmitCommand(genAcCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "GENERATE AC should succeed");
+        byte[] genAcResp = response.getData();
+        assertValidTlv(genAcResp, "GENERATE AC response");
+        System.out.println("  GENERATE AC: OK, " + genAcResp.length + " bytes");
+    }
+
+    /** Write a BER-TLV to a stream. Handles 1-byte and 2-byte tags. */
+    private void writeTlv(ByteArrayOutputStream out, int tag, byte[] value) {
+        if (tag > 0xFF) {
+            out.write((tag >> 8) & 0xFF);
+            out.write(tag & 0xFF);
+        } else {
+            out.write(tag & 0xFF);
+        }
+        if (value.length >= 128) {
+            out.write(0x81);
+            out.write(value.length & 0xFF);
+        } else {
+            out.write(value.length);
+        }
+        out.write(value, 0, value.length);
+    }
+
+    /** Validate that a byte array is a well-formed BER-TLV. */
+    private void assertValidTlv(byte[] data, String context) {
+        assertTrue(data.length >= 2, context + ": TLV must be ≥2 bytes");
+        int tagLen = 1;
+        if ((data[0] & 0x1F) == 0x1F) {
+            tagLen = 2; // multi-byte tag
+        }
+        assertTrue(data.length > tagLen, context + ": TLV truncated after tag");
+        int lenByte = data[tagLen] & 0xFF;
+        int valueLen;
+        int valueOffset;
+        if (lenByte < 0x80) {
+            valueLen = lenByte;
+            valueOffset = tagLen + 1;
+        } else if (lenByte == 0x81) {
+            assertTrue(data.length > tagLen + 1, context + ": BER 81 length truncated");
+            valueLen = data[tagLen + 1] & 0xFF;
+            valueOffset = tagLen + 2;
+        } else if (lenByte == 0x82) {
+            assertTrue(data.length > tagLen + 2, context + ": BER 82 length truncated");
+            valueLen = ((data[tagLen + 1] & 0xFF) << 8) | (data[tagLen + 2] & 0xFF);
+            valueOffset = tagLen + 3;
+        } else {
+            throw new AssertionError(context + ": unsupported BER length byte 0x"
+                + Integer.toHexString(lenByte));
+        }
+        assertEquals(valueOffset + valueLen, data.length,
+            context + ": declared length " + valueLen + " from offset " + valueOffset
+            + " doesn't match actual data length " + data.length);
+    }
+
+    /** Validate that a region of a byte array contains well-formed concatenated TLVs. */
+    private void assertValidInnerTlvs(byte[] data, int start, int end, String context) {
+        int pos = start;
+        int count = 0;
+        while (pos < end) {
+            assertTrue(pos + 1 < end, context + ": inner TLV #" + count + " truncated at tag");
+            int tagLen = 1;
+            if ((data[pos] & 0x1F) == 0x1F) {
+                tagLen = 2;
+                assertTrue(pos + tagLen < end,
+                    context + ": inner TLV #" + count + " truncated at 2-byte tag");
+            }
+            int lenPos = pos + tagLen;
+            assertTrue(lenPos < end, context + ": inner TLV #" + count + " truncated at length");
+            int lenByte = data[lenPos] & 0xFF;
+            int valueLen;
+            int valueStart;
+            if (lenByte < 0x80) {
+                valueLen = lenByte;
+                valueStart = lenPos + 1;
+            } else if (lenByte == 0x81) {
+                assertTrue(lenPos + 1 < end,
+                    context + ": inner TLV #" + count + " BER 81 length truncated");
+                valueLen = data[lenPos + 1] & 0xFF;
+                valueStart = lenPos + 2;
+            } else {
+                throw new AssertionError(context + ": inner TLV #" + count
+                    + " unsupported length byte 0x" + Integer.toHexString(lenByte));
+            }
+            assertTrue(valueStart + valueLen <= end,
+                context + ": inner TLV #" + count + " (tag=0x"
+                + Integer.toHexString(data[pos] & 0xFF) + ") value extends past end: "
+                + "valueStart=" + valueStart + " valueLen=" + valueLen + " end=" + end);
+            pos = valueStart + valueLen;
+            count++;
+        }
+        assertEquals(end, pos,
+            context + ": inner TLV stream doesn't end cleanly (pos=" + pos + " end=" + end + ")");
+        assertTrue(count > 0, context + ": no inner TLVs found");
+    }
+
 }
 
