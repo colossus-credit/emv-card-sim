@@ -656,6 +656,13 @@ public class PaymentApplication extends EmvApplet {
         short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
         generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
+        // Contact-only: sign ATC||CDOL at GenAC time (vs contactless which signs
+        // ATC||PDOL at GPO). CDOL covers the full transaction context — terminal
+        // risk management results, UN, etc. — that PDOL alone doesn't carry.
+        if (isContactInterface && ecPrivateKeyLoaded && cdolLen > 0) {
+            generateEcdsaAtGenAc(buf, ISO7816.OFFSET_CDATA, cdolLen);
+        }
+
         // CDA path: ECDSA already done at GPO (r in 9F10, s in 9F6E, ICC_DN in 9F4C).
         // Just build SDAD — its TDH includes 9F10 (ECDSA r). ICC_DN reused from 9F4C.
         if (shouldPerformCda && canPerformCda) {
@@ -714,7 +721,8 @@ public class PaymentApplication extends EmvApplet {
             return;
         }
 
-        // Contact: manual build — 9F27 + 9F36 + 9F26 + 9F10 + FFC6 + 9F6E + FFC7
+        // Contact: ECDSA signature distributed across standard EMV tags
+        // r[0:32] → 9F10, s[0:8] → 9F26, s[8:24] → 4F, s[24:32] → 5F2D
         short offset = (short) 0;
 
         EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
@@ -723,25 +731,29 @@ public class PaymentApplication extends EmvApplet {
         EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
         if (atcTag != null) { offset = atcTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag acTag = EmvTag.findTag((short) 0x9F26);
+        EmvTag acTag = EmvTag.findTag((short) 0x9F26);     // s[0:8]
         if (acTag != null) { offset = acTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);
+        EmvTag iadTag = EmvTag.findTag((short) 0x9F10);    // r[0:32]
         if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
 
-        // ECDSA s in multiple tags for processor compatibility
-        EmvTag ffc6Tag = EmvTag.findTag((short) 0xFFC6);
-        if (ffc6Tag != null) { offset = ffc6Tag.copyToArray(tmpBuffer, offset); } // RapidConnect
+        EmvTag aidTag = EmvTag.findTag((short) 0x004F);    // s[8:24]
+        if (aidTag != null) { offset = aidTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag sTag = EmvTag.findTag((short) 0x9F6E);
-        if (sTag != null) { offset = sTag.copyToArray(tmpBuffer, offset); }       // TransIT/Elavon/TermLink
+        // 84 (DF Name) double-write with the same s[8:24] bytes.
+        // Direct TLV write — don't touch tag store (would corrupt FCI on next SELECT).
+        tmpBuffer[offset++] = (byte) 0x84;
+        tmpBuffer[offset++] = (byte) 0x10;
+        Util.arrayCopyNonAtomic(ecdsaRawSig, (short) 40, tmpBuffer, offset, (short) 16);
+        offset += (short) 16;
 
-        EmvTag ffc7Tag = EmvTag.findTag((short) 0xFFC7);
-        if (ffc7Tag != null) { offset = ffc7Tag.copyToArray(tmpBuffer, offset); } // redundancy
+        EmvTag langTag = EmvTag.findTag((short) 0x5F2D);   // s[24:32]
+        if (langTag != null) { offset = langTag.copyToArray(tmpBuffer, offset); }
 
         EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
         sendResponse(apdu, buf, (short) 0x0077);
     }
+
 
     // Scratch offset in tmpBuffer for small temporary data (ICC DN, etc.)
     // SDAD builder uses offsets 0..~300; this region is beyond that range.
@@ -778,14 +790,41 @@ public class PaymentApplication extends EmvApplet {
         // Strip DER → raw r||s (64 bytes)
         derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
 
-        // Store r in 9F10 (IAD — returned at GenAC), s in 9F6E (read via READ RECORD)
+        // Contactless only: r→9F10 (returned at GenAC), s→9F6E (via READ RECORD)
         EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
         EmvTag.setTag((short) 0x9F6E, ecdsaRawSig, (short) 32, (short) 32);
-        // Contact GenAC carries ECDSA s in multiple proprietary tags for processor compatibility
-        if (isContactInterface) {
-            EmvTag.setTag((short) 0xFFC6, ecdsaRawSig, (short) 32, (short) 32); // RapidConnect
-            EmvTag.setTag((short) 0xFFC7, ecdsaRawSig, (short) 32, (short) 32); // redundancy
-        }
+    }
+
+    /**
+     * Generate ECDSA P-256 signature at GenAC time over ATC || CDOL data.
+     * Contact-only. Signs ATC(2) || CDOL data (typically 58 bytes matching PDOL).
+     * ATC here is post-increment (the ATC carried in the GenAC response).
+     *
+     * Signature is distributed across standard EMV tags that every terminal
+     * passes through to DE55:
+     *   r[0:32]  → 9F10  (IAD, 32 bytes)
+     *   s[0:8]   → 9F26  (Application Cryptogram, 8 bytes — replaces real AC)
+     *   s[8:24]  → 4F    (AID, 16 bytes)
+     *   s[24:32] → 5F2D  (Language Preference, 8 bytes)
+     */
+    private void generateEcdsaAtGenAc(byte[] buf, short cdolOffset, short cdolLen) {
+        EmvTag atcTag = EmvTag.findTag((short) 0x9F36);
+        if (atcTag == null) return;
+
+        ecdsaSignature.init(ecPrivateKey, Signature.MODE_SIGN);
+        ecdsaSignature.update(atcTag.getData(), (short) 0, atcTag.getLength());
+        short sigLen = ecdsaSignature.sign(buf, cdolOffset, cdolLen, ecdsaSigBuffer, (short) 0);
+
+        derToRawSig(ecdsaSigBuffer, (short) 0, sigLen, ecdsaRawSig, (short) 0);
+
+        // r (32 bytes) → 9F10 (IAD)
+        EmvTag.setTag((short) 0x9F10, ecdsaRawSig, (short) 0, (short) 32);
+        // s[0:8] → 9F26 (overwrites the AC generated by generateApplicationCryptogram)
+        EmvTag.setTag((short) 0x9F26, ecdsaRawSig, (short) 32, (short) 8);
+        // s[8:24] → 4F (16 bytes)
+        EmvTag.setTag((short) 0x004F, ecdsaRawSig, (short) 40, (short) 16);
+        // s[24:32] → 5F2D (8 bytes)
+        EmvTag.setTag((short) 0x5F2D, ecdsaRawSig, (short) 56, (short) 8);
     }
 
     /**
@@ -1161,12 +1200,12 @@ public class PaymentApplication extends EmvApplet {
             storedPdolLength = 0;
         }
 
-        // ECDSA signing at GPO time: sign ATC || PDOL data
-        // ATC provides transaction sequencing, PDOL includes terminal/merchant/acquirer ID.
-        // r→9F10, s→9F6E. Terminal reads 9F6E in READ RECORD (tag 70, per C-2 A.1.165).
-        // 9F10 is returned at GENERATE AC time in the CDA response.
+        // ECDSA signing at GPO — contactless only. Contact signs at GenAC over
+        // the CDOL, which carries more transaction context (TVR, UN, etc.).
+        // Contactless: sign ATC || PDOL, r→9F10, s→9F6E. Terminal reads 9F6E
+        // via READ RECORD (tag 70, per C-2 A.1.165). 9F10 returned in CDA GenAC.
         // Note: ATC here is pre-increment (N). GenAC increments to N+1. Verifier subtracts 1.
-        if (ecPrivateKeyLoaded && storedPdolLength > 0) {
+        if (!isContactInterface && ecPrivateKeyLoaded && storedPdolLength > 0) {
             generateEcdsaAtGpo();
         }
 

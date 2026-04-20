@@ -1,30 +1,42 @@
-# Mastercard Test Profile — US Common Debit
-# Uses Mastercard AID A0000000042203 for C-2 kernel testing on PAX terminal
-# The applet must be installed with matching AID before using this profile
+# Mastercard Test Profile — spoofed AID for contact testing
+# Uses US Maestro AID A0000000042203 (suffix 2203 → detected as contact).
+# All other settings mirror default.yaml so the card behaves identically
+# to Colossus; terminal routes through C-2 kernel but AIP=0000 skips ODA,
+# transaction goes online as ARQC with ECDSA signed at GenAC over CDOL.
 
-profile: Mastercard US Common Debit (C-2 Kernel)
+profile: Mastercard spoofed AID (contact, FDRC demo mode)
 rid: A000000004
 contact_aid_suffix: "2203"
 contactless_aid_suffix: "2203"
 application_label: MASTERCARD
-preferred_name: "DEBIT MASTERCARD"
+preferred_name: "MASTERCARD CREDIT"
 bin: "54000000"
+pan: "5400000012345679"  # Luhn-valid MC-range PAN
 expiry: "271231"
 
-# Kernel identifier for PPSE directory entry
-# 02 = Mastercard kernel C-2 (auto-mapped for Mastercard AID, but explicit is safer)
 kernel_identifier: "02"
 
 keys:
-  capk_index: "F8"
+  capk_index: "92"
   key_size: 1024
-  # keys_dir: keys/
+  keys_dir: ../../keys/capk_1984_mixed
 
 tags:
+  # --- DOL definitions (match default: 11 tags, 58 bytes each) ---
   DDOL:
     type: dol
     value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
       Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -57,23 +69,40 @@ tags:
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
-  Application Interchange Profile: "3800"
+  # --- Simple tag values ---
+  Application Interchange Profile: "0000"  # Online-only, no ODA/CVM/TRM/IssuerAuth
   Application Version Number: "0002"
-  Issuer Code Table Index: "01"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
-  Application Usage Control: "FF00"
+  Application Usage Control: "AB00"
   SDA Tag List: "82"
   Track 1 Discretionary Data: "00000000000000000000000000000000000000"
-  Service Code: "0201"
+  Service Code: "0701"
   Application Currency Code: "0840"
   Application Currency Exponent: "02"
-  IAC-Default: "FFFFFFFFFF"
-  IAC-Denial: "0000000000"
-  IAC-Online: "FC68FC9800"
+  IAC-Default: "D84000A800"
+  IAC-Denial: "0010000000"
+  IAC-Online: "D84004F800"
+  Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
-  CTQ: "0000"
+  Form Factor Indicator: "08400000"
+  CTQ: "8000"
+
+  PDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
 
 templates:
   gpo: ["AIP", "AFL"]
@@ -81,41 +110,27 @@ templates:
   genac: ["9F27", "9F36", "9F26", "9F10"]
   fci:
     6f: ["DF Name", "A5"]
-    a5: ["Application Label", "Application Priority Indicator"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
 
 contactless:
   fci:
     a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
-  tags:
-    Application Interchange Profile: "3980"
-    PDOL:
-      type: dol
-      value:
-        Terminal Transaction Qualifiers: 4
-        Amount Authorised: 6
-        Amount Other: 6
-        Terminal Country Code: 2
-        Terminal Verification Results: 5
-        Transaction Currency Code: 2
-        Transaction Date: 3
-        Transaction Type: 1
-        Unpredictable Number: 4
+  # No AIP override — contact and contactless both use base AIP=0000 so
+  # CDA is never triggered (kernel falls into non-CDA GenAC path with FFC6/9F6E/FFC7).
 
 records:
   - sfi: 1
     records:
       - record: 1
-        tags: ["57", "5A", "5F24", "9F07", "8C"]
+        tags: ["57", "5A", "5F24", "5F28", "5F34", "9F07", "8C"]
       - record: 2
-        tags: ["5F20", "5F25", "5F28", "5F34", "9F4A"]
+        tags: ["5F20", "5F25", "8D", "8E", "9F0D", "9F0E", "9F0F", "9F4A"]
       - record: 3
-        tags: ["8D", "9F0D", "9F0E", "9F0F"]
-      - record: 4
-        tags: ["8E", "9F08", "9F42", "9F44", "9F49", "5F30"]
+        tags: ["5F30", "9F08", "9F42", "9F44", "9F49", "9F6E"]
   - sfi: 2
     records:
       - record: 1
-        tags: ["8F", "9F32", "9F47", "92"]
+        tags: ["8F", "92", "9F32", "9F47"]
       - record: 2
         tags: ["90"]
   - sfi: 3
@@ -128,12 +143,12 @@ records:
 afl:
   - sfi: 1
     first_record: 1
-    last_record: 4
+    last_record: 3
     oda_count: 0
   - sfi: 2
     first_record: 1
     last_record: 2
-    oda_count: 2
+    oda_count: 1
   - sfi: 3
     first_record: 1
     last_record: 2
@@ -143,7 +158,7 @@ settings:
   pin: "1234"
   flags:
     use_random: true
-  response_template: "0077"
+  response_template: "0080"
 
 cvm_list:
   amount_x: 0

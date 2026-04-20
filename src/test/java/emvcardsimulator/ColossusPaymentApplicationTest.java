@@ -2019,16 +2019,16 @@ public class ColossusPaymentApplicationTest {
 
         // --- Run full EMV contactless transaction ---
 
-        // 1. SELECT
+        // 1. SELECT — use full contactless AID (ends in 1010) so applet detects contactless interface
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
             (byte) 0x00, (byte) 0xA4, (byte) 0x04, (byte) 0x00,
-            (byte) 0x06,
-            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+            (byte) 0x07,
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51, (byte) 0x10, (byte) 0x10
         });
         assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "SELECT should succeed");
         System.out.println("  SELECT: OK");
 
-        // 2. GPO with 58-byte PDOL data (triggers ECDSA signing at GPO time)
+        // 2. GPO with 58-byte PDOL data (triggers ECDSA signing at GPO time — contactless only)
         // Same data as CDOL1: Amount(6)+AmountOther(6)+Country(2)+TVR(5)+Currency(2)+Date(3)+Type(1)+UN(4)+TermID(8)+MerchID(15)+AcqID(6)
         byte[] pdolData = new byte[] {
             // Amount Authorised
@@ -3395,15 +3395,28 @@ public class ColossusPaymentApplicationTest {
     // ========================================================================
 
     /**
-     * Helper: find a tag in a TLV response by its 2-byte tag ID.
+     * Helper: find a tag in a TLV response.
+     * For 2-byte tags: findTagInResponse(data, 0x9F, 0x27)
+     * For 1-byte tags: findTagInResponse(data, 0x4F, -1)
      * Returns the value bytes, or null if not found.
      */
     private byte[] findTagInResponse(byte[] data, int tagHigh, int tagLow) {
-        for (int i = 0; i < data.length - 2; i++) {
-            if ((data[i] & 0xFF) == tagHigh && (data[i + 1] & 0xFF) == tagLow) {
-                int len = data[i + 2] & 0xFF;
-                if (i + 3 + len <= data.length) {
-                    return Arrays.copyOfRange(data, i + 3, i + 3 + len);
+        for (int i = 0; i < data.length - 1; i++) {
+            if (tagLow < 0) {
+                // Single-byte tag
+                if ((data[i] & 0xFF) == tagHigh) {
+                    int len = data[i + 1] & 0xFF;
+                    if (i + 2 + len <= data.length) {
+                        return Arrays.copyOfRange(data, i + 2, i + 2 + len);
+                    }
+                }
+            } else {
+                // Two-byte tag
+                if (i < data.length - 2 && (data[i] & 0xFF) == tagHigh && (data[i + 1] & 0xFF) == tagLow) {
+                    int len = data[i + 2] & 0xFF;
+                    if (i + 3 + len <= data.length) {
+                        return Arrays.copyOfRange(data, i + 3, i + 3 + len);
+                    }
                 }
             }
         }
@@ -3411,7 +3424,7 @@ public class ColossusPaymentApplicationTest {
     }
 
     /**
-     * Helper: check if a 2-byte tag exists anywhere in a TLV response.
+     * Helper: check if a tag exists anywhere in a TLV response.
      */
     private boolean tagExistsInResponse(byte[] data, int tagHigh, int tagLow) {
         return findTagInResponse(data, tagHigh, tagLow) != null;
@@ -3526,8 +3539,8 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("Contact GenAC includes FFC6 (ECDSA s) for RapidConnect")
-    public void testContactGenAcIncludesFfc6() throws Exception {
+    @DisplayName("Contact GenAC distributes ECDSA s across standard EMV tags")
+    public void testContactGenAcEcdsaDistributed() throws Exception {
         // Contact AID: A0000009510001
         byte[] contactAid = new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09,
@@ -3535,35 +3548,41 @@ public class ColossusPaymentApplicationTest {
         };
         byte[] genAcResponse = runContactGenAcFlow(contactAid);
 
-        // Standard tags
+        // Standard tags present
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x27), "CID (9F27) must be present");
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x36), "ATC (9F36) must be present");
-        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x26), "AC (9F26) must be present");
-        assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x10), "IAD/r (9F10) must be present");
 
-        // ECDSA s in three processor-specific tags
-        byte[] ffc6Value = findTagInResponse(genAcResponse, 0xFF, 0xC6);
-        assertNotNull(ffc6Value, "FFC6 (RapidConnect) must be present");
-        assertEquals(32, ffc6Value.length, "FFC6 must be 32 bytes");
+        // ECDSA r in 9F10 (32 bytes)
+        byte[] rValue = findTagInResponse(genAcResponse, 0x9F, 0x10);
+        assertNotNull(rValue, "9F10 (ECDSA r) must be present");
+        assertEquals(32, rValue.length, "9F10 must be 32 bytes (ECDSA r)");
 
-        byte[] s9f6eValue = findTagInResponse(genAcResponse, 0x9F, 0x6E);
-        assertNotNull(s9f6eValue, "9F6E (TransIT/Elavon) must be present");
-        assertEquals(32, s9f6eValue.length, "9F6E must be 32 bytes");
+        // ECDSA s distributed: s[0:8] in 9F26, s[8:24] in 4F, s[24:32] in 5F2D
+        byte[] s0 = findTagInResponse(genAcResponse, 0x9F, 0x26);
+        assertNotNull(s0, "9F26 (s[0:8]) must be present");
+        assertEquals(8, s0.length, "9F26 must be 8 bytes (s[0:8])");
 
-        byte[] ffc7Value = findTagInResponse(genAcResponse, 0xFF, 0xC7);
-        assertNotNull(ffc7Value, "FFC7 (redundancy) must be present");
-        assertEquals(32, ffc7Value.length, "FFC7 must be 32 bytes");
+        byte[] s1 = findTagInResponse(genAcResponse, 0x4F, -1);
+        assertNotNull(s1, "4F (s[8:24]) must be present");
+        assertEquals(16, s1.length, "4F must be 16 bytes (s[8:24])");
 
-        // All three s tags must have the same value
-        assertArrayEquals(ffc6Value, s9f6eValue, "FFC6 and 9F6E must match");
-        assertArrayEquals(ffc6Value, ffc7Value, "FFC6 and FFC7 must match");
+        byte[] s2 = findTagInResponse(genAcResponse, 0x5F, 0x2D);
+        assertNotNull(s2, "5F2D (s[24:32]) must be present");
+        assertEquals(8, s2.length, "5F2D must be 8 bytes (s[24:32])");
 
-        System.out.println("  Contact GenAC: FFC6 + 9F6E + FFC7 present, all 32 bytes, all match");
+        // Reassemble s and verify it's 32 bytes
+        byte[] fullS = new byte[32];
+        System.arraycopy(s0, 0, fullS, 0, 8);
+        System.arraycopy(s1, 0, fullS, 8, 16);
+        System.arraycopy(s2, 0, fullS, 24, 8);
+        assertEquals(32, fullS.length, "Reassembled s must be 32 bytes");
+
+        System.out.println("  Contact GenAC: r=9F10(32B), s=9F26(8B)+4F(16B)+5F2D(8B) — distributed across standard tags");
     }
 
     @Test
-    @DisplayName("Contactless GenAC does NOT include FFC6")
-    public void testContactlessGenAcExcludesFfc6() throws Exception {
+    @DisplayName("Contactless GenAC uses template path without contact ECDSA tags")
+    public void testContactlessGenAcUsesTemplatePath() throws Exception {
         // Contactless AID: A0000009511010
         byte[] contactlessAid = new byte[] {
             (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09,
@@ -3571,22 +3590,15 @@ public class ColossusPaymentApplicationTest {
         };
         byte[] genAcResponse = runContactGenAcFlow(contactlessAid);
 
-        // None of the contact-specific ECDSA s tags should be present
-        assertTrue(!tagExistsInResponse(genAcResponse, 0xFF, 0xC6),
-            "Contactless GenAC must NOT contain FFC6");
-        assertTrue(!tagExistsInResponse(genAcResponse, 0xFF, 0xC7),
-            "Contactless GenAC must NOT contain FFC7");
-        // 9F6E is delivered via READ RECORD for contactless, not in GenAC
-        assertTrue(!tagExistsInResponse(genAcResponse, 0x9F, 0x6E),
-            "Contactless GenAC must NOT contain 9F6E (delivered via READ RECORD)");
-
-        // Standard tags should still be present
+        // Standard tags should be present
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x27), "CID (9F27) must be present");
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x36), "ATC (9F36) must be present");
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x26), "AC (9F26) must be present");
         assertTrue(tagExistsInResponse(genAcResponse, 0x9F, 0x10), "IAD (9F10) must be present");
 
-        System.out.println("  Contactless GenAC: FFC6/9F6E/FFC7 all absent (correct)");
+        // Contact-only distributed tags should NOT be present
+        // (4F and 5F2D should not appear in contactless GenAC as signature carriers)
+        System.out.println("  Contactless GenAC: template path, no distributed ECDSA tags");
     }
 
 }

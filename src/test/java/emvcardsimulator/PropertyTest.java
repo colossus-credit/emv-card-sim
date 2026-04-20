@@ -44,8 +44,10 @@ import net.jqwik.api.constraints.Size;
  */
 public class PropertyTest {
 
+    // Contactless AID (ends in 1010) — property tests exercise contactless path
+    // where ECDSA signs at GPO. Contact tests use their own AID ending in 0001.
     private static final byte[] PAYMENT_AID = new byte[] {
-        (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51
+        (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09, (byte) 0x51, (byte) 0x10, (byte) 0x10
     };
 
     private static final byte[] PSE_AID = new byte[] {
