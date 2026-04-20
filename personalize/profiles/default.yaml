@@ -84,7 +84,12 @@ tags:
   Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
-  Form Factor Indicator: "08400000"
+  # On C-2 (Mastercard) kernel, tag 9F6E is Third Party Data (not Form Factor Indicator).
+  # Format: CC(2) + UID(2) + [DeviceType(2)] + PropData(1-28), length 5-32 (C-2 §A.1.165).
+  # 0840 = USA; UID high bit set avoids C-2 §3.10.2 DECLINE trigger; 00 = 1B prop data.
+  # At runtime, generateEcdsaAtGpo() overwrites this with ECDSA s (32B) before READ RECORD.
+  # This placeholder only matters if the ECDSA overwrite ever fails to fire.
+  Form Factor Indicator: "0840800000"
   CTQ: "8000"
 
 templates:
