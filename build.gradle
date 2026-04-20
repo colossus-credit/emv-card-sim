@@ -422,13 +422,15 @@ task wipe(type: Exec) {
     commandLine 'bash', '-c', '''
         set -euo pipefail
         echo ">> Listing packages on card"
-        java -jar gp.jar --list 2>/dev/null \
-          | awk '/^PKG:/ {print $2}' \
-          | grep -v '^A0000001515350$' \
-          | while read pkg; do
-              echo ">> Deleting package $pkg"
-              java -jar gp.jar --force --delete "$pkg"
+        pkgs=$(java -jar gp.jar --list 2>/dev/null | awk '/^PKG:/ {print $2}' | grep -v '^A0000001515350$' || true)
+        if [ -z "$pkgs" ]; then
+            echo ">> No user packages to delete"
+        else
+            echo "$pkgs" | while read pkg; do
+                echo ">> Deleting package $pkg"
+                java -jar gp.jar --force --delete "$pkg"
             done
+        fi
         echo ">> Wipe complete"
     '''
 }
