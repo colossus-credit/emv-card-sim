@@ -72,7 +72,10 @@ tags:
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
-  Application Usage Control: "AB00"
+  # AUC per EMV Book 3 Annex B4: byte 1 = AB (domestic cash/goods/services + ATM + non-ATM POS;
+  # no international), byte 2 = 80 (domestic cashback allowed, intl cashback disabled).
+  # Suits a US-issued debit rollout (grocery/pharmacy cashback common); switch to AB00 for credit.
+  Application Usage Control: "AB80"
   SDA Tag List: "82"
   Track 1 Discretionary Data: "00000000000000000000000000000000000000"
   Service Code: "0701"
