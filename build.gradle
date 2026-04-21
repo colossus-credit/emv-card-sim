@@ -164,11 +164,13 @@ dependencies {
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    testImplementation 'com.klinec:jcardsim:latest.release'
+    // Pinned to avoid reproducibility drift from 'latest.release' (different dev
+    // machines could resolve different versions → byte-differing CAP output).
+    testImplementation 'com.klinec:jcardsim:3.0.6.0'
     testImplementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     testImplementation 'net.jqwik:jqwik:1.8.2'
-    implementation 'com.klinec:jcardsim:latest.release'
-    javacardAntTask 'com.github.martinpaljak:ant-javacard:latest.release'
+    implementation 'com.klinec:jcardsim:3.0.6.0'
+    javacardAntTask 'com.github.martinpaljak:ant-javacard:19.05.08'
 }
 
 test {
