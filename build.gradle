@@ -19,12 +19,22 @@ if (!project.hasProperty("build_type")) {
     ext.build_type = "dev"
 }
 
-// Generate BuildConfig.java with the production flag
+// RSA Cipher support: set to "false" for cards that don't have javacardx.crypto
+// (optional package in JavaCard Classic — not all cards implement it).
+// When false, RSA sign/decrypt operations throw SW_CONDITIONS_NOT_SATISFIED.
+// Usage: gradle cap -Phas_rsa_cipher=false
+if (!project.hasProperty("has_rsa_cipher")) {
+    ext.has_rsa_cipher = "true"
+}
+
+// Generate BuildConfig.java and RsaSignerHelper.java
 task generateBuildConfig {
     def outputDir = file("src/main/java/emvcardsimulator")
     def isProduction = (build_type == "production")
+    def hasRsaCipher = (has_rsa_cipher == "true")
 
     outputs.file(new File(outputDir, "BuildConfig.java"))
+    outputs.file(new File(outputDir, "RsaSignerHelper.java"))
 
     doLast {
         def buildConfigFile = new File(outputDir, "BuildConfig.java")
@@ -41,6 +51,51 @@ public class BuildConfig {
     public static final boolean PRODUCTION = ${isProduction};
 }
 """
+
+        def rsaHelper = new File(outputDir, "RsaSignerHelper.java")
+        if (hasRsaCipher) {
+            rsaHelper.text = """package emvcardsimulator;
+
+import javacardx.crypto.Cipher;
+import javacard.security.RSAPrivateKey;
+
+/**
+ * Generated helper — wraps javacardx.crypto.Cipher for raw RSA operations.
+ * Built with has_rsa_cipher=true (card supports javacardx.crypto).
+ */
+class RsaSignerHelper {
+    private final Cipher cipher;
+
+    RsaSignerHelper() {
+        cipher = Cipher.getInstance(Cipher.ALG_RSA_NOPAD, false);
+    }
+
+    void doFinal(RSAPrivateKey key, byte[] in, short inOff, short inLen, byte[] out, short outOff) {
+        cipher.init(key, Cipher.MODE_DECRYPT);
+        cipher.doFinal(in, inOff, inLen, out, outOff);
+    }
+}
+"""
+        } else {
+            rsaHelper.text = """package emvcardsimulator;
+
+import javacard.framework.ISO7816;
+import javacard.framework.ISOException;
+import javacard.security.RSAPrivateKey;
+
+/**
+ * Generated stub — javacardx.crypto not available on this card.
+ * Built with has_rsa_cipher=false. RSA sign/decrypt throws 6985.
+ */
+class RsaSignerHelper {
+    RsaSignerHelper() {}
+
+    void doFinal(RSAPrivateKey key, byte[] in, short inOff, short inLen, byte[] out, short outOff) {
+        ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+    }
+}
+"""
+        }
     }
 }
 
@@ -310,8 +365,51 @@ task downloadGp {
     }
 }
 
+// compat_sdk: override API export files independently of the converter SDK.
+// Useful when the card's JavaCard API version is older than the converter SDK.
+// The converter (bin/) always comes from jc_sdk; only api_export_files is overridden.
+//
+// Example: J3H145 (JavaCard 3.0.4) needs security/crypto v1.5, not v1.6:
+//   ./gradlew cap deploy -Pcompat_sdk=jc304_kit
+//
+// Available values: jc222_kit, jc303_kit, jc304_kit, jc305u3_kit (default = jc_sdk)
+if (!project.hasProperty("compat_sdk")) {
+    ext.compat_sdk = jc_sdk
+}
+
+task prepareJcKit {
+    def mergedKitDir = file("build/jckit_merged")
+    outputs.dir(mergedKitDir)
+
+    doLast {
+        if (compat_sdk == jc_sdk) {
+            // No merge needed — point directly at the SDK
+            mergedKitDir.deleteDir()
+            return
+        }
+
+        logger.lifecycle("compat_sdk=${compat_sdk}: merging converter from ${jc_sdk} + API exports from ${compat_sdk}")
+
+        // Start fresh
+        mergedKitDir.deleteDir()
+        mergedKitDir.mkdirs()
+
+        // Copy full converter SDK
+        copy {
+            from "oracle_javacard_sdks/${jc_sdk}"
+            into mergedKitDir
+        }
+
+        // Overwrite api_export_files with the compat SDK's exports
+        copy {
+            from "oracle_javacard_sdks/${compat_sdk}/api_export_files"
+            into "${mergedKitDir}/api_export_files"
+        }
+    }
+}
+
 task cap {
-    dependsOn assemble
+    dependsOn assemble, prepareJcKit
     group "Build"
     description "Assembles a cap archive containing the main classes."
 
@@ -321,8 +419,12 @@ task cap {
         // Create build/card directory
         file('build/card').mkdirs()
 
+        def effectiveJcKit = (compat_sdk == jc_sdk)
+            ? "oracle_javacard_sdks/${jc_sdk}"
+            : "build/jckit_merged"
+
         // 1PAY.SYS.DDF01 (Contact PSE)
-        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+        ant.javacard(jckit: effectiveJcKit) {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
@@ -336,7 +438,7 @@ task cap {
         }
 
         // 2PAY.SYS.DDF01 (Contactless PPSE) - separate package
-        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+        ant.javacard(jckit: effectiveJcKit) {
             cap (
                 package: 'emvcardsimulator.ppse',
                 version: '0.1',
@@ -349,7 +451,7 @@ task cap {
             }
         }
 
-        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+        ant.javacard(jckit: effectiveJcKit) {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
@@ -363,7 +465,7 @@ task cap {
         }
 
         // Contactless payment app (same PaymentApplication class, different AID for T=1 protocol)
-        ant.javacard(jckit: "oracle_javacard_sdks/${jc_sdk}") {
+        ant.javacard(jckit: effectiveJcKit) {
             cap (
                 package: 'emvcardsimulator',
                 version: '0.1',
