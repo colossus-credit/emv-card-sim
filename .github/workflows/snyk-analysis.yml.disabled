@@ -1,0 +1,38 @@
+name: Snyk Container
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    branches: [ '**' ]
+  schedule:
+    - cron: '0 14 1 * *'
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch: null
+
+permissions:
+  security-events: write
+  contents: read
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build a Docker image
+        run: docker build -t emvcard-builder .
+      - name: Run Snyk to check Docker image for vulnerabilities
+        continue-on-error: true
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: emvcard-builder
+          args: --file=Dockerfile
+      - name: Upload result to GitHub Code Scanning
+        if: hashFiles('snyk.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk.sarif

@@ -1,0 +1,19 @@
+[project]
+name = "emv-personalize"
+version = "0.1.0"
+description = "Python personalization tool for emv-card-sim JavaCard applet"
+requires-python = ">=3.10"
+dependencies = [
+    "pyscard>=2.0.0",
+    "cryptography>=41.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+emv-personalize = "personalize:main"
+
+[tool.setuptools]
+packages = ["emv_personalize"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

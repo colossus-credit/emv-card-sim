@@ -86,33 +86,27 @@ public class Rsa2048Test {
             (byte) 0xC3, (byte) 0xBD, (byte) 0x62, (byte) 0xBB, (byte) 0x33, (byte) 0x6C, (byte) 0xC2, (byte) 0xFF
         };
         
-        // Send via APDU chaining
-        byte[] chunk1 = new byte[133];
-        chunk1[0] = (byte) 0x90;
-        chunk1[1] = (byte) 0x00;
-        chunk1[2] = (byte) 0x00;
-        chunk1[3] = (byte) 0x04;
-        chunk1[4] = (byte) 0x80;
-        System.arraycopy(modulus, 0, chunk1, 5, 128);
-        
-        ResponseAPDU response = SmartCard.transmitCommand(chunk1);
-        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "Chunk 1 should succeed");
-        
-        byte[] chunk2 = new byte[133];
-        chunk2[0] = (byte) 0x80;
-        chunk2[1] = (byte) 0x00;
-        chunk2[2] = (byte) 0x00;
-        chunk2[3] = (byte) 0x04;
-        chunk2[4] = (byte) 0x80;
-        System.arraycopy(modulus, 128, chunk2, 5, 128);
-        
-        response = SmartCard.transmitCommand(chunk2);
-        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "Chunk 2 should succeed");
-        
+        // Send modulus using extended APDU (256 bytes in single command)
+        // Extended APDU format: CLA INS P1 P2 00 Lc_hi Lc_lo [data...]
+        byte[] modulusCmd = new byte[7 + 256];  // 7 byte header + 256 byte data
+        modulusCmd[0] = (byte) 0x80;  // CLA
+        modulusCmd[1] = (byte) 0x04;  // INS (SET_SETTINGS)
+        modulusCmd[2] = (byte) 0x00;  // P1
+        modulusCmd[3] = (byte) 0x04;  // P2 (modulus setting)
+        modulusCmd[4] = (byte) 0x00;  // Extended length indicator
+        modulusCmd[5] = (byte) 0x01;  // Lc high byte (256 = 0x0100)
+        modulusCmd[6] = (byte) 0x00;  // Lc low byte
+        System.arraycopy(modulus, 0, modulusCmd, 7, 256);
+
+        ResponseAPDU response = SmartCard.transmitCommand(modulusCmd);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(), "RSA-2048 modulus should succeed");
+
         // Test that we can actually use this key
-        System.out.println("RSA-2048 key loaded successfully via APDU chaining!");
+        System.out.println("RSA-2048 key modulus loaded successfully via extended APDU!");
     }
 }
+
+
 
 
 

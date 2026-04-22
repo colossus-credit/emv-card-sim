@@ -1,0 +1,89 @@
+Colossus Network ICC (Card) Certificate
+========================================
+
+Generated: Mon Jan 12 12:56:26 CST 2026
+Card PAN: 4111111111111111
+Algorithm: RSA-1984
+Hash Algorithm: SHA-1
+
+ICC Public Key Parameters:
+---------------------------
+Modulus Size:     248 bytes (1984 bits)
+Public Exponent:  3 (0x03)
+
+Certificate Details:
+--------------------
+Certificate Size: 248 bytes
+Serial Number:    A7297D7C
+Expiry Date:      271231
+PAN:              4111111111111111
+PAN (in cert):    4111111111111111
+Remainder Size:   42 bytes
+
+File Locations:
+---------------
+Private Key:      ./keys/icc_visa/icc_private.pem
+Public Key:       ./keys/icc_visa/icc_public.pem
+Modulus (binary): ./keys/icc_visa/icc_modulus.bin
+Exponent (binary): ./keys/icc_visa/icc_exponent.bin
+Certificate:      ./keys/icc_visa/icc_certificate.bin
+Remainder:        ./keys/icc_visa/icc_remainder.bin
+
+Signed By:
+----------
+Issuer Private Key: ./keys/issuer/issuer_private.pem
+
+ICC Modulus (Hex):
+d0e7748ee9178c3cdb1c20c9dfa0e38d257c2ab25077d3a4aced216da7a5b3f1
+f109dca5b3f25ca02e0d5cde92bc69767a72749a1f24f741c65787e8a6ef9ef2
+0d2b322833cc6819556255240170c8707dfeae84e54d4ea0a471ec865011212e
+c95ccdb7700f34bd1d85f20544f3775f8671cd82e77da56ec4258b7578e1d368
+5ddc0d0a620b12bcf317f080591f07204113dfd1080e0c123e00a60d7cc080c2
+1ef86e1222c5969c7557c18544bc608ae0ab1951cf37312425b4164fef2ec272
+bcb90bf0b0bad73107e9a9cb91f3b4add0a978cba7051a34d2723f3eacba16d9
+ce52353515e30f20518552b0631c8c937c8204c3914aff33
+
+ICC Public Exponent (Hex):
+03
+
+Certificate (Hex):
+97616ae3740776bec1e86cf7fbfca540beb967bdee8ebebbcee022bb401a943c
+f44a70074d62c0662f3dd6677e6d9c2e0ebbbf7283bf20d4b1c91cb0c4241cac
+3db4856a0933ebfe7260174a285288123b279fb8986677f0dffa7b05ffc1340f
+4434119060a2e544c3b88dbea9a9c286b7b2e808d399a5b35e1c65d851552580
+9dd2aa803eb3c41f07c2eb642347ca6e086b1f51b50196294a2d987303e195e4
+a72053ba7f9682294823758d56705c91e654f7dc70514160d258f67df9429420
+dd020c2cdbefecc76687dc47305345f3d7d7c959fb65d4895cee51195d42b333
+34e5634bf27513e367577b22d11666b529ea6506d09d75ac
+
+Remainder (Hex):
+b4add0a978cba7051a34d2723f3eacba16d9ce52353515e30f20518552b0631c
+8c937c8204c3914aff33
+
+Security Notice:
+----------------
+⚠️  KEEP THE ICC PRIVATE KEY SECURE ON THE CARD!
+⚠️  This key must NEVER leave the secure element
+⚠️  Used for signing transaction data (DDA/CDA)
+⚠️  Compromise means card cloning is possible
+
+EMV Usage:
+----------
+1. Load ICC private key onto card secure element
+2. Store ICC certificate on card for terminal verification
+3. Card uses ICC private key to sign transaction data
+4. Terminal verifies with ICC public key from certificate
+
+Certificate Chain:
+------------------
+CAPK → Signs Issuer Certificate
+Issuer → Signs this ICC Certificate ✓
+ICC (this key) → Signs transaction data (DDA/CDA)
+
+Card Personalization:
+---------------------
+This key and certificate should be loaded onto the card during
+personalization. The private key must be loaded into secure storage
+and never extracted.
+
+For more information, see COLOSSUS.md
