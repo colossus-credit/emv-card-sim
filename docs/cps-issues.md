@@ -26,6 +26,31 @@ When a single DGI exceeds 255 bytes (the short APDU limit), the bureau splits it
 
 **Fix:** Track partial DGI state across consecutive STORE DATA commands when `Lc` truncation is detected (remaining bytes < declared DGI length). Only needed if RSA-2048 keys or large proprietary DGIs are added.
 
+## Issue #5 — Personalization Interface (F-07 / SCP STORE DATA) Needs Newer Card for Live Verification
+
+**Spec reference:** GP Card Spec v2.3.1 §7.3.2, EMV CPS v2.0 §4.3.4
+
+Implementation landed and then was reverted because our current dev card (JCOP 2.4.1) can't run it:
+
+- **Applet-side code was correct and tested**: `EmvApplet` and PPSE implemented `org.globalplatform.Personalization`, `processData()` delegated to a shared `handleStoreDataPayload()` helper used by both the APDU path and the ISD-forwarded path; 117 Java tests passed. Committed briefly as `7bb9804`, then reverted via commit above this note.
+- **Three-layer tooling mismatch on JCOP 2.4.1**:
+  1. Our GP Card API 1.8 distribution ships `globalplatform.exp` in **exp format 2.3** only.
+  2. JC 3.0.5 converter (which targets JCOP 2.4.1 cards) only reads exp format 2.2.
+  3. JC 3.1 converter reads exp 2.3 but produces **CAP format 2.3**, which JCOP 2.4.1 rejects on LOAD with `6985`.
+  Additionally, JCOP 2.4.1 firmware does not expose the `Personalization` privilege on its ISD (confirmed via `gp --info` — privilege list omits it), so even with a loadable CAP, `INSTALL [for personalization]` would fail.
+
+**Next step — waits on newer hardware:**
+
+- Get JCOP 3 (SmartMX2) or JCOP 4 (SmartMX3) sample card; Joseph has JCOP 3 on hand. Bureau production cards will be JCOP 4.
+- Cherry-pick `7bb9804` back onto the branch.
+- Run `java -jar gp.jar --applet A0000009510001 --store-data <hex>` — should now complete SCP02 session + `INSTALL [for personalization]` + SCP-wrapped STORE DATA, with our applet's `processData()` receiving cleartext identical to what the direct APDU path sees today.
+- If this works, the Python perso tool can be migrated to route through the ISD instead of sending direct APDUs — main work item is replacing direct `00 E2` sends with `gp.jar --install-for-personalization` orchestration.
+
+**Current state** (with revert applied):
+- All perso goes via the direct `00 E2 STORE DATA` path, no SCP wrapping at the applet boundary
+- SCP02 is still used by gp.jar for LOAD and INSTALL commands (card-content management)
+- The bureau hand-off path will need F-07 reapplied when running against modern cards — the committed version at `7bb9804` is correct per spec, just can't be loaded on our 10-year-old dev sample
+
 ## Issue #4 — DGI 9000 KCV Not Verified
 
 **Spec reference:** CPS v2.0 SS7.15
