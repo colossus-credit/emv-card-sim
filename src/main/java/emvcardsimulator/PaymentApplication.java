@@ -38,6 +38,18 @@ public class PaymentApplication extends EmvApplet {
     private byte[] pinCode = null;
     private boolean useRandom = true;
 
+    // Symmetric block cipher key material received via DGI 8000 (CPS v2.0
+    // Annex A.2 Table A-2). In a spec-compliant EMV implementation this is the
+    // issuer Application-Cryptogram master key (MK_AC) used to derive per-
+    // transaction session keys for 3DES-CBC-MAC or AES-CMAC generation of
+    // tag 9F26. ColossusNet trusts the ECDSA signature in 9F10/9F6E for
+    // issuer-side authentication and uses a placeholder AC (see audit F-46),
+    // so this buffer is stored but not read at transaction time. Kept on-card
+    // so bureau flows that emit DGI 8000 per CPS don't error, and so that
+    // future real-MAC work has the material already loaded.
+    private byte[] symmetricKeyData = null;
+    private short symmetricKeyLength = 0;
+
     // P-256 (secp256r1) domain parameters
     private static final byte[] EC_P256_P = {
         (byte)0xFF,(byte)0xFF,(byte)0xFF,(byte)0xFF, (byte)0x00,(byte)0x00,(byte)0x00,(byte)0x01,
@@ -394,49 +406,25 @@ public class PaymentApplication extends EmvApplet {
      */
     protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
         switch (dgi) {
-            // CPS 8000: Block cipher keys (RSA modulus/exponent, EC scalar)
-            // First 8000 with RSA-sized data = modulus; second 8000 = exponent
-            // 8000 with 32 bytes = EC P-256 private key scalar
+            // CPS 8000: Block cipher (symmetric) keys — CPS v2.0 Annex A.2 Table A-2.
+            // A spec-compliant EMV issuer uses this for MK_AC (Application Cryptogram
+            // master key), MK_SMC/MK_SMI (secure messaging), etc., and derives
+            // per-transaction session keys for 3DES-CBC-MAC or AES-CMAC.
+            //
+            // ColossusNet's current threat model trusts the ECDSA signature in
+            // tags 9F10/9F6E for issuer-side authentication and uses a
+            // placeholder SHA-1-based AC (audit F-46). So we accept and store
+            // the key bytes on-card to remain compliant with standard bureau
+            // perso flows that emit DGI 8000, but we don't use them yet.
+            // When F-46 is addressed the stored material will already be here.
             case (short) 0x8000:
-                if (length == 32 && ecPrivateKey != null && rsaPrivateKeyByteSize == 0) {
-                    // 32 bytes with no pending RSA modulus = EC key scalar
-                    try {
-                        ecPrivateKey.setS(buf, offset, length);
-                        ecPrivateKeyLoaded = true;
-                    } catch (CryptoException e) {
-                        ISOException.throwIt((short) 0x6A81);
-                    }
-                } else if (rsaPrivateKeyByteSize == 0) {
-                    // No modulus set yet = RSA modulus
-                    rsaPrivateKeyByteSize = length;
-                    short keyLength = (short) (rsaPrivateKeyByteSize * 8);
-                    switch (keyLength) {
-                        case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
-                        case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
-                        case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
-                        case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
-                        case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
-                        default: ISOException.throwIt((short) 0x6A80);
-                    }
-                    try {
-                        rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
-                        rsaPrivateKey.clearKey();
-                        rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
-                    } catch (CryptoException e) {
-                        rsaPrivateKey = null;
-                        rsaPrivateKeyByteSize = 0;
-                        ISOException.throwIt((short) 0x6A81);
-                    }
-                } else if (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
-                    // Modulus already set — this is the RSA exponent
-                    try {
-                        rsaPrivateKey.setExponent(buf, offset, length);
-                    } catch (CryptoException e) {
-                        rsaPrivateKey = null;
-                        rsaPrivateKeyByteSize = 0;
-                        ISOException.throwIt((short) 0x6A81);
-                    }
+                if (length < 0 || length > (short) symmetricKeyData.length) {
+                    ISOException.throwIt((short) 0x6A80);  // incorrect data field
                 }
+                JCSystem.beginTransaction();
+                Util.arrayCopy(buf, offset, symmetricKeyData, (short) 0, length);
+                symmetricKeyLength = length;
+                JCSystem.commitTransaction();
                 break;
 
             // CPS 8010: Offline PIN block
@@ -526,6 +514,12 @@ public class PaymentApplication extends EmvApplet {
         super();
 
         pinCode = new byte[] { (byte) 0x00, (byte) 0x00 };
+
+        // DGI 8000 symmetric key storage (see F-33 comment on the field).
+        // 32 bytes covers typical bureau block-cipher key material (AES-128 =
+        // 16B, AES-192 = 24B, AES-256 = 32B, 3DES-2key = 16B, 3DES-3key = 24B).
+        symmetricKeyData = new byte[32];
+        symmetricKeyLength = 0;
 
         challenge = JCSystem.makeTransientByteArray((short) 8, JCSystem.CLEAR_ON_DESELECT);
 
