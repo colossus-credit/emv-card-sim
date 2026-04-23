@@ -226,11 +226,6 @@ dependencies {
     testImplementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     testImplementation 'net.jqwik:jqwik:1.8.2'
     implementation 'com.klinec:jcardsim:3.0.6.0'
-    // GlobalPlatform Card API v1.8 — needed for org.globalplatform.Personalization
-    // so the applet can receive SCP-unwrapped STORE DATA from the ISD (CPS §4.3.4).
-    // JAR supplies compile-time classes; exports/ supplies the .exp linkage data
-    // consumed by the JC converter via ant.javacard <import>.
-    compileOnly files('libs/gpapi/gpapi-globalplatform.jar')
     javacardAntTask 'com.github.martinpaljak:ant-javacard:19.05.08'
 }
 
@@ -429,11 +424,6 @@ task cap {
             ? "oracle_javacard_sdks/${jc_sdk}"
             : "build/jckit_merged"
 
-        // GlobalPlatform Card API v1.8 — provides org.globalplatform.Personalization
-        // interface so the ISD can forward SCP-unwrapped STORE DATA to our applets.
-        def gpApiJar = 'libs/gpapi/gpapi-globalplatform.jar'
-        def gpApiExports = 'libs/gpapi/exports'
-
         // 1PAY.SYS.DDF01 (Contact PSE)
         ant.javacard(jckit: effectiveJcKit) {
             cap (
@@ -445,7 +435,6 @@ task cap {
                 classes: "build/classes/java/main",
                 aid: '315041592E000000000000000000') {
                     applet (class: 'emvcardsimulator.PaymentSystemEnvironment', aid: '315041592E5359532E4444463031')
-                    'import' (exps: gpApiExports, jar: gpApiJar)
             }
         }
 
@@ -460,7 +449,6 @@ task cap {
                 classes: "build/classes/java/main",
                 aid: '325041592E000000000000000000') {
                     applet (class: 'emvcardsimulator.ppse.ProximityPaymentSystemEnvironment', aid: '325041592E5359532E4444463031')
-                    'import' (exps: gpApiExports, jar: gpApiJar)
             }
         }
 
@@ -474,7 +462,6 @@ task cap {
                 classes: "build/classes/java/main",
                 aid: paymentapp_cap_aid) {
                     applet (class: 'emvcardsimulator.PaymentApplication', aid: paymentapp_applet_aid)
-                    'import' (exps: gpApiExports, jar: gpApiJar)
             }
         }
 
@@ -489,7 +476,6 @@ task cap {
                 classes: "build/classes/java/main",
                 aid: paymentapp_contactless_cap_aid) {
                     applet (class: 'emvcardsimulator.PaymentApplication', aid: paymentapp_contactless_applet_aid)
-                    'import' (exps: gpApiExports, jar: gpApiJar)
             }
         }
     }

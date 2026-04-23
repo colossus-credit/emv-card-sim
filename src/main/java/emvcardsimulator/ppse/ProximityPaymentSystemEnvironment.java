@@ -1,26 +1,19 @@
 package emvcardsimulator.ppse;
 
-import javacard.framework.AID;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacard.framework.ISO7816;
 import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
-import javacard.framework.Shareable;
 import javacard.framework.Util;
-import org.globalplatform.Personalization;
 
 import emvcardsimulator.BuildConfig;
 
 /**
  * PPSE (Proximity Payment System Environment) for contactless EMV.
  * Responds to SELECT 2PAY.SYS.DDF01 and returns directory entries.
- *
- * <p>Implements {@link Personalization} so that the associated Security Domain
- * can forward SCP-unwrapped STORE DATA to this applet during an
- * {@code INSTALL [for personalization]} session (GP Card Spec v2.3.1 §7.3.2).
  */
-public class ProximityPaymentSystemEnvironment extends Applet implements Personalization {
+public class ProximityPaymentSystemEnvironment extends Applet {
 
     // FCI response data storage
     private byte[] fciData;
@@ -213,17 +206,7 @@ public class ProximityPaymentSystemEnvironment extends Applet implements Persona
     private void processStoreDataPpse(APDU apdu, byte[] buf) {
         short dataOffset = ISO7816.OFFSET_CDATA;
         short dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-        handleStoreDataPayload(buf, dataOffset, dataLen);
-        ISOException.throwIt(ISO7816.SW_NO_ERROR);
-    }
 
-    /**
-     * Core STORE DATA payload handler shared by the direct APDU path and the
-     * ISD-mediated {@link Personalization#processData} path. Both supply a
-     * cleartext DGI payload; SCP unwrapping (if any) has already happened in
-     * the Security Domain before this runs.
-     */
-    private void handleStoreDataPayload(byte[] buf, short dataOffset, short dataLen) {
         if (dataLen < 3) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
@@ -254,32 +237,7 @@ public class ProximityPaymentSystemEnvironment extends Applet implements Persona
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
-    }
 
-    /**
-     * {@link Personalization} entry point — called by the associated Security
-     * Domain after it has unwrapped SCP02/SCP03 on a STORE DATA command
-     * (GP Card Spec v2.3.1 §7.3.2).
-     */
-    public short processData(byte[] inBuffer, short inOffset, short inLength,
-                             byte[] outBuffer, short outOffset) {
-        if (inBuffer[(short) (inOffset + 1)] != (byte) 0xE2) {
-            ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
-        }
-        short lc = (short) (inBuffer[(short) (inOffset + 4)] & 0x00FF);
-        if (inLength != (short) (5 + lc)) {
-            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
-        }
-        handleStoreDataPayload(inBuffer, (short) (inOffset + 5), lc);
-        return 0;
-    }
-
-    /**
-     * Exposes this applet as the {@link Personalization} interface when the
-     * associated Security Domain requests it via
-     * {@link JCSystem#getAppletShareableInterfaceObject}.
-     */
-    public Shareable getShareableInterfaceObject(AID clientAID, byte parameter) {
-        return this;
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
 }

@@ -1,13 +1,11 @@
 package emvcardsimulator;
 
-import javacard.framework.AID;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacardx.apdu.ExtendedLength;
 import javacard.framework.ISO7816;
 import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
-import javacard.framework.Shareable;
 import javacard.framework.Util;
 import javacard.security.KeyBuilder;
 import javacard.security.MessageDigest;
@@ -15,9 +13,8 @@ import javacard.security.RSAPrivateKey;
 import javacard.security.RSAPublicKey;
 import javacard.security.RandomData;
 import javacardx.crypto.Cipher;
-import org.globalplatform.Personalization;
 
-public abstract class EmvApplet extends Applet implements ExtendedLength, Personalization {
+public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected static final short CMD_SET_SETTINGS              = (short) 0x8004;
     protected static final short CMD_SET_EMV_TAG               = (short) 0x8001;
     protected static final short CMD_SET_EMV_TAG_FUZZ          = (short) 0x8011;
@@ -402,6 +399,8 @@ public abstract class EmvApplet extends Applet implements ExtendedLength, Person
      *     CPS §4.3.4 Table 4-9 and §4.3.5.1). No further STORE DATAs accepted after.
      */
     protected void processStoreData(APDU apdu, byte[] buf) {
+        lifecycle.requirePersoPending();
+
         // CPS §4.3.4 Table 4-9: P1 bit 8 = 1 indicates the last STORE DATA command.
         boolean isLastStoreData = (buf[ISO7816.OFFSET_P1] & 0x80) != 0;
 
@@ -412,30 +411,11 @@ public abstract class EmvApplet extends Applet implements ExtendedLength, Person
             dataOffset = ISO7816.OFFSET_CDATA;
         }
 
-        handleStoreDataPayload(buf, dataOffset, totalLen, isLastStoreData);
-        ISOException.throwIt(ISO7816.SW_NO_ERROR);
-    }
-
-    /**
-     * Core STORE DATA payload handler, shared by the direct {@link #process(APDU)}
-     * path and the ISD-mediated {@link Personalization#processData} path.
-     *
-     * <p>Both paths deliver a cleartext DGI stream to this method; the only
-     * difference is whether SCP unwrapping happened in the ISD first.
-     *
-     * @param buf        buffer holding at least {@code dataOffset + dataLen} bytes
-     * @param dataOffset offset of the first DGI byte
-     * @param dataLen    number of payload bytes (post-SCP-unwrap)
-     * @param isLast     P1 bit 8 — triggers lifecycle commit when {@code true}
-     */
-    protected void handleStoreDataPayload(byte[] buf, short dataOffset, short dataLen, boolean isLast) {
-        lifecycle.requirePersoPending();
-
-        if (dataLen < 3) {
+        if (totalLen < 3) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
 
-        short endOffset = (short) (dataOffset + dataLen);
+        short endOffset = (short) (dataOffset + totalLen);
 
         // Process multiple DGIs per command (CPS v2.0 Section 2.4)
         while (dataOffset < endOffset) {
@@ -467,55 +447,11 @@ public abstract class EmvApplet extends Applet implements ExtendedLength, Person
         // CPS §4.3.5.1: the transition may be rejected if the applet detects
         // missing data, in which case 6A86 should be returned. We don't enforce
         // a required-data set yet (that's applet-specific), so we always commit.
-        if (isLast) {
+        if (isLastStoreData) {
             lifecycle.commitPersonalization();
         }
-    }
 
-    /**
-     * {@link org.globalplatform.Personalization} entry point. Called by the
-     * associated Security Domain after it has unwrapped the SCP02/SCP03 secure
-     * channel on a STORE DATA command (GP Card Spec v2.3.1 §7.3.2).
-     *
-     * <p>Per the Personalization javadoc: {@code inBuffer[inOffset]} locates the
-     * CLA byte of the STORE DATA command; {@code inLength} is the length of the
-     * entire command (header + data field). The SD has already verified the
-     * C-MAC and, if the Current Security Level requires it, decrypted the data.
-     *
-     * <p>Returns 0 because STORE DATA response is empty (GP §11.11).
-     */
-    public short processData(byte[] inBuffer, short inOffset, short inLength,
-                             byte[] outBuffer, short outOffset) {
-        // Defensive check: we only support STORE DATA through this path.
-        if (inBuffer[(short) (inOffset + 1)] != (byte) 0xE2) {
-            ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
-        }
-
-        boolean isLast = (inBuffer[(short) (inOffset + 2)] & 0x80) != 0;
-        short lc = (short) (inBuffer[(short) (inOffset + 4)] & 0x00FF);
-        short dataOffset = (short) (inOffset + 5);
-
-        // Guard against a malformed inLength that doesn't match header + Lc.
-        if (inLength != (short) (5 + lc)) {
-            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
-        }
-
-        handleStoreDataPayload(inBuffer, dataOffset, lc, isLast);
-        return 0;
-    }
-
-    /**
-     * Exposes this applet as the {@link Personalization} interface when the
-     * associated Security Domain asks for it via
-     * {@link JCSystem#getAppletShareableInterfaceObject}.
-     *
-     * <p>The SD calls this during an {@code INSTALL [for personalization]}
-     * session targeting our AID. We return {@code this} unconditionally — the
-     * SD has already enforced its own authentication/security-level policy
-     * before getting here, so no further caller check is needed at this layer.
-     */
-    public Shareable getShareableInterfaceObject(AID clientAID, byte parameter) {
-        return this;
+        ISOException.throwIt(ISO7816.SW_NO_ERROR);
     }
 
     /**
