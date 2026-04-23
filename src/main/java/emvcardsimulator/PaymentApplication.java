@@ -616,6 +616,13 @@ public class PaymentApplication extends EmvApplet {
     }
 
     private void processGenerateAc(APDU apdu, byte[] buf) {
+        // F-48: EMV Book 3 §9.1.1 Table 34 — P2 must be '00'. Reject otherwise
+        // with 6A86 rather than silently proceeding, to catch terminals whose
+        // kernel hasn't been updated to the current spec.
+        if (buf[ISO7816.OFFSET_P2] != (byte) 0x00) {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
         byte referenceControlParameter = buf[ISO7816.OFFSET_P1];
         byte requestCryptogramType = (byte) ((short) (referenceControlParameter >> ((byte) 6)) << ((byte) 6));
         // Check if CDA is requested (P1 bit 4 = 0x10)

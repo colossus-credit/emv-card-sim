@@ -78,6 +78,14 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
     protected byte[] defaultReadRecord;
 
+    /**
+     * Maximum EmvTag references per SFI record. Typical EMV records carry
+     * 4–8 tags; 30 gives substantial headroom. If a bureau personalizes a
+     * record with more tags than this, STORE DATA rejects with 6A80 rather
+     * than an AIOOBE-triggered 6F00 (F-25).
+     */
+    protected static final short MAX_TAG_REFS_PER_RECORD = (short) 30;
+
     /** Scratch array for building RecordTemplate refs at STORE DATA time. */
     protected static EmvTag[] tmpTagRefs;
 
@@ -368,6 +376,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 // Create an empty placeholder to hold the reference.
                 ref = new EmvTag(tagId, buf, (short) 0, (short) 0);
             }
+            if (refCount >= MAX_TAG_REFS_PER_RECORD) {
+                ISOException.throwIt((short) 0x6A80);  // too many tags in record
+            }
             tmpTagRefs[refCount] = ref;
             refCount++;
         }
@@ -520,6 +531,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 }
 
                 // Store tag value and capture the direct reference
+                if (refCount >= MAX_TAG_REFS_PER_RECORD) {
+                    ISOException.throwIt((short) 0x6A80);  // too many tags in record
+                }
                 EmvTag ref = EmvTag.setTag(tagId, buf, pos, tLen);
                 tmpTagRefs[refCount] = ref;
                 refCount++;
@@ -843,8 +857,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected EmvApplet() {
         tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         chunkBuffer = new byte[512];  // Persistent buffer for chunked transfers
-        // Max tags per record is ~30 (typical EMV record has 4-8 tags).
-        tmpTagRefs = new EmvTag[30];
+        tmpTagRefs = new EmvTag[MAX_TAG_REFS_PER_RECORD];
 
         // Instantiate lifecycle BEFORE factoryReset() so it can clear it safely.
         lifecycle = new AppletLifecycle();
