@@ -126,6 +126,7 @@ contactless:
         Transaction Type: 1
         Unpredictable Number: 4
         Terminal Identification: 8
+        Merchant Category Code: 2   # 9F15 — ColossusNet spec §7.3
         Merchant Identifier: 15
         Acquirer Identifier: 6
 

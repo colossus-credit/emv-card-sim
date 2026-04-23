@@ -1987,8 +1987,8 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x9F, (byte) 0x01, (byte) 0x06
         }, "CDOL1 (8C)");
 
-        // EC private key via DGI 8203 (explicit EC, since RSA is already loaded)
-        assertStoreData(0x82, 0x03, new byte[] {
+        // EC private key via CPS DGI 8105 (explicit EC, since RSA is already loaded)
+        assertStoreData(0x81, 0x05, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
             (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
@@ -1997,7 +1997,7 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
             (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
             (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
-        }, "EC private key (8203)");
+        }, "EC private key (CPS 8105)");
 
         // Templates
         assertStoreData(0xA0, 0x02, new byte[] { (byte) 0x00, (byte) 0x77 }, "Response template");
@@ -2534,7 +2534,7 @@ public class ColossusPaymentApplicationTest {
     // ========================================================================
 
     @Test
-    @DisplayName("STORE DATA: RSA key via CPS DGIs 8201 (modulus) + 8202 (exponent)")
+    @DisplayName("STORE DATA: RSA key via CPS DGIs 8103 (modulus) + 8101 (exponent)")
     public void testStoreDataCpsRsaKey() throws CardException {
         setupColossusCard();
 
@@ -2542,11 +2542,11 @@ public class ColossusPaymentApplicationTest {
         Arrays.fill(modulus, (byte) 0xAB);
         modulus[0] = (byte) 0x00;
         modulus[1] = (byte) 0xB4;
-        assertStoreData(0x82, 0x01, modulus, "RSA modulus (CPS 8201)");
+        assertStoreData(0x81, 0x03, modulus, "RSA modulus (CPS 8103)");
 
         byte[] exponent = new byte[128];
         exponent[127] = (byte) 0x03;
-        assertStoreData(0x82, 0x02, exponent, "RSA exponent (CPS 8202)");
+        assertStoreData(0x81, 0x01, exponent, "RSA exponent (CPS 8101)");
 
         // Verify via diagnostic
         ResponseAPDU response = SmartCard.transmitCommand(new byte[] {
@@ -2556,15 +2556,15 @@ public class ColossusPaymentApplicationTest {
         byte[] diag = response.getData();
         assertEquals((byte) 0x01, diag[0], "RSA key should be present");
         assertEquals((byte) 0x01, diag[3], "RSA key should be initialized");
-        System.out.println("  RSA key via CPS 8201/8202: OK");
+        System.out.println("  RSA key via CPS 8103/8101: OK");
     }
 
     @Test
-    @DisplayName("STORE DATA: EC key via CPS DGI 8203")
+    @DisplayName("STORE DATA: EC key via CPS DGI 8105")
     public void testStoreDataCpsEcKey() throws CardException {
         setupColossusCard();
 
-        assertStoreData(0x82, 0x03, new byte[] {
+        assertStoreData(0x81, 0x05, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, (byte) 0x33, (byte) 0x41, (byte) 0x2E,
             (byte) 0xBF, (byte) 0x9E, (byte) 0x0E, (byte) 0x34,
@@ -2573,21 +2573,21 @@ public class ColossusPaymentApplicationTest {
             (byte) 0x72, (byte) 0x66, (byte) 0xF0, (byte) 0x5D,
             (byte) 0xA5, (byte) 0x00, (byte) 0x16, (byte) 0x00,
             (byte) 0xC2, (byte) 0xE3, (byte) 0x51, (byte) 0x62
-        }, "EC scalar (CPS 8203)");
-        System.out.println("  EC key via CPS 8203: OK");
+        }, "EC scalar (CPS 8105)");
+        System.out.println("  EC key via CPS 8105: OK");
     }
 
     @Test
-    @DisplayName("STORE DATA: RSA exponent via 8202 without modulus should fail")
+    @DisplayName("STORE DATA: RSA exponent via 8101 without modulus should fail")
     public void testStoreDataCpsRsaExponentWithoutModulus() throws CardException {
         setupColossusCard();
 
         byte[] exponent = new byte[128];
         exponent[127] = (byte) 0x03;
         ResponseAPDU response = SmartCard.transmitCommand(
-            buildStoreDataExtended(0x82, 0x02, exponent));
+            buildStoreDataExtended(0x81, 0x01, exponent));
         assertEquals((short) 0x6985, (short) response.getSW(),
-            "RSA exponent via 8202 without modulus should return 6985");
+            "RSA exponent via 8101 without modulus should return 6985");
     }
 
     @Test
@@ -3098,8 +3098,8 @@ public class ColossusPaymentApplicationTest {
         setEmvTagDev(0x9F, 0x46, dummyCert, "ICC PK Cert");
         setEmvTagDev(0x9F, 0x48, dummyRemainder, "ICC PK Remainder");
 
-        // EC private key
-        assertStoreData(0x82, 0x03, new byte[] {
+        // EC private key via CPS DGI 8105 (Annex A.2 Table A-11b)
+        assertStoreData(0x81, 0x05, new byte[] {
             (byte) 0x7E, (byte) 0xAD, (byte) 0xBA, (byte) 0x91,
             (byte) 0xC5, 0x33, 0x41, 0x2E,
             (byte) 0xBF, (byte) 0x9E, 0x0E, 0x34,
@@ -3108,7 +3108,7 @@ public class ColossusPaymentApplicationTest {
             0x72, 0x66, (byte) 0xF0, 0x5D,
             (byte) 0xA5, 0x00, 0x16, 0x00,
             (byte) 0xC2, (byte) 0xE3, 0x51, 0x62
-        }, "EC key");
+        }, "EC key (CPS 8105)");
 
         // Templates
         assertStoreData(0xA0, 0x02, new byte[] { 0x00, (byte) 0x80 }, "Response template=Format1");

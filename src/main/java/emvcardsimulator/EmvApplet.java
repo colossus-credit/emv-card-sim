@@ -531,9 +531,14 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             short recordKey = (short) ((recordNo << 8) | (sfi << 3));
             RecordTemplate.setTemplate(recordKey, tmpTagRefs, refCount);
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
-                   || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
-            // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
-            // App-specific: 8201 = RSA modulus, 8202 = RSA exponent, 8203 = EC scalar
+                   || dgi == (short) 0x8101 || dgi == (short) 0x8103 || dgi == (short) 0x8105) {
+            // CPS v2.0 standard DGIs:
+            //   8000 = symmetric block cipher keys (Annex A.2 Table A-2)
+            //   8010 = offline PIN block
+            //   9010 = PIN try counter data
+            //   8101 = ICC Private Key exponent (Table A-8)
+            //   8103 = ICC Modulus (Table A-10)
+            //   8105 = ICC ECC Secret Key (Table A-11b)
             processStoreDataSettings(dgi, buf, offset, length);
         } else if (dgi == (short) 0x9000) {
             // CPS DGI 9000: Key Check Values — acknowledged but not verified

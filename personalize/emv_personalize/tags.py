@@ -48,6 +48,7 @@ _TAG_DB: dict[int, list[str]] = {
     0x9F10: ["Issuer Application Data", "IAD"],
     0x9F11: ["Issuer Code Table Index"],
     0x9F12: ["Application Preferred Name"],
+    0x9F15: ["Merchant Category Code", "MCC"],
     0x9F16: ["Merchant Identifier"],
     0x9F1A: ["Terminal Country Code"],
     0x9F1C: ["Terminal Identification"],
