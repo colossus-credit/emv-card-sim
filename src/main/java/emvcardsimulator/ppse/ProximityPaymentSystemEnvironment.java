@@ -7,11 +7,19 @@ import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
 import javacard.framework.Util;
 
+import emvcardsimulator.AppletLifecycle;
 import emvcardsimulator.BuildConfig;
 
 /**
  * PPSE (Proximity Payment System Environment) for contactless EMV.
  * Responds to SELECT 2PAY.SYS.DDF01 and returns directory entries.
+ *
+ * <p>F-60 / CPS v2.0 §4.3.4: PPSE enforces the same personalization lifecycle
+ * as PSE and PaymentApplication (PERSO_PENDING → PERSO_DONE on last STORE DATA
+ * with P1 bit 8). Post-commit writes return 6985. Supplements the GP ISD
+ * secure-channel layer so that a card with compromised or default ISD keys
+ * still can't have its directory entry rewritten to repoint at a malicious
+ * AID once personalization is finalized.
  */
 public class ProximityPaymentSystemEnvironment extends Applet {
 
@@ -26,6 +34,10 @@ public class ProximityPaymentSystemEnvironment extends Applet {
     // Temp buffer
     private byte[] tmpBuffer;
 
+    // Personalization lifecycle: PERSO_PENDING at install, PERSO_DONE after
+    // the last STORE DATA (P1 bit 8 = 1, CPS §4.3.4 Table 4-9).
+    private AppletLifecycle lifecycle;
+
 
     public static void install(byte[] buffer, short offset, byte length) {
         (new ProximityPaymentSystemEnvironment()).register();
@@ -37,6 +49,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
         fciLength = 0;
         directoryEntry = new byte[64];
         directoryEntryLength = 0;
+        lifecycle = new AppletLifecycle();
     }
 
     public void process(APDU apdu) {
@@ -74,6 +87,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
                 case (short) 0x8005:  // FACTORY_RESET
                     fciLength = 0;
                     directoryEntryLength = 0;
+                    lifecycle.resetForTesting();   // F-60: return to PERSO_PENDING
                     ISOException.throwIt(ISO7816.SW_NO_ERROR);
                     return;
                 default:
@@ -167,6 +181,8 @@ public class ProximityPaymentSystemEnvironment extends Applet {
      * Command: 80 01 00 61 LC <4F AID, 50 label, 87 priority>
      */
     private void processSetDirectoryEntry(APDU apdu, byte[] buf) {
+        lifecycle.requirePersoPending();   // F-60: reject post-commit writes (6985)
+
         short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
         if (p1p2 != (short) 0x0061) {
             ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -188,6 +204,8 @@ public class ProximityPaymentSystemEnvironment extends Applet {
      * Command: 80 02 00 00 LC <6F ...>
      */
     private void processSetFci(APDU apdu, byte[] buf) {
+        lifecycle.requirePersoPending();   // F-60: reject post-commit writes (6985)
+
         short len = (short) (buf[ISO7816.OFFSET_LC] & 0xFF);
         if (len > 128) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
@@ -202,8 +220,14 @@ public class ProximityPaymentSystemEnvironment extends Applet {
     /**
      * Process GP STORE DATA (INS 0xE2) for PPSE personalization.
      * DGI D001 = directory entry, DGI D002 = complete FCI.
+     * F-60: lifecycle-gated — after the last STORE DATA (P1 bit 8 = 1, CPS
+     * §4.3.4 Table 4-9) the applet transitions to PERSO_DONE and subsequent
+     * STORE DATAs return 6985 per CPS §4.3.5.4.
      */
     private void processStoreDataPpse(APDU apdu, byte[] buf) {
+        lifecycle.requirePersoPending();
+        boolean isLast = (buf[ISO7816.OFFSET_P1] & 0x80) != 0;
+
         short dataOffset = ISO7816.OFFSET_CDATA;
         short dataLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
 
@@ -234,8 +258,14 @@ public class ProximityPaymentSystemEnvironment extends Applet {
                 Util.arrayCopy(buf, dgiDataOffset, fciData, (short) 0, dgiDataLen);
                 fciLength = dgiDataLen;
                 break;
+            case (short) 0x7FFF:  // CPS §4.3.5.2 integrity MAC placeholder — accept as no-op
+                break;
             default:
                 ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
+        if (isLast) {
+            lifecycle.commitPersonalization();
         }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
