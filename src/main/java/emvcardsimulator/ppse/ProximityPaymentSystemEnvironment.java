@@ -7,7 +7,6 @@ import javacard.framework.ISOException;
 import javacard.framework.JCSystem;
 import javacard.framework.Util;
 
-import emvcardsimulator.AppletLifecycle;
 import emvcardsimulator.BuildConfig;
 
 /**
@@ -15,13 +14,25 @@ import emvcardsimulator.BuildConfig;
  * Responds to SELECT 2PAY.SYS.DDF01 and returns directory entries.
  *
  * <p>F-60 / CPS v2.0 §4.3.4: PPSE enforces the same personalization lifecycle
- * as PSE and PaymentApplication (PERSO_PENDING → PERSO_DONE on last STORE DATA
- * with P1 bit 8). Post-commit writes return 6985. Supplements the GP ISD
- * secure-channel layer so that a card with compromised or default ISD keys
- * still can't have its directory entry rewritten to repoint at a malicious
- * AID once personalization is finalized.
+ * semantics as PSE and PaymentApplication (PERSO_PENDING → PERSO_DONE on last
+ * STORE DATA with P1 bit 8). Post-commit writes return 6985. Supplements the
+ * GP ISD secure-channel layer so that a card with compromised or default ISD
+ * keys still can't have its directory entry rewritten to repoint at a
+ * malicious AID once personalization is finalized.
+ *
+ * <p>Lifecycle state is inlined (not imported from emvcardsimulator.AppletLifecycle)
+ * because PPSE lives in its own CAP package (emvcardsimulator.ppse) and the JC
+ * converter would otherwise need a cross-package link to the
+ * emvcardsimulator.exp export file. The state machine here is byte-identical
+ * to AppletLifecycle: one persistent byte, PERSO_PENDING at install,
+ * transitions once to PERSO_DONE on commit.
  */
 public class ProximityPaymentSystemEnvironment extends Applet {
+
+    // Inlined lifecycle state values (match emvcardsimulator.AppletLifecycle)
+    private static final byte PERSO_PENDING = (byte) 0x01;
+    private static final byte PERSO_DONE    = (byte) 0x07;
+    private static final short SW_PERSO_DONE = (short) 0x6985;  // CPS §4.3.5.4
 
     // FCI response data storage
     private byte[] fciData;
@@ -34,9 +45,9 @@ public class ProximityPaymentSystemEnvironment extends Applet {
     // Temp buffer
     private byte[] tmpBuffer;
 
-    // Personalization lifecycle: PERSO_PENDING at install, PERSO_DONE after
-    // the last STORE DATA (P1 bit 8 = 1, CPS §4.3.4 Table 4-9).
-    private AppletLifecycle lifecycle;
+    // Personalization lifecycle: single persistent byte, PERSO_PENDING after
+    // install, PERSO_DONE after the last STORE DATA (P1 bit 8 = 1).
+    private byte[] lifecycleState;
 
 
     public static void install(byte[] buffer, short offset, byte length) {
@@ -49,7 +60,28 @@ public class ProximityPaymentSystemEnvironment extends Applet {
         fciLength = 0;
         directoryEntry = new byte[64];
         directoryEntryLength = 0;
-        lifecycle = new AppletLifecycle();
+        lifecycleState = new byte[] { PERSO_PENDING };
+    }
+
+    /** Throws 6985 if personalization has already committed (CPS §4.3.5.4). */
+    private void requirePersoPending() {
+        if (lifecycleState[0] != PERSO_PENDING) {
+            ISOException.throwIt(SW_PERSO_DONE);
+        }
+    }
+
+    /** Atomically commit lifecycle to PERSO_DONE. */
+    private void commitPersonalization() {
+        JCSystem.beginTransaction();
+        lifecycleState[0] = PERSO_DONE;
+        JCSystem.commitTransaction();
+    }
+
+    /** Reset to PERSO_PENDING for dev/test via factory reset. */
+    private void resetLifecycleForTesting() {
+        JCSystem.beginTransaction();
+        lifecycleState[0] = PERSO_PENDING;
+        JCSystem.commitTransaction();
     }
 
     public void process(APDU apdu) {
@@ -87,7 +119,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
                 case (short) 0x8005:  // FACTORY_RESET
                     fciLength = 0;
                     directoryEntryLength = 0;
-                    lifecycle.resetForTesting();   // F-60: return to PERSO_PENDING
+                    resetLifecycleForTesting();   // F-60: return to PERSO_PENDING
                     ISOException.throwIt(ISO7816.SW_NO_ERROR);
                     return;
                 default:
@@ -181,7 +213,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
      * Command: 80 01 00 61 LC <4F AID, 50 label, 87 priority>
      */
     private void processSetDirectoryEntry(APDU apdu, byte[] buf) {
-        lifecycle.requirePersoPending();   // F-60: reject post-commit writes (6985)
+        requirePersoPending();   // F-60: reject post-commit writes (6985)
 
         short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
         if (p1p2 != (short) 0x0061) {
@@ -204,7 +236,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
      * Command: 80 02 00 00 LC <6F ...>
      */
     private void processSetFci(APDU apdu, byte[] buf) {
-        lifecycle.requirePersoPending();   // F-60: reject post-commit writes (6985)
+        requirePersoPending();   // F-60: reject post-commit writes (6985)
 
         short len = (short) (buf[ISO7816.OFFSET_LC] & 0xFF);
         if (len > 128) {
@@ -225,7 +257,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
      * STORE DATAs return 6985 per CPS §4.3.5.4.
      */
     private void processStoreDataPpse(APDU apdu, byte[] buf) {
-        lifecycle.requirePersoPending();
+        requirePersoPending();
         boolean isLast = (buf[ISO7816.OFFSET_P1] & 0x80) != 0;
 
         short dataOffset = ISO7816.OFFSET_CDATA;
@@ -265,7 +297,7 @@ public class ProximityPaymentSystemEnvironment extends Applet {
         }
 
         if (isLast) {
-            lifecycle.commitPersonalization();
+            commitPersonalization();
         }
 
         ISOException.throwIt(ISO7816.SW_NO_ERROR);
