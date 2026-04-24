@@ -38,6 +38,12 @@ public class PaymentApplication extends EmvApplet {
     private byte[] pinCode = null;
     private boolean useRandom = true;
     private boolean isContactInterface = true; // default contact; set at SELECT from AID
+    // Tracks whether the 1st GENERATE AC of this transaction has been issued.
+    // Per EMV Book 2 §8.1.1 and Book 3 §6.5.5, the ATC increments once per
+    // transaction (at 1st GenAC) and the same ATC is used for 2nd GenAC. The
+    // ECDSA signature is also produced only on 1st GenAC; 2nd GenAC returns the
+    // same signature tags. Reset on SELECT (transient, cleared on deselect).
+    private boolean firstGenAcSeen = false;
 
     // P-256 (secp256r1) domain parameters
     private static final byte[] EC_P256_P = {
@@ -561,12 +567,16 @@ public class PaymentApplication extends EmvApplet {
         ecPrivateKeyLoaded = false;
         rsaPrivateKey = null;
         rsaPrivateKeyByteSize = 0;
+        firstGenAcSeen = false;
     }
 
     private void processSelect(APDU apdu, byte[] buf) {
         // Reset stored data for new transaction
         storedCdol1Length = 0;
         storedPdolLength = 0;
+        // New transaction scope: ATC increments and ECDSA signing happen on
+        // the next 1st GenAC; 2nd GenAC will reuse the same ATC.
+        firstGenAcSeen = false;
 
         // Detect contact vs contactless from the SELECT AID.
         // Contactless AID ends with 0x1010 (e.g. A0000009511010).
@@ -618,15 +628,29 @@ public class PaymentApplication extends EmvApplet {
 
     private void processGenerateAc(APDU apdu, byte[] buf) {
         byte referenceControlParameter = buf[ISO7816.OFFSET_P1];
-        byte requestCryptogramType = (byte) ((short) (referenceControlParameter >> ((byte) 6)) << ((byte) 6));
         // Check if CDA is requested (P1 bit 4 = 0x10)
         // CDA requested when P1 bits 5-4 = '10' (0x10). Reject RFU '11' (0x18).
         boolean cdaRequested = ((referenceControlParameter & (byte) 0x18) == (byte) 0x10);
 
-        // Online-only card: always return ARQC regardless of terminal request
-        // Terminal may ask for TC (offline approve) or AAC (decline), but we
-        // always force online authorization via ARQC
-        byte responseCryptogramType = (byte) 0x80; // ARQC
+        // Determine response cryptogram type (CID) per EMV Book 3 §6.5.5.4.
+        // 1st GenAC: online-only card always returns ARQC (force online).
+        // 2nd GenAC: must return TC or AAC (never ARQC); honor terminal's P1
+        //   request because this card performs no card-side risk management
+        //   and the issuer has already decided via ARC (carried in CDOL2).
+        //   Cryptogram hierarchy: TC > ARQC > AAC. Card may return equal or
+        //   lower than requested, never higher.
+        byte responseCryptogramType;
+        byte requestedType = (byte) (referenceControlParameter & (byte) 0xC0);
+        if (!firstGenAcSeen) {
+            responseCryptogramType = (byte) 0x80; // ARQC on 1st
+        } else {
+            if (requestedType == (byte) 0x40) {
+                responseCryptogramType = (byte) 0x40; // TC (terminal requested TC)
+            } else {
+                // AAC for explicit AAC request (0x00) OR illegal ARQC-on-2nd (0x80)
+                responseCryptogramType = (byte) 0x00;
+            }
+        }
 
         // CDA requires both RSA (for SDAD) and EC (for ECDSA) keys
         boolean canPerformCda = (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0 && ecPrivateKeyLoaded);
@@ -650,18 +674,39 @@ public class PaymentApplication extends EmvApplet {
         tmpBuffer[0] = cid;
         EmvTag.setTag((short) 0x9F27, tmpBuffer, (short) 0, (byte) 1);
 
-        incrementApplicationTransactionCounter();
-
-        // Generate Application Cryptogram (9F26)
         short cdolLen = (short) (buf[ISO7816.OFFSET_LC] & 0x00FF);
-        generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
 
-        // Contact-only: sign ATC||CDOL at GenAC time (vs contactless which signs
-        // ATC||PDOL at GPO). CDOL covers the full transaction context — terminal
-        // risk management results, UN, etc. — that PDOL alone doesn't carry.
-        if (isContactInterface && ecPrivateKeyLoaded && cdolLen > 0) {
-            generateEcdsaAtGenAc(buf, ISO7816.OFFSET_CDATA, cdolLen);
+        // Capture before we flip the flag so the response builder knows
+        // whether this is the 1st or 2nd GenAC call.
+        boolean isFirstGenAcCall = !firstGenAcSeen;
+
+        // 1st GenAC only: increment ATC, compute AC, sign ECDSA (for contact).
+        // Per EMV Book 2 §8.1.1, the session key — and thus the AC — is derived
+        // from the ATC; a single transaction must use a single ATC across 1st
+        // and 2nd GenAC. Per EMV Book 3 §6.5.5, the card's signatures / MAC
+        // are produced at 1st GenAC; 2nd GenAC returns the same tag values
+        // (with only CID reflecting the terminal's completion decision).
+        if (isFirstGenAcCall) {
+            incrementApplicationTransactionCounter();
+
+            // Generate Application Cryptogram (9F26) — contact overwrites with
+            // ECDSA s[0:8] below; contactless keeps the SHA-1 placeholder.
+            generateApplicationCryptogram(buf, ISO7816.OFFSET_CDATA, cdolLen);
+
+            // Contact-only: sign ATC||CDOL at GenAC time (vs contactless which
+            // signs ATC||PDOL at GPO). CDOL covers the full transaction context
+            // — terminal risk management results, UN, etc. — that PDOL alone
+            // doesn't carry.
+            if (isContactInterface && ecPrivateKeyLoaded && cdolLen > 0) {
+                generateEcdsaAtGenAc(buf, ISO7816.OFFSET_CDATA, cdolLen);
+            }
+
+            firstGenAcSeen = true;
         }
+        // 2nd GenAC: ATC unchanged, 9F26/9F10 still hold values from 1st
+        // GenAC. Only 9F27 (CID) was updated above to reflect TC/AAC.
+        // ECDSA-payload tags (4F/84/5F2D) are trimmed from the 2nd GenAC
+        // response — see sendGenerateAcResponseNoCda().
 
         // CDA path: ECDSA already done at GPO (r in 9F10, s in 9F6E, ICC_DN in 9F4C).
         // Just build SDAD — its TDH includes 9F10 (ECDSA r). ICC_DN reused from 9F4C.
@@ -674,7 +719,7 @@ public class PaymentApplication extends EmvApplet {
             EmvApplet.logAndThrow((short) 0x6985);
         } else {
             // No CDA — plain response with 9F27, 9F36, 9F26, 9F10
-            sendGenerateAcResponseNoCda(apdu, buf);
+            sendGenerateAcResponseNoCda(apdu, buf, isFirstGenAcCall);
         }
 
         // Scrub tmpBuffer — crypto intermediates must not linger
@@ -711,18 +756,23 @@ public class PaymentApplication extends EmvApplet {
 
     /**
      * Send GENERATE AC response without CDA (no 9F4B).
-     * Contact: manual build with FFC6 (ECDSA s for RapidConnect).
-     * Contactless: original template path [9F27, 9F36, 9F26, 9F10].
+     * Contact 1st GenAC: 9F27 + 9F36 + 9F26 + 9F10 + 4F + 84 + 5F2D
+     *   (extraneous 4F/84/5F2D carry ECDSA s halves for DE55 forwarding).
+     * Contact 2nd GenAC: 9F27 + 9F36 + 9F26 + 9F10 only
+     *   (spec-clean per EMV Book 3 §6.5.5 Table 14; ECDSA s already
+     *   captured by processor on 1st GenAC — no need to re-send and
+     *   strict kernels may reject non-standard tags on 2nd GenAC).
+     * Contactless: original template path (contactless uses CDA, not this path).
      */
-    private void sendGenerateAcResponseNoCda(APDU apdu, byte[] buf) {
+    private void sendGenerateAcResponseNoCda(APDU apdu, byte[] buf, boolean isFirstGenAcCall) {
         if (!isContactInterface) {
             // Contactless: unchanged template path
             sendResponseTemplate(apdu, buf, responseTemplateGenerateAc);
             return;
         }
 
-        // Contact: ECDSA signature distributed across standard EMV tags
-        // r[0:32] → 9F10, s[0:8] → 9F26, s[8:24] → 4F, s[24:32] → 5F2D
+        // Contact: spec-mandated core tags present on both 1st and 2nd GenAC.
+        // ECDSA mapping: r[0:32] → 9F10 (IAD), s[0:8] → 9F26 (AC).
         short offset = (short) 0;
 
         EmvTag cidTag = EmvTag.findTag((short) 0x9F27);
@@ -737,18 +787,24 @@ public class PaymentApplication extends EmvApplet {
         EmvTag iadTag = EmvTag.findTag((short) 0x9F10);    // r[0:32]
         if (iadTag != null) { offset = iadTag.copyToArray(tmpBuffer, offset); }
 
-        EmvTag aidTag = EmvTag.findTag((short) 0x004F);    // s[8:24]
-        if (aidTag != null) { offset = aidTag.copyToArray(tmpBuffer, offset); }
+        // ECDSA s[8:24] and s[24:32] are only emitted on the 1st GenAC — the
+        // processor forwards the 1st-GenAC 77 template in ISO 8583 DE55, so
+        // on-chain verification already has them. Omitting from 2nd GenAC
+        // keeps the response aligned with EMV Book 3 §6.5.5 Table 14.
+        if (isFirstGenAcCall) {
+            EmvTag aidTag = EmvTag.findTag((short) 0x004F);    // s[8:24]
+            if (aidTag != null) { offset = aidTag.copyToArray(tmpBuffer, offset); }
 
-        // 84 (DF Name) double-write with the same s[8:24] bytes.
-        // Direct TLV write — don't touch tag store (would corrupt FCI on next SELECT).
-        tmpBuffer[offset++] = (byte) 0x84;
-        tmpBuffer[offset++] = (byte) 0x10;
-        Util.arrayCopyNonAtomic(ecdsaRawSig, (short) 40, tmpBuffer, offset, (short) 16);
-        offset += (short) 16;
+            // 84 (DF Name) double-write with the same s[8:24] bytes.
+            // Direct TLV write — don't touch tag store (would corrupt FCI on next SELECT).
+            tmpBuffer[offset++] = (byte) 0x84;
+            tmpBuffer[offset++] = (byte) 0x10;
+            Util.arrayCopyNonAtomic(ecdsaRawSig, (short) 40, tmpBuffer, offset, (short) 16);
+            offset += (short) 16;
 
-        EmvTag langTag = EmvTag.findTag((short) 0x5F2D);   // s[24:32]
-        if (langTag != null) { offset = langTag.copyToArray(tmpBuffer, offset); }
+            EmvTag langTag = EmvTag.findTag((short) 0x5F2D);   // s[24:32]
+            if (langTag != null) { offset = langTag.copyToArray(tmpBuffer, offset); }
+        }
 
         EmvTag.setTag((short) 0x0077, tmpBuffer, (short) 0, offset);
         sendResponse(apdu, buf, (short) 0x0077);

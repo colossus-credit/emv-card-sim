@@ -20,21 +20,15 @@ keys:
   keys_dir: ../../keys/capk_1984_mixed   # CAPK 92 (RSA-1984) in capk.xml, ICC/SDAD RSA-1024
 
 tags:
-  # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---
+  # --- DOL definitions ---
+  # DDOL (tag 9F49) is personalized for DDA compatibility but is NOT exercised
+  # on either interface: AIP=1000 on contact (no ODA) and contactless uses CDA,
+  # not DDA. Kept minimal to reflect "unused" status. MCC and other fields are
+  # only in the DOLs that are actually signed over (CDOL1/CDOL2/PDOL).
   DDOL:
     type: dol
     value:
-      Amount Authorised: 6
-      Amount Other: 6
-      Terminal Country Code: 2
-      Terminal Verification Results: 5
-      Transaction Currency Code: 2
-      Transaction Date: 3
-      Transaction Type: 1
       Unpredictable Number: 4
-      Terminal Identification: 8
-      Merchant Identifier: 15
-      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -48,6 +42,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -55,6 +50,7 @@ tags:
     type: dol
     value:
       Authorisation Response Code: 2
+      Issuer Authentication Data: 10
       Amount Authorised: 6
       Amount Other: 6
       Terminal Country Code: 2
@@ -64,11 +60,12 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
   # --- Simple tag values ---
-  Application Interchange Profile: "0000"  # Online-only, no ODA/CVM/TRM/IssuerAuth
+  Application Interchange Profile: "1000"  # CVM supported (b5); no ODA/TRM/IssuerAuth
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
@@ -99,6 +96,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -163,5 +161,5 @@ cvm_list:
   amount_x: 0
   amount_y: 0
   rules:
-    - [0x42, 0x03]   # Online PIN, if terminal supports it
-    - [0x1F, 0x00]   # No CVM required, always
+    - [0x02, 0x03]   # Online PIN (fail cardholder verification if unsuccessful), if terminal supports it
+    # No fallback — if terminal cannot do online PIN, CVM fails and TVR flags cardholder-verification-not-successful

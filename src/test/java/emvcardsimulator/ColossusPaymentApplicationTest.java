@@ -3,6 +3,7 @@ package emvcardsimulator;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -2333,7 +2334,7 @@ public class ColossusPaymentApplicationTest {
     }
 
     @Test
-    @DisplayName("Double GENERATE AC should increment ATC twice")
+    @DisplayName("Double GENERATE AC: ATC stays same across 1st and 2nd per EMV Book 2 §8.1.1")
     public void testDoubleGenerateAc() throws CardException {
         setupColossusCard();
 
@@ -2393,8 +2394,10 @@ public class ColossusPaymentApplicationTest {
         }
         assertTrue(atc1 > 0, "Should find ATC in first response");
 
-        // Second GENERATE AC
-        ResponseAPDU response2 = SmartCard.transmitCommand(genAcCmd);
+        // Second GENERATE AC — terminal requests TC (P1 bits 7-6 = 01)
+        byte[] genAc2 = genAcCmd.clone();
+        genAc2[2] = (byte) 0x40; // TC request
+        ResponseAPDU response2 = SmartCard.transmitCommand(genAc2);
         assertEquals(ISO7816.SW_NO_ERROR, (short) response2.getSW(), "Second GENERATE AC should succeed");
 
         // Extract ATC from second response
@@ -2407,8 +2410,11 @@ public class ColossusPaymentApplicationTest {
             }
         }
         assertTrue(atc2 > 0, "Should find ATC in second response");
-        assertEquals(atc1 + 1, atc2, "ATC should increment between GENERATE AC calls");
-        System.out.println("  ATC incremented: " + atc1 + " -> " + atc2);
+        // Per EMV Book 2 §8.1.1: session key derives from ATC; single transaction
+        // uses single ATC across 1st and 2nd GenAC. Also per EMV Book 3 §6.5.5,
+        // the ATC is maintained by the ICC and increments once per transaction.
+        assertEquals(atc1, atc2, "ATC should stay the same between 1st and 2nd GenAC within one transaction");
+        System.out.println("  ATC unchanged across 1st/2nd GenAC: " + atc1 + " == " + atc2);
     }
 
     @Test
@@ -3599,6 +3605,113 @@ public class ColossusPaymentApplicationTest {
         // Contact-only distributed tags should NOT be present
         // (4F and 5F2D should not appear in contactless GenAC as signature carriers)
         System.out.println("  Contactless GenAC: template path, no distributed ECDSA tags");
+    }
+
+    // ========================================================================
+    // 2nd GenAC compliance tests (EMV Book 2 §8.1.1 + Book 3 §6.5.5.4)
+    // ========================================================================
+
+    /**
+     * Run contact 1st GenAC then 2nd GenAC with the given P1, return both
+     * response payloads for assertions.
+     */
+    private byte[][] runContactDoubleGenAc(byte secondGenAcP1) throws Exception {
+        byte[] contactAid = new byte[] {
+            (byte) 0xA0, (byte) 0x00, (byte) 0x00, (byte) 0x09,
+            (byte) 0x51, (byte) 0x00, (byte) 0x01
+        };
+        byte[] first = runContactGenAcFlow(contactAid);
+
+        // Issue a 2nd GenAC on the same transaction (no SELECT/GPO in between)
+        byte[] cdolData = new byte[58];
+        cdolData[4] = (byte) 0x10; cdolData[5] = (byte) 0x00;
+        byte[] genAc2 = new byte[5 + cdolData.length];
+        genAc2[0] = (byte) 0x80;
+        genAc2[1] = (byte) 0xAE;
+        genAc2[2] = secondGenAcP1;
+        genAc2[3] = (byte) 0x00;
+        genAc2[4] = (byte) cdolData.length;
+        System.arraycopy(cdolData, 0, genAc2, 5, cdolData.length);
+        ResponseAPDU response = SmartCard.transmitCommand(genAc2);
+        assertEquals(ISO7816.SW_NO_ERROR, (short) response.getSW(),
+            "2nd GenAC should succeed");
+        return new byte[][] { first, response.getData() };
+    }
+
+    @Test
+    @DisplayName("2nd GenAC (contact): ATC is the same as 1st GenAC")
+    public void testContactSecondGenAcReusesFirstAtc() throws Exception {
+        byte[][] responses = runContactDoubleGenAc((byte) 0x40); // TC request
+        byte[] atc1 = findTagInResponse(responses[0], 0x9F, 0x36);
+        byte[] atc2 = findTagInResponse(responses[1], 0x9F, 0x36);
+        assertNotNull(atc1, "1st GenAC must contain ATC");
+        assertNotNull(atc2, "2nd GenAC must contain ATC");
+        assertArrayEquals(atc1, atc2,
+            "ATC must stay the same across 1st and 2nd GenAC (EMV Book 2 §8.1.1)");
+        System.out.println("  2nd GenAC reuses ATC: OK");
+    }
+
+    @Test
+    @DisplayName("2nd GenAC (contact): terminal P1=TC → CID=0x40 TC")
+    public void testContactSecondGenAcReturnsTC() throws Exception {
+        byte[][] responses = runContactDoubleGenAc((byte) 0x40); // TC
+        byte[] cid = findTagInResponse(responses[1], 0x9F, 0x27);
+        assertNotNull(cid, "2nd GenAC must contain CID");
+        assertEquals((byte) 0x40, cid[0],
+            "2nd GenAC CID must be TC (0x40) when terminal requested TC");
+        System.out.println("  2nd GenAC CID=TC when requested: OK");
+    }
+
+    @Test
+    @DisplayName("2nd GenAC (contact): terminal P1=AAC → CID=0x00 AAC")
+    public void testContactSecondGenAcReturnsAAC() throws Exception {
+        byte[][] responses = runContactDoubleGenAc((byte) 0x00); // AAC
+        byte[] cid = findTagInResponse(responses[1], 0x9F, 0x27);
+        assertNotNull(cid, "2nd GenAC must contain CID");
+        assertEquals((byte) 0x00, cid[0],
+            "2nd GenAC CID must be AAC (0x00) when terminal requested AAC");
+        System.out.println("  2nd GenAC CID=AAC when requested: OK");
+    }
+
+    @Test
+    @DisplayName("2nd GenAC (contact): 9F26/9F10 persist, 4F/84/5F2D trimmed (spec-clean)")
+    public void testContactSecondGenAcTrimsEcdsaPayloadTags() throws Exception {
+        byte[][] responses = runContactDoubleGenAc((byte) 0x40);
+
+        // 9F26 (AC = ECDSA s[0:8]) and 9F10 (IAD = ECDSA r) are in the
+        // EMV Book 3 §6.5.5 Table 14 mandatory 77 response set for both
+        // 1st and 2nd GenAC. No re-signing on 2nd → bytes are identical.
+        for (int[] tag : new int[][]{{0x9F, 0x10}, {0x9F, 0x26}}) {
+            byte[] v1 = findTagInResponse(responses[0], tag[0], tag[1]);
+            byte[] v2 = findTagInResponse(responses[1], tag[0], tag[1]);
+            assertNotNull(v1, "1st GenAC must contain tag");
+            assertNotNull(v2, "2nd GenAC must contain tag");
+            assertArrayEquals(v1, v2,
+                "Tag " + Integer.toHexString(tag[0]) + Integer.toHexString(tag[1])
+                + " must be identical on 1st and 2nd GenAC (no re-sign)");
+        }
+
+        // 4F (s[8:24]), 84 (duplicate s[8:24]), and 5F2D (s[24:32]) are the
+        // ECDSA-payload-only tags. The processor captures them from the 1st
+        // GenAC 77 template via DE55; the 2nd GenAC doesn't need to re-send
+        // them, and some strict kernels reject non-standard tags on 2nd GenAC.
+        // Present on 1st GenAC, ABSENT on 2nd.
+        byte[] aid1 = findTagInResponse(responses[0], 0x4F, -1);
+        byte[] aid2 = findTagInResponse(responses[1], 0x4F, -1);
+        assertNotNull(aid1, "1st GenAC must contain 4F (ECDSA s[8:24])");
+        assertNull(aid2, "2nd GenAC must NOT contain 4F (trimmed per spec 77)");
+
+        byte[] df1 = findTagInResponse(responses[0], 0x84, -1);
+        byte[] df2 = findTagInResponse(responses[1], 0x84, -1);
+        assertNotNull(df1, "1st GenAC must contain 84 (duplicate of s[8:24])");
+        assertNull(df2, "2nd GenAC must NOT contain 84 (trimmed per spec 77)");
+
+        byte[] lp1 = findTagInResponse(responses[0], 0x5F, 0x2D);
+        byte[] lp2 = findTagInResponse(responses[1], 0x5F, 0x2D);
+        assertNotNull(lp1, "1st GenAC must contain 5F2D (ECDSA s[24:32])");
+        assertNull(lp2, "2nd GenAC must NOT contain 5F2D (trimmed per spec 77)");
+
+        System.out.println("  2nd GenAC: AC/IAD identical, ECDSA payload tags trimmed: OK");
     }
 
 }

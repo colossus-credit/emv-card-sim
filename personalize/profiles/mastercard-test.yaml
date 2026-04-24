@@ -22,21 +22,14 @@ keys:
   keys_dir: ../../keys/capk_1984_mixed
 
 tags:
-  # --- DOL definitions (match default: 11 tags, 58 bytes each) ---
+  # --- DOL definitions ---
+  # DDOL (tag 9F49) is personalized for DDA compatibility but is NOT exercised
+  # on either interface: AIP=1000 on contact (no ODA) and contactless uses CDA,
+  # not DDA. Kept minimal to reflect "unused" status.
   DDOL:
     type: dol
     value:
-      Amount Authorised: 6
-      Amount Other: 6
-      Terminal Country Code: 2
-      Terminal Verification Results: 5
-      Transaction Currency Code: 2
-      Transaction Date: 3
-      Transaction Type: 1
       Unpredictable Number: 4
-      Terminal Identification: 8
-      Merchant Identifier: 15
-      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -50,6 +43,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -57,6 +51,7 @@ tags:
     type: dol
     value:
       Authorisation Response Code: 2
+      Issuer Authentication Data: 10
       Amount Authorised: 6
       Amount Other: 6
       Terminal Country Code: 2
@@ -66,6 +61,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -101,6 +97,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
