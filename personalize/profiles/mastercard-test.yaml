@@ -82,7 +82,11 @@ tags:
   Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
-  Form Factor Indicator: "08400000"
+  # On C-2 kernel, tag 9F6E is Third Party Data (not Form Factor Indicator).
+  # Format: CC(2) + UID(2) + [DeviceType(2)] + PropData(1-28), length 5-32.
+  # 0840 = USA; UID high bit set avoids C-2 §3.10.2 DECLINE trigger; 00 = 1B prop data.
+  # Once EC keys are loaded, generateEcdsaAtGpo() overwrites this with ECDSA s (32B).
+  Form Factor Indicator: "0840800000"
   CTQ: "8000"
 
   PDOL:
@@ -109,6 +113,7 @@ templates:
     6f: ["DF Name", "A5"]
     a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
 
+# Contactless overrides (merged on top of base tags/templates for contactless AID)
 contactless:
   fci:
     a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]

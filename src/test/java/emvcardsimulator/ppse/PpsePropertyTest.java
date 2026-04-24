@@ -209,6 +209,7 @@ public class PpsePropertyTest {
             @ForAll short dgi
     ) throws CardException {
         Assume.that(dgi != (short) 0xD001 && dgi != (short) 0xD002);
+        Assume.that(dgi != (short) 0x7FFF);  // F-60: DGI 7FFF is integrity-MAC placeholder, accepted as no-op
         Assume.that(dgi != (short) 0x0000); // avoid zero-length edge case
 
         selectAndReset();

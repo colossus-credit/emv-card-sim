@@ -12,10 +12,10 @@ If you need a payment terminal simulator for testing, try [emvpt](https://github
 # Xcode Command Line Tools (compiler toolchain, needed for native Python deps)
 xcode-select --install
 
-# Java 11 (required for Gradle and JavaCard SDK)
-brew install openjdk@11
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/$(ls /opt/homebrew/Cellar/openjdk@11/)/libexec/openjdk.jdk/Contents/Home
-# Add the export to ~/.zshrc to make permanent
+# Java 17 (required for Gradle and JavaCard SDK)
+brew install openjdk@17
+export JAVA_HOME=/usr/local/opt/openjdk@17
+# Add the export to ~/.bash_profile / ~/.zshrc to make permanent
 
 # swig (required by pyscard to compile its C-to-Python bindings)
 brew install swig
@@ -23,7 +23,7 @@ brew install swig
 # uv (required for Python personalization tool)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Smart card reader + JCOP JavaCard (3.0.5+)
+# Smart card reader + JavaCard 3.0.4+ card (e.g. NXP J3H145, J3R180)
 # gp.jar in project root (https://github.com/martinpaljak/GlobalPlatformPro)
 ```
 
@@ -46,6 +46,30 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 4. Run tests
 ./gradlew test
 ```
+
+## Card Compatibility
+
+### JavaCard API version targeting
+
+The default build targets **JavaCard 3.0.5** (jc305u3_kit), which requires `javacard.security v1.6` and `javacardx.crypto v1.6`. If your card runs an older JavaCard runtime, use `compat_sdk` to target an older set of API exports while still using the modern converter.
+
+| Card | JavaCard version | Command |
+|------|-----------------|---------|
+| Default (JC 3.0.5 cards) | security v1.6, crypto v1.6 | `./gradlew cap deploy` |
+| **NXP J3H145 / JC 3.0.4 cards** | security v1.5, crypto v1.5 | `./gradlew cap deploy -Pcompat_sdk=jc304_kit` |
+| JC 3.0.1 cards | security v1.4, crypto v1.4 | `./gradlew cap deploy -Pcompat_sdk=jc303_kit` |
+
+The `compat_sdk` flag builds a merged kit at `build/jckit_merged/` — the jc305u3 converter (required for Java 17) combined with the target SDK's `api_export_files`. No manual file swapping is needed.
+
+### Cards without `javacardx.crypto`
+
+`javacardx.crypto` is an optional package in JavaCard Classic and not all cards implement it. If your card returns `LOAD failed: 0x6438` even after setting `compat_sdk`, build without the RSA cipher:
+
+```bash
+./gradlew cap deploy -Phas_rsa_cipher=false
+```
+
+With `has_rsa_cipher=false`, raw RSA sign/decrypt operations (`Cipher.ALG_RSA_NOPAD`) throw `SW_CONDITIONS_NOT_SATISFIED` (0x6985) at runtime. The ECDSA P-256 signing path (used for ColossusNet on-chain settlement) is unaffected.
 
 ## Building with custom AIDs
 

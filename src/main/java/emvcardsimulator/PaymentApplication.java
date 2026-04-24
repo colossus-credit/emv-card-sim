@@ -45,6 +45,18 @@ public class PaymentApplication extends EmvApplet {
     // same signature tags. Reset on SELECT (transient, cleared on deselect).
     private boolean firstGenAcSeen = false;
 
+    // Symmetric block cipher key material received via DGI 8000 (CPS v2.0
+    // Annex A.2 Table A-2). In a spec-compliant EMV implementation this is the
+    // issuer Application-Cryptogram master key (MK_AC) used to derive per-
+    // transaction session keys for 3DES-CBC-MAC or AES-CMAC generation of
+    // tag 9F26. ColossusNet trusts the ECDSA signature in 9F10/9F6E for
+    // issuer-side authentication and uses a placeholder AC (see audit F-46),
+    // so this buffer is stored but not read at transaction time. Kept on-card
+    // so bureau flows that emit DGI 8000 per CPS don't error, and so that
+    // future real-MAC work has the material already loaded.
+    private byte[] symmetricKeyData = null;
+    private short symmetricKeyLength = 0;
+
     // P-256 (secp256r1) domain parameters
     private static final byte[] EC_P256_P = {
         (byte)0xFF,(byte)0xFF,(byte)0xFF,(byte)0xFF, (byte)0x00,(byte)0x00,(byte)0x00,(byte)0x01,
@@ -81,6 +93,13 @@ public class PaymentApplication extends EmvApplet {
         (byte)0xBC,(byte)0xE6,(byte)0xFA,(byte)0xAD, (byte)0xA7,(byte)0x17,(byte)0x9E,(byte)0x84,
         (byte)0xF3,(byte)0xB9,(byte)0xCA,(byte)0xC2, (byte)0xFC,(byte)0x63,(byte)0x25,(byte)0x51
     };
+
+    // Upper bound on PDOL / CDOL data cached per transaction. The ISO 7816 short
+    // APDU data field is capped at Lc = 0xFF = 255 bytes; EMV GENERATE AC with
+    // extended CDOL payloads never exceeds ~80 bytes in practice. 128 gives us
+    // headroom for wider DOLs (e.g. terminals including 9F02/9F03/9F66/9F6C +
+    // amount/currency/merchant strings) without enforcing a spec-illegal cap.
+    private static final short MAX_DOL_BYTES = (short) 128;
 
     // Storage for CDOL1 data from first GENERATE AC (needed for second GENERATE AC's Transaction Data Hash)
     private byte[] storedCdol1Data = null;
@@ -394,49 +413,25 @@ public class PaymentApplication extends EmvApplet {
      */
     protected void processStoreDataSettings(short dgi, byte[] buf, short offset, short length) {
         switch (dgi) {
-            // CPS 8000: Block cipher keys (RSA modulus/exponent, EC scalar)
-            // First 8000 with RSA-sized data = modulus; second 8000 = exponent
-            // 8000 with 32 bytes = EC P-256 private key scalar
+            // CPS 8000: Block cipher (symmetric) keys — CPS v2.0 Annex A.2 Table A-2.
+            // A spec-compliant EMV issuer uses this for MK_AC (Application Cryptogram
+            // master key), MK_SMC/MK_SMI (secure messaging), etc., and derives
+            // per-transaction session keys for 3DES-CBC-MAC or AES-CMAC.
+            //
+            // ColossusNet's current threat model trusts the ECDSA signature in
+            // tags 9F10/9F6E for issuer-side authentication and uses a
+            // placeholder SHA-1-based AC (audit F-46). So we accept and store
+            // the key bytes on-card to remain compliant with standard bureau
+            // perso flows that emit DGI 8000, but we don't use them yet.
+            // When F-46 is addressed the stored material will already be here.
             case (short) 0x8000:
-                if (length == 32 && ecPrivateKey != null && rsaPrivateKeyByteSize == 0) {
-                    // 32 bytes with no pending RSA modulus = EC key scalar
-                    try {
-                        ecPrivateKey.setS(buf, offset, length);
-                        ecPrivateKeyLoaded = true;
-                    } catch (CryptoException e) {
-                        ISOException.throwIt((short) 0x6A81);
-                    }
-                } else if (rsaPrivateKeyByteSize == 0) {
-                    // No modulus set yet = RSA modulus
-                    rsaPrivateKeyByteSize = length;
-                    short keyLength = (short) (rsaPrivateKeyByteSize * 8);
-                    switch (keyLength) {
-                        case (short) 1024: keyLength = KeyBuilder.LENGTH_RSA_1024; break;
-                        case (short) 1280: keyLength = KeyBuilder.LENGTH_RSA_1280; break;
-                        case (short) 1536: keyLength = KeyBuilder.LENGTH_RSA_1536; break;
-                        case (short) 1984: keyLength = KeyBuilder.LENGTH_RSA_1984; break;
-                        case (short) 2048: keyLength = KeyBuilder.LENGTH_RSA_2048; break;
-                        default: ISOException.throwIt((short) 0x6A80);
-                    }
-                    try {
-                        rsaPrivateKey = (RSAPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_RSA_PRIVATE, keyLength, false);
-                        rsaPrivateKey.clearKey();
-                        rsaPrivateKey.setModulus(buf, offset, rsaPrivateKeyByteSize);
-                    } catch (CryptoException e) {
-                        rsaPrivateKey = null;
-                        rsaPrivateKeyByteSize = 0;
-                        ISOException.throwIt((short) 0x6A81);
-                    }
-                } else if (rsaPrivateKey != null && rsaPrivateKeyByteSize > 0) {
-                    // Modulus already set — this is the RSA exponent
-                    try {
-                        rsaPrivateKey.setExponent(buf, offset, length);
-                    } catch (CryptoException e) {
-                        rsaPrivateKey = null;
-                        rsaPrivateKeyByteSize = 0;
-                        ISOException.throwIt((short) 0x6A81);
-                    }
+                if (length < 0 || length > (short) symmetricKeyData.length) {
+                    ISOException.throwIt((short) 0x6A80);  // incorrect data field
                 }
+                JCSystem.beginTransaction();
+                Util.arrayCopy(buf, offset, symmetricKeyData, (short) 0, length);
+                symmetricKeyLength = length;
+                JCSystem.commitTransaction();
                 break;
 
             // CPS 8010: Offline PIN block
@@ -444,8 +439,11 @@ public class PaymentApplication extends EmvApplet {
                 Util.arrayCopy(buf, offset, pinCode, (short) 0, length);
                 break;
 
-            // App-specific 8201: RSA private key modulus
-            case (short) 0x8201:
+            // CPS DGI 8103: ICC Modulus (DDA/PIN Encipherment) — CPS v2.0 Annex A.2 Table A-10.
+            // Plain-form RSA private key; paired with DGI 8101 for the exponent.
+            // Spec: "personalise either DGIs '8101' ICC Private Key and '8103' Modulus,
+            // or '8201' to '8205' CRT constants." We use the plain form.
+            case (short) 0x8103:
                 rsaPrivateKeyByteSize = length;
                 short rsaKeyLen = (short) (rsaPrivateKeyByteSize * 8);
                 switch (rsaKeyLen) {
@@ -468,8 +466,9 @@ public class PaymentApplication extends EmvApplet {
                 }
                 break;
 
-            // App-specific 8202: RSA private key exponent
-            case (short) 0x8202:
+            // CPS DGI 8101: ICC Private Key (DDA/PIN Encipherment) — CPS v2.0 Annex A.2 Table A-8.
+            // Plain-form RSA exponent; must arrive after the modulus (DGI 8103).
+            case (short) 0x8101:
                 if (rsaPrivateKey == null || rsaPrivateKeyByteSize == 0) {
                     ISOException.throwIt((short) 0x6985);
                 }
@@ -482,8 +481,9 @@ public class PaymentApplication extends EmvApplet {
                 }
                 break;
 
-            // App-specific 8203: EC P-256 private key scalar
-            case (short) 0x8203:
+            // CPS DGI 8105: ICC ECC Secret Key — CPS v2.0 Annex A.2 Table A-11b.
+            // P-256 private key scalar (32 bytes).
+            case (short) 0x8105:
                 if (ecPrivateKey == null) {
                     ISOException.throwIt((short) 0x6985);
                 }
@@ -522,6 +522,12 @@ public class PaymentApplication extends EmvApplet {
 
         pinCode = new byte[] { (byte) 0x00, (byte) 0x00 };
 
+        // DGI 8000 symmetric key storage (see F-33 comment on the field).
+        // 32 bytes covers typical bureau block-cipher key material (AES-128 =
+        // 16B, AES-192 = 24B, AES-256 = 32B, 3DES-2key = 16B, 3DES-3key = 24B).
+        symmetricKeyData = new byte[32];
+        symmetricKeyLength = 0;
+
         challenge = JCSystem.makeTransientByteArray((short) 8, JCSystem.CLEAR_ON_DESELECT);
 
         tag9f4cDynamicNumber = JCSystem.makeTransientByteArray((short) 3, JCSystem.CLEAR_ON_DESELECT);
@@ -529,12 +535,16 @@ public class PaymentApplication extends EmvApplet {
         ecdsaSigBuffer = JCSystem.makeTransientByteArray((short) 72, JCSystem.CLEAR_ON_DESELECT);
         ecdsaRawSig = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
 
-        // Storage for CDOL1 data - transient so it's cleared on deselect
-        storedCdol1Data = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
+        // Storage for CDOL1 data - transient so it's cleared on deselect.
+        // Sized to MAX_DOL_BYTES so we accept any DOL the terminal builds,
+        // up to the ISO 7816 short-APDU data field limit. F-44/F-52 fix: we
+        // no longer hardcode an "expected" length — the card hashes exactly
+        // what the terminal sent in CDOL1, byte-for-byte (Book 2 §6.6.2).
+        storedCdol1Data = JCSystem.makeTransientByteArray(MAX_DOL_BYTES, JCSystem.CLEAR_ON_DESELECT);
         storedCdol1Length = 0;
 
-        // Storage for PDOL data - transient so it's cleared on deselect
-        storedPdolData = JCSystem.makeTransientByteArray((short) 64, JCSystem.CLEAR_ON_DESELECT);
+        // Storage for PDOL data - same sizing rules as CDOL1 above (F-43/F-51).
+        storedPdolData = JCSystem.makeTransientByteArray(MAX_DOL_BYTES, JCSystem.CLEAR_ON_DESELECT);
         storedPdolLength = 0;
 
         // DEBUG: Storage for hash input/output — only allocated in dev builds
@@ -632,6 +642,13 @@ public class PaymentApplication extends EmvApplet {
     }
 
     private void processGenerateAc(APDU apdu, byte[] buf) {
+        // F-48: EMV Book 3 §9.1.1 Table 34 — P2 must be '00'. Reject otherwise
+        // with 6A86 rather than silently proceeding, to catch terminals whose
+        // kernel hasn't been updated to the current spec.
+        if (buf[ISO7816.OFFSET_P2] != (byte) 0x00) {
+            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+        }
+
         byte referenceControlParameter = buf[ISO7816.OFFSET_P1];
         // Check if CDA is requested (P1 bit 4 = 0x10)
         // CDA requested when P1 bits 5-4 = '10' (0x10). Reject RFU '11' (0x18).
@@ -983,39 +1000,36 @@ public class PaymentApplication extends EmvApplet {
 
         if (!BuildConfig.PRODUCTION) { debugHashInputLength = 0; }
 
-        // 1. Include PDOL data first (stored from GPO)
-        // PDOL: 9F02(6)+9F03(6)+9F1A(2)+95(5)+5F2A(2)+9A(3)+9C(1)+9F37(4)+9F1C(8)+9F16(15)+9F01(6) = 58
-        short pdolDefinedLength = 58;
+        // Transaction Data Hash input, per EMV Book 2 §6.6.2: the card hashes
+        // exactly what the terminal sent in PDOL and CDOL, byte-for-byte, with
+        // no truncation to a card-internal "expected length" and no zero-padding
+        // when the terminal sent less than expected. Pre-F-43/F-44 the applet
+        // truncated both to 58 bytes and padded shorter payloads with 0x00 —
+        // both guaranteed a TDH mismatch with any terminal that built a DOL of
+        // a different length from our profile.
+
+        // 1. Include PDOL data first (cached at GPO time).
         if (storedPdolLength > 0) {
-            short pdolHashLen = (storedPdolLength < pdolDefinedLength) ? storedPdolLength : pdolDefinedLength;
-            shaMessageDigest.update(storedPdolData, (short) 0, pdolHashLen);
-            if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + pdolHashLen) <= (short) 256) {
-                Util.arrayCopy(storedPdolData, (short) 0, debugHashInput, debugHashInputLength, pdolHashLen);
-                debugHashInputLength = (short)(debugHashInputLength + pdolHashLen);
+            shaMessageDigest.update(storedPdolData, (short) 0, storedPdolLength);
+            if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + storedPdolLength) <= (short) 256) {
+                Util.arrayCopy(storedPdolData, (short) 0, debugHashInput, debugHashInputLength, storedPdolLength);
+                debugHashInputLength = (short)(debugHashInputLength + storedPdolLength);
             }
         }
 
-        // Detect if this is CDOL2 (second GENERATE AC) by length = 60 bytes
-        boolean isSecondGenerateAc = (cdolLen == (short) 60);
-        short cdol1ExpectedLen = 58;
+        // 2. Include CDOL data. CDOL1 arrives in the first GENERATE AC; CDOL2
+        // arrives in the second (if terminal issues one). We detect CDOL2 by
+        // the cached CDOL1 being present AND the current payload differing —
+        // simpler and more reliable than the pre-existing `cdolLen == 60`
+        // length heuristic (flagged separately as F-53).
+        boolean isSecondGenerateAc = (storedCdol1Length > 0) && (cdolLen != storedCdol1Length);
 
         if (isSecondGenerateAc) {
-            // Second GENERATE AC: Include stored CDOL1 first, then CDOL2
-            if (storedCdol1Length > 0) {
-                shaMessageDigest.update(storedCdol1Data, (short) 0, storedCdol1Length);
-                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + storedCdol1Length) <= (short) 256) {
-                    Util.arrayCopy(storedCdol1Data, (short) 0, debugHashInput, debugHashInputLength, storedCdol1Length);
-                    debugHashInputLength = (short)(debugHashInputLength + storedCdol1Length);
-                }
-            }
-            if (storedCdol1Length < cdol1ExpectedLen) {
-                short padLen = (short)(cdol1ExpectedLen - storedCdol1Length);
-                Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
-                shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
-                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + padLen) <= (short) 256) {
-                    Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
-                    debugHashInputLength = (short)(debugHashInputLength + padLen);
-                }
+            // Second GENERATE AC: hash cached CDOL1 first, then the new CDOL2.
+            shaMessageDigest.update(storedCdol1Data, (short) 0, storedCdol1Length);
+            if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + storedCdol1Length) <= (short) 256) {
+                Util.arrayCopy(storedCdol1Data, (short) 0, debugHashInput, debugHashInputLength, storedCdol1Length);
+                debugHashInputLength = (short)(debugHashInputLength + storedCdol1Length);
             }
             if (cdolLen > 0) {
                 shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
@@ -1025,26 +1039,19 @@ public class PaymentApplication extends EmvApplet {
                 }
             }
         } else {
-            // First GENERATE AC: Store CDOL1 data for later use
-            if (cdolLen > 0 && cdolLen <= (short) 64) {
+            // First GENERATE AC: cache CDOL1 for the potential second GenAC,
+            // then hash the full payload as received (F-44/F-52). Capped at
+            // MAX_DOL_BYTES for safety; terminals sending more than that are
+            // outside our support envelope.
+            if (cdolLen > 0 && cdolLen <= MAX_DOL_BYTES) {
                 Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, storedCdol1Data, (short) 0, cdolLen);
                 storedCdol1Length = cdolLen;
             }
             if (cdolLen > 0) {
-                short cdolHashLen = (cdolLen < cdol1ExpectedLen) ? cdolLen : cdol1ExpectedLen;
-                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolHashLen);
-                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + cdolHashLen) <= (short) 256) {
-                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolHashLen);
-                    debugHashInputLength = (short)(debugHashInputLength + cdolHashLen);
-                }
-            }
-            if (cdolLen < cdol1ExpectedLen) {
-                short padLen = (short)(cdol1ExpectedLen - cdolLen);
-                Util.arrayFillNonAtomic(tmpBuffer, (short) 400, padLen, (byte) 0x00);
-                shaMessageDigest.update(tmpBuffer, (short) 400, padLen);
-                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + padLen) <= (short) 256) {
-                    Util.arrayCopy(tmpBuffer, (short) 400, debugHashInput, debugHashInputLength, padLen);
-                    debugHashInputLength = (short)(debugHashInputLength + padLen);
+                shaMessageDigest.update(buf, ISO7816.OFFSET_CDATA, cdolLen);
+                if (!BuildConfig.PRODUCTION && (short)(debugHashInputLength + cdolLen) <= (short) 256) {
+                    Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, debugHashInput, debugHashInputLength, cdolLen);
+                    debugHashInputLength = (short)(debugHashInputLength + cdolLen);
                 }
             }
         }
@@ -1252,9 +1259,13 @@ public class PaymentApplication extends EmvApplet {
             EmvApplet.logAndThrow(ISO7816.SW_WRONG_LENGTH);
         }
 
-        // PDOL data is at ISO7816.OFFSET_CDATA + 2, length pdolLen
-        // Store PDOL data for CDA Transaction Data Hash calculation
-        if (pdolLen > 0 && pdolLen <= (short) 64) {
+        // PDOL data is at ISO7816.OFFSET_CDATA + 2, length pdolLen.
+        // Store PDOL data for CDA Transaction Data Hash calculation (F-43/F-51).
+        // Accept up to MAX_DOL_BYTES. If the terminal built a PDOL longer than
+        // this, we fall back to "no PDOL cached" rather than truncating — the
+        // later TDH step would produce a hash mismatch anyway, so better to
+        // surface it as a clean "no PDOL" state than a silent half-hash.
+        if (pdolLen > 0 && pdolLen <= MAX_DOL_BYTES) {
             Util.arrayCopy(buf, (short) (ISO7816.OFFSET_CDATA + 2), storedPdolData, (short) 0, pdolLen);
             storedPdolLength = pdolLen;
         } else {

@@ -327,13 +327,12 @@ class Card:
 
     # ---- Settings ----
 
-    # CPS DGIs for settings
-    DGI_PIN = 0x8010         # CPS standard: offline PIN block
-    DGI_RSA_KEY = 0x8000     # CPS standard: block cipher keys (symmetric)
-    # App-specific DGIs for asymmetric keys and config (not in CPS standard)
-    DGI_RSA_MODULUS = 0x8201
-    DGI_RSA_EXPONENT = 0x8202
-    DGI_EC_SCALAR = 0x8203
+    # CPS v2.0 Annex A.2 Data Grouping Identifiers for key material.
+    DGI_PIN = 0x8010          # CPS: offline PIN block
+    DGI_BLOCK_CIPHER = 0x8000  # CPS: block cipher keys (symmetric) — Table A-2
+    DGI_RSA_EXPONENT = 0x8101  # CPS: ICC Private Key exponent — Table A-8
+    DGI_RSA_MODULUS = 0x8103   # CPS: ICC Modulus — Table A-10
+    DGI_EC_SCALAR = 0x8105     # CPS: ICC ECC Secret Key — Table A-11b
     DGI_RESPONSE_TEMPLATE = 0xA002
     DGI_FLAGS = 0xA003
 
@@ -365,11 +364,13 @@ class Card:
 
     def set_rsa_key(self, modulus: bytes, private_exp: bytes) -> None:
         if self.use_store_data:
-            # App-specific DGIs for RSA key components (not CPS 8000 which is symmetric)
+            # CPS v2.0 plain-form RSA: DGI 8103 (modulus) + DGI 8101 (exponent).
+            # Modulus must arrive first so the applet can build the RSAPrivateKey
+            # object before the exponent is applied.
             self.builder.store_data(self.DGI_RSA_MODULUS, modulus,
-                                    description=f"STORE_DATA RSA modulus ({len(modulus)}B)")
+                                    description=f"STORE_DATA RSA modulus (CPS 8103, {len(modulus)}B)")
             self.builder.store_data(self.DGI_RSA_EXPONENT, private_exp,
-                                    description=f"STORE_DATA RSA exponent ({len(private_exp)}B)")
+                                    description=f"STORE_DATA RSA exponent (CPS 8101, {len(private_exp)}B)")
         else:
             self.builder.set_settings(SETTING_RSA_MODULUS, modulus,
                                       f"RSA modulus ({len(modulus)} bytes)")
@@ -381,7 +382,7 @@ class Card:
             raise ValueError(f"EC scalar must be 32 bytes, got {len(scalar)}")
         if self.use_store_data:
             self.builder.store_data(self.DGI_EC_SCALAR, scalar,
-                                    description="STORE_DATA EC P-256 private key")
+                                    description="STORE_DATA EC P-256 private key (CPS 8105)")
         else:
             self.builder.set_settings(SETTING_EC_PRIVATE, scalar, "EC P-256 private key")
 

@@ -78,6 +78,14 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
 
     protected byte[] defaultReadRecord;
 
+    /**
+     * Maximum EmvTag references per SFI record. Typical EMV records carry
+     * 4–8 tags; 30 gives substantial headroom. If a bureau personalizes a
+     * record with more tags than this, STORE DATA rejects with 6A80 rather
+     * than an AIOOBE-triggered 6F00 (F-25).
+     */
+    protected static final short MAX_TAG_REFS_PER_RECORD = (short) 30;
+
     /** Scratch array for building RecordTemplate refs at STORE DATA time. */
     protected static EmvTag[] tmpTagRefs;
 
@@ -129,6 +137,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         if (tagBf0cFci != null) {
             tagBf0cFci.clear();
         }
+
 
         if (lifecycle != null) {
             lifecycle.resetForTesting();
@@ -391,6 +400,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 // Create an empty placeholder to hold the reference.
                 ref = new EmvTag(tagId, buf, (short) 0, (short) 0);
             }
+            if (refCount >= MAX_TAG_REFS_PER_RECORD) {
+                ISOException.throwIt((short) 0x6A80);  // too many tags in record
+            }
             tmpTagRefs[refCount] = ref;
             refCount++;
         }
@@ -543,6 +555,9 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
                 }
 
                 // Store tag value and capture the direct reference
+                if (refCount >= MAX_TAG_REFS_PER_RECORD) {
+                    ISOException.throwIt((short) 0x6A80);  // too many tags in record
+                }
                 EmvTag ref = EmvTag.setTag(tagId, buf, pos, tLen);
                 tmpTagRefs[refCount] = ref;
                 refCount++;
@@ -554,9 +569,14 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
             short recordKey = (short) ((recordNo << 8) | (sfi << 3));
             RecordTemplate.setTemplate(recordKey, tmpTagRefs, refCount);
         } else if (dgi == (short) 0x8000 || dgi == (short) 0x8010 || dgi == (short) 0x9010
-                   || dgi == (short) 0x8201 || dgi == (short) 0x8202 || dgi == (short) 0x8203) {
-            // CPS standard: 8000 = symmetric keys, 8010 = PIN, 9010 = PIN data
-            // App-specific: 8201 = RSA modulus, 8202 = RSA exponent, 8203 = EC scalar
+                   || dgi == (short) 0x8101 || dgi == (short) 0x8103 || dgi == (short) 0x8105) {
+            // CPS v2.0 standard DGIs:
+            //   8000 = symmetric block cipher keys (Annex A.2 Table A-2)
+            //   8010 = offline PIN block
+            //   9010 = PIN try counter data
+            //   8101 = ICC Private Key exponent (Table A-8)
+            //   8103 = ICC Modulus (Table A-10)
+            //   8105 = ICC ECC Secret Key (Table A-11b)
             processStoreDataSettings(dgi, buf, offset, length);
         } else if (dgi == (short) 0x9000) {
             // CPS DGI 9000: Key Check Values — acknowledged but not verified
@@ -861,8 +881,7 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
     protected EmvApplet() {
         tmpBuffer = JCSystem.makeTransientByteArray((short) 512, JCSystem.CLEAR_ON_DESELECT);
         chunkBuffer = new byte[512];  // Persistent buffer for chunked transfers
-        // Max tags per record is ~30 (typical EMV record has 4-8 tags).
-        tmpTagRefs = new EmvTag[30];
+        tmpTagRefs = new EmvTag[MAX_TAG_REFS_PER_RECORD];
 
         // Instantiate lifecycle BEFORE factoryReset() so it can clear it safely.
         lifecycle = new AppletLifecycle();
