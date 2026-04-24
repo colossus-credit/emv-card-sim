@@ -69,10 +69,10 @@ tags:
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
-  Application Usage Control: "AB00"
+  Application Usage Control: "FF80"
   SDA Tag List: "82"
   Track 1 Discretionary Data: "00000000000000000000000000000000000000"
-  Service Code: "0701"
+  Service Code: "0201"
   Application Currency Code: "0840"
   Application Currency Exponent: "02"
   IAC-Default: "D84000A800"
@@ -161,5 +161,5 @@ cvm_list:
   amount_x: 0
   amount_y: 0
   rules:
-    - [0x02, 0x03]   # Online PIN (fail cardholder verification if unsuccessful), if terminal supports it
-    # No fallback — if terminal cannot do online PIN, CVM fails and TVR flags cardholder-verification-not-successful
+    - [0x42, 0x03]   # Online PIN, if terminal supports the CVM; on unsuccess apply succeeding rule
+    - [0x1F, 0x00]   # No CVM required, always (fallback for terminals without online PIN)
