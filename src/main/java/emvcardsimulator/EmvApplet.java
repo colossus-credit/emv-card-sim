@@ -115,6 +115,30 @@ public abstract class EmvApplet extends Applet implements ExtendedLength {
         EmvTag.clear();
         RecordTemplate.clearAll();
 
+        // Reset tag templates (B001–B006) so a previous personalization's
+        // tag list doesn't leak across factory-reset boundaries and cause
+        // SW_DATA_INVALID (0x6984) in expandTlvToArray when a referenced tag
+        // is no longer present in the EmvTag store.
+        if (responseTemplateGetProcessingOptions != null) {
+            responseTemplateGetProcessingOptions.clear();
+        }
+        if (responseTemplateDda != null) {
+            responseTemplateDda.clear();
+        }
+        if (responseTemplateGenerateAc != null) {
+            responseTemplateGenerateAc.clear();
+        }
+        if (tag6fFci != null) {
+            tag6fFci.clear();
+        }
+        if (tagA5Fci != null) {
+            tagA5Fci.clear();
+        }
+        if (tagBf0cFci != null) {
+            tagBf0cFci.clear();
+        }
+
+
         if (lifecycle != null) {
             lifecycle.resetForTesting();
         }

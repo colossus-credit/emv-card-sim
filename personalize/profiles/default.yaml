@@ -20,21 +20,15 @@ keys:
   keys_dir: ../../keys/capk_1984_mixed   # CAPK 92 (RSA-1984) in capk.xml, ICC/SDAD RSA-1024
 
 tags:
-  # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---
+  # --- DOL definitions ---
+  # DDOL (tag 9F49) is personalized for DDA compatibility but is NOT exercised
+  # on either interface: AIP=1000 on contact (no ODA) and contactless uses CDA,
+  # not DDA. Kept minimal to reflect "unused" status. MCC and other fields are
+  # only in the DOLs that are actually signed over (CDOL1/CDOL2/PDOL).
   DDOL:
     type: dol
     value:
-      Amount Authorised: 6
-      Amount Other: 6
-      Terminal Country Code: 2
-      Terminal Verification Results: 5
-      Transaction Currency Code: 2
-      Transaction Date: 3
-      Transaction Type: 1
       Unpredictable Number: 4
-      Terminal Identification: 8
-      Merchant Identifier: 15
-      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -48,6 +42,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -55,6 +50,7 @@ tags:
     type: dol
     value:
       Authorisation Response Code: 2
+      Issuer Authentication Data: 10
       Amount Authorised: 6
       Amount Other: 6
       Terminal Country Code: 2
@@ -64,21 +60,23 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
   # --- Simple tag values ---
-  Application Interchange Profile: "3C01"
+  Application Interchange Profile: "1000"  # CVM supported (b5); no ODA/TRM/IssuerAuth
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
-  # AUC per EMV Book 3 Annex B4: byte 1 = AB (domestic cash/goods/services + ATM + non-ATM POS;
-  # no international), byte 2 = 80 (domestic cashback allowed, intl cashback disabled).
-  # Suits a US-issued debit rollout (grocery/pharmacy cashback common); switch to AB00 for credit.
-  Application Usage Control: "AB80"
+  # AUC FF80: byte 1 = FF (domestic + international cash/goods/services + ATM + non-ATM POS),
+  # byte 2 = 80 (domestic cashback enabled, intl cashback not allowed). Matches real-world
+  # US debit products (Chase/BofA/Wells) which allow international use of the card even if
+  # issued in the US. See spec §3.6 and §5.1 for bit-level decode.
+  Application Usage Control: "FF80"
   SDA Tag List: "82"
   Track 1 Discretionary Data: "00000000000000000000000000000000000000"
-  Service Code: "0701"
+  Service Code: "0201"
   Application Currency Code: "0840"
   Application Currency Exponent: "02"
   IAC-Default: "D84000A800"
@@ -100,13 +98,29 @@ tags:
   Form Factor Indicator: "0840800000"
   CTQ: "8000"
 
+  PDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Category Code: 2
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
 templates:
   gpo: ["AIP", "AFL"]
   dda: ["9F4B"]
   genac: ["9F27", "9F36", "9F26", "9F10"]
   fci:
     6f: ["DF Name", "A5"]
-    a5: ["Application Label", "Application Priority Indicator"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
 
 # Contactless overrides (merged on top of base tags/templates for contactless AID)
 contactless:
@@ -176,5 +190,5 @@ cvm_list:
   amount_x: 0
   amount_y: 0
   rules:
-    - [0x42, 0x03]   # Online PIN, if terminal supports it
-    - [0x1F, 0x00]   # No CVM required, always
+    - [0x42, 0x03]   # Online PIN, if terminal supports the CVM; on unsuccess apply succeeding rule
+    - [0x1F, 0x00]   # No CVM required, always (fallback for terminals without online PIN)

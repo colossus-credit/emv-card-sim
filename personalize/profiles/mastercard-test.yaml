@@ -1,43 +1,35 @@
-# Mastercard Test Profile — C-2 kernel AID, default-profile crypto/data
-# Identical to default.yaml except for the AID (A0000000042203).
-# Same CAPK 92 (RSA-1984), same keys dir, same tags/records/AFL/CVM.
-# The applet must be installed with matching AID before using this profile.
+# Mastercard Test Profile — spoofed AID for contact testing
+# Uses US Maestro AID A0000000042203 (suffix 2203 → detected as contact).
+# All other settings mirror default.yaml so the card behaves identically
+# to Colossus; terminal routes through C-2 kernel but AIP=0000 skips ODA,
+# transaction goes online as ARQC with ECDSA signed at GenAC over CDOL.
 
-profile: Mastercard AID (Default crypto + data)
+profile: Mastercard spoofed AID (contact, FDRC demo mode)
 rid: A000000004
-contact_aid_suffix: "2203"          # MC Debit PIX — 17:15 tap passed PREPROC with this AID
-contactless_aid_suffix: "2203"      # MC Debit PIX — 17:15 tap passed PREPROC with this AID
-application_label: COLOSSUS
-preferred_name: "COLOSSUS CREDIT"
-bin: "54545454"               # MC test BIN (5454... widely classified as Credit by Paymentech sys_bin.l)
-pan: "5454545454545454"       # Classic MC test PAN, Luhn-valid
+contact_aid_suffix: "2203"
+contactless_aid_suffix: "2203"
+application_label: MASTERCARD
+preferred_name: "MASTERCARD CREDIT"
+bin: "54000000"
+pan: "5400000012345679"  # Luhn-valid MC-range PAN
 expiry: "271231"
 
-# Kernel identifier for PPSE directory entry
-# 02 = Mastercard kernel C-2 (auto-mapped for Mastercard AID, but explicit is safer)
 kernel_identifier: "02"
 
 keys:
   capk_index: "92"
-  key_size: 1024      # ICC/Issuer RSA-1024, CAPK RSA-1984 (mixed hierarchy)
-  keys_dir: ../../keys/capk_1984_mixed_mc  # Same CAPK 92 as default profile, but issuer cert has MC IIN 54000000
+  key_size: 1024
+  keys_dir: ../../keys/capk_1984_mixed
 
 tags:
-  # --- DOL definitions (match shell script: 11 tags, 30 bytes each) ---
+  # --- DOL definitions ---
+  # DDOL (tag 9F49) is personalized for DDA compatibility but is NOT exercised
+  # on either interface: AIP=1000 on contact (no ODA) and contactless uses CDA,
+  # not DDA. Kept minimal to reflect "unused" status.
   DDOL:
     type: dol
     value:
-      Amount Authorised: 6
-      Amount Other: 6
-      Terminal Country Code: 2
-      Terminal Verification Results: 5
-      Transaction Currency Code: 2
-      Transaction Date: 3
-      Transaction Type: 1
       Unpredictable Number: 4
-      Terminal Identification: 8
-      Merchant Identifier: 15
-      Acquirer Identifier: 6
 
   CDOL1:
     type: dol
@@ -51,6 +43,7 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
@@ -58,6 +51,7 @@ tags:
     type: dol
     value:
       Authorisation Response Code: 2
+      Issuer Authentication Data: 10
       Amount Authorised: 6
       Amount Other: 6
       Terminal Country Code: 2
@@ -67,11 +61,12 @@ tags:
       Transaction Type: 1
       Unpredictable Number: 4
       Terminal Identification: 8
+      Merchant Category Code: 2
       Merchant Identifier: 15
       Acquirer Identifier: 6
 
   # --- Simple tag values ---
-  Application Interchange Profile: "3C01"
+  Application Interchange Profile: "0000"  # Online-only, no ODA/CVM/TRM/IssuerAuth
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
@@ -94,35 +89,36 @@ tags:
   Form Factor Indicator: "0840800000"
   CTQ: "8000"
 
+  PDOL:
+    type: dol
+    value:
+      Amount Authorised: 6
+      Amount Other: 6
+      Terminal Country Code: 2
+      Terminal Verification Results: 5
+      Transaction Currency Code: 2
+      Transaction Date: 3
+      Transaction Type: 1
+      Unpredictable Number: 4
+      Terminal Identification: 8
+      Merchant Category Code: 2
+      Merchant Identifier: 15
+      Acquirer Identifier: 6
+
 templates:
   gpo: ["AIP", "AFL"]
   dda: ["9F4B"]
   genac: ["9F27", "9F36", "9F26", "9F10"]
   fci:
     6f: ["DF Name", "A5"]
-    a5: ["Application Label", "Application Priority Indicator"]
+    a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
 
 # Contactless overrides (merged on top of base tags/templates for contactless AID)
 contactless:
   fci:
     a5: ["Application Label", "Application Priority Indicator", "Application Preferred Name", "Issuer Code Table Index", "Language Preference", "PDOL"]
-  tags:
-    Application Interchange Profile: "1980"
-    PDOL:
-      type: dol
-      value:
-        Amount Authorised: 6
-        Amount Other: 6
-        Terminal Country Code: 2
-        Terminal Verification Results: 5
-        Transaction Currency Code: 2
-        Transaction Date: 3
-        Transaction Type: 1
-        Unpredictable Number: 4
-        Terminal Identification: 8
-        Merchant Category Code: 2   # 9F15 — ColossusNet spec §7.3
-        Merchant Identifier: 15
-        Acquirer Identifier: 6
+  # No AIP override — contact and contactless both use base AIP=0000 so
+  # CDA is never triggered (kernel falls into non-CDA GenAC path with FFC6/9F6E/FFC7).
 
 records:
   - sfi: 1

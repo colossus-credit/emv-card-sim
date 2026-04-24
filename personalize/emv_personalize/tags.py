@@ -78,6 +78,7 @@ _TAG_DB: dict[int, list[str]] = {
     0x9F69: ["UDOL", "Card Authentication Related Data"],
 
     0x8A: ["Authorisation Response Code", "ARC"],
+    0x91: ["Issuer Authentication Data"],
 
     # ---- Constructed tags ----
     0xA5: ["FCI Proprietary Template"],

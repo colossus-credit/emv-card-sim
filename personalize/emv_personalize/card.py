@@ -597,9 +597,8 @@ def personalize_payment_app(
     card.set_track2(pan, expiry_yymm)
     card.set_tag("Application Label", value=label.encode().hex())
     card.set_tag("Application Priority Indicator", value="01")
-    if contactless:
-        preferred_name = profile.get("preferred_name", label)
-        card.set_tag("Application Preferred Name", value=preferred_name.encode().hex())
+    preferred_name = profile.get("preferred_name", label)
+    card.set_tag("Application Preferred Name", value=preferred_name.encode().hex())
     card.set_tag("Cardholder Name", value=cardholder_name.encode().hex())
 
     # ── AFL (from profile) ──
