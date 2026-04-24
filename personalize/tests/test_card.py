@@ -196,8 +196,14 @@ class TestPersonalizePpse:
         assert hexes[0] == "00A404000E325041592E5359532E4444463031"
         # FACTORY_RESET
         assert hexes[1] == "8005000000"
-        # Directory entry with contactless AID
-        dir_apdus = [h for h in hexes if "A0000009511010" in h and h.startswith("8001006116")]
+        # PPSE perso was migrated to the proprietary CPS STORE DATA path
+        # (DGI D001) in commit 243d516 — PPSE's own STORE DATA handler only
+        # accepts D001 and D002. The directory entry now rides in a STORE
+        # DATA body (80 E2 00 00 LC D0 01 <len> <contactless-AID-bytes ...>).
+        dir_apdus = [
+            h for h in hexes
+            if "A0000009511010" in h and h.startswith("80E20000") and "D001" in h
+        ]
         assert len(dir_apdus) == 1
 
 
