@@ -20,6 +20,18 @@ import javacard.framework.JCSystem;
  * <p>State is stored in a single persistent byte. Each applet instance (PSE,
  * PaymentApp, PPSE) gets its own AppletLifecycle so they can be personalized
  * independently.
+ *
+ * <p><b>⚠ PPSE INLINES A COPY OF THIS STATE MACHINE.</b>
+ * {@link emvcardsimulator.ppse.ProximityPaymentSystemEnvironment} lives in its
+ * own CAP package ({@code emvcardsimulator.ppse}) and the JC converter doesn't
+ * surface this class in {@code emvcardsimulator.exp}'s public API, so PPSE can't
+ * import it as a cross-package reference. PPSE has a verbatim reimplementation
+ * of the state machine (same PERSO_PENDING = 0x01 / PERSO_DONE = 0x07 values,
+ * same atomic commit/reset semantics) as private fields + methods. If you change
+ * behavior here — add a state, change byte values, tighten commit, add side
+ * effects — update PPSE's inline copy to match, or the two applets will diverge
+ * in ways tests may not catch. A byte-parity test lives in
+ * {@code AppletLifecyclePpseParityTest} to detect drift.
  */
 public final class AppletLifecycle {
 
