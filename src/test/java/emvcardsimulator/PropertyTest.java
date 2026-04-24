@@ -1068,7 +1068,14 @@ public class PropertyTest {
         return false;
     }
 
-    /** Check if a TLV byte array contains a specific 2-byte tag. */
+    /**
+     * Check if a byte array contains a specific 2-byte tag anywhere as a raw
+     * byte sequence. Useful for non-TLV payloads (like raw record content
+     * returned under tag 70 on our applet, which is just a list of tag-ID
+     * pairs — not a proper nested TLV). Will false-positive if the sought
+     * pair appears coincidentally inside opaque bytes; use
+     * {@link #containsTlvTag} when you need TLV-aware matching.
+     */
     private boolean containsTag(byte[] tlvData, short tagId) {
         byte hi = (byte) ((tagId >> 8) & 0xFF);
         byte lo = (byte) (tagId & 0xFF);
@@ -1076,6 +1083,85 @@ public class PropertyTest {
             if (tlvData[i] == hi && tlvData[i + 1] == lo) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * Walk a proper BER-TLV byte array and check if any top-level TLV has
+     * the given tag. Strips an outer 77/80/70 wrapper if present, then
+     * iterates child TLVs, skipping opaque values by length rather than
+     * scanning into them.
+     *
+     * <p>Use this instead of {@link #containsTag} when the payload is
+     * guaranteed to be proper TLV and the target tag must not match byte
+     * patterns that happen to appear inside random-looking encrypted values
+     * (e.g. the 128-byte RSA-encrypted SDAD under tag 9F4B). Observed case:
+     * the "CDA response must NOT contain bare AC (9F26)" assertion flaked
+     * ~1% of runs in CI when the SDAD ciphertext happened to contain the
+     * byte pair 0x9F 0x26.
+     */
+    private boolean containsTlvTag(byte[] tlvData, short tagId) {
+        if (tlvData == null || tlvData.length < 2) {
+            return false;
+        }
+
+        int off = 0;
+        int end = tlvData.length;
+
+        // Strip outer wrapper if present (77 constructed, 80 primitive, 70 READ RECORD)
+        int firstTag = tlvData[off] & 0xFF;
+        if (firstTag == 0x77 || firstTag == 0x80 || firstTag == 0x70) {
+            off++;
+            int lenByte = tlvData[off] & 0xFF;
+            if (lenByte < 0x80) {
+                off++;
+            } else if (lenByte == 0x81 && off + 1 < end) {
+                off += 2;
+            } else if (lenByte == 0x82 && off + 2 < end) {
+                off += 3;
+            } else {
+                return false;  // malformed
+            }
+        }
+
+        while (off < end) {
+            int tagHi = tlvData[off] & 0xFF;
+            int thisTag;
+            int tagLen;
+            if ((tagHi & 0x1F) == 0x1F) {
+                if (off + 1 >= end) return false;
+                thisTag = ((tagHi & 0xFF) << 8) | (tlvData[off + 1] & 0xFF);
+                tagLen = 2;
+            } else {
+                thisTag = tagHi & 0xFF;
+                tagLen = 1;
+            }
+
+            if ((short) thisTag == tagId) {
+                return true;
+            }
+
+            off += tagLen;
+            if (off >= end) return false;
+
+            int lenByte = tlvData[off] & 0xFF;
+            int valueLen;
+            int lenFieldLen;
+            if (lenByte < 0x80) {
+                valueLen = lenByte;
+                lenFieldLen = 1;
+            } else if (lenByte == 0x81 && off + 1 < end) {
+                valueLen = tlvData[off + 1] & 0xFF;
+                lenFieldLen = 2;
+            } else if (lenByte == 0x82 && off + 2 < end) {
+                valueLen = ((tlvData[off + 1] & 0xFF) << 8) | (tlvData[off + 2] & 0xFF);
+                lenFieldLen = 3;
+            } else {
+                return false;
+            }
+
+            off += lenFieldLen + valueLen;
         }
         return false;
     }
@@ -1785,13 +1871,17 @@ public class PropertyTest {
         Assume.that(response.getSW() == 0x9000);
 
         byte[] data = response.getData();
-        assertTrue(containsTag(data, (short) 0x9F27),
+        // TLV-aware matching here — the response is proper BER-TLV and the
+        // 128-byte RSA-encrypted SDAD (9F4B value) contains random-looking
+        // bytes that can coincidentally include any 2-byte pair. See
+        // containsTlvTag javadoc for the observed CI flake this guards against.
+        assertTrue(containsTlvTag(data, (short) 0x9F27),
             "C-2 Table 5.13: CDA response must contain CID (9F27)");
-        assertTrue(containsTag(data, (short) 0x9F36),
+        assertTrue(containsTlvTag(data, (short) 0x9F36),
             "C-2 Table 5.13: CDA response must contain ATC (9F36)");
-        assertTrue(containsTag(data, (short) 0x9F4B),
+        assertTrue(containsTlvTag(data, (short) 0x9F4B),
             "C-2 Table 5.13: CDA response must contain SDAD (9F4B)");
-        assertFalse(containsTag(data, (short) 0x9F26),
+        assertFalse(containsTlvTag(data, (short) 0x9F26),
             "C-2 Table 5.13: CDA response must NOT contain bare AC (9F26)");
     }
 
