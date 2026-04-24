@@ -15,6 +15,18 @@ public class TagTemplate {
     }
 
     /**
+     * Reset this template so it references no tags. Used by factoryReset()
+     * to prevent cross-test state leakage in jcardsim: without this, a
+     * template populated by one test (e.g., DGI B001 GPO template = [AIP,
+     * AFL]) remains set across factory-reset boundaries and causes later
+     * tests that didn't personalize all those tags to fail with
+     * SW_DATA_INVALID (0x6984) inside expandTlvToArray().
+     */
+    public final void clear() {
+        this.length = (byte) 0;
+    }
+
+    /**
      * Set BER-TLV EMV tag list. All tags should be stored as EmvTag before serialization.
      */
     public final void setData(byte[] src, short srcOffset, byte length) {

@@ -595,12 +595,17 @@ public class PaymentApplication extends EmvApplet {
         if (EmvTag.findTag((short) 0x5A) != null) {
             arrayRandomFill(challenge);
 
-            if (tagA5Fci != null) {
+            if (tagA5Fci != null && (tagA5Fci.getLength() & 0xFF) > 0) {
                 short length = tagA5Fci.expandTlvToArray(tmpBuffer, (short) 0);
                 EmvTag.setTag((short) 0xA5, tmpBuffer, (short) 0, (byte) length);
             }
 
-            if (tag6fFci != null) {
+            // Require BOTH the 6F FCI template reference AND a populated tag
+            // list — after factoryReset() the template object still exists but
+            // has length = 0. Returning an empty [6F 00] FCI would confuse
+            // properly-written terminals and breaks the property test's
+            // "SELECT with invalid AID should not return 9000 with data".
+            if (tag6fFci != null && (tag6fFci.getLength() & 0xFF) > 0) {
                 short length = tag6fFci.expandTlvToArray(tmpBuffer, (short) 0);
                 EmvTag.setTag((short) 0x6F, tmpBuffer, (short) 0, (byte) length);
                 sendResponse(apdu, buf, (short) 0x6F);
