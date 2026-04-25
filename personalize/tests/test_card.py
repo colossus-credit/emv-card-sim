@@ -11,8 +11,16 @@ from emv_personalize.crypto import CertificateHierarchy
 
 @pytest.fixture
 def card():
+    """Card fixture pinned to legacy dev-command mode.
+
+    These tests assert specific 80xx APDU byte sequences (SET_TAG, SET_SETTINGS,
+    SET_READ_RECORD_TEMPLATE, etc.). They were written before the default
+    flipped to CPS mode, so they explicitly request ``use_store_data=False``
+    to keep asserting dev-mode output. CPS-mode test coverage lives in the
+    dry-run integration path in ``personalize.py``.
+    """
     transport = DryRunTransport(verbose=False)
-    return Card(transport), transport
+    return Card(transport, use_store_data=False), transport
 
 
 @pytest.fixture
@@ -188,8 +196,14 @@ class TestPersonalizePpse:
         assert hexes[0] == "00A404000E325041592E5359532E4444463031"
         # FACTORY_RESET
         assert hexes[1] == "8005000000"
-        # Directory entry with contactless AID
-        dir_apdus = [h for h in hexes if "A0000009511010" in h and h.startswith("8001006116")]
+        # PPSE perso was migrated to the proprietary CPS STORE DATA path
+        # (DGI D001) in commit 243d516 — PPSE's own STORE DATA handler only
+        # accepts D001 and D002. The directory entry now rides in a STORE
+        # DATA body (80 E2 00 00 LC D0 01 <len> <contactless-AID-bytes ...>).
+        dir_apdus = [
+            h for h in hexes
+            if "A0000009511010" in h and h.startswith("80E20000") and "D001" in h
+        ]
         assert len(dir_apdus) == 1
 
 
@@ -255,15 +269,15 @@ class TestPersonalizePaymentApp:
 
     def test_contact_and_contactless_same_structure(self, card, profile, certs):
         """Both AIDs should produce the same APDU structure (different AID only)."""
-        c1, t1 = Card(DryRunTransport(verbose=False)), DryRunTransport(verbose=False)
-        c1 = Card(t1)
+        t1 = DryRunTransport(verbose=False)
+        c1 = Card(t1, use_store_data=False)
         personalize_payment_app(
             c1, aid="A0000009510001", profile=profile,
             pan="6690750012345678", expiry_yymmdd="271231", certs=certs,
         )
 
         t2 = DryRunTransport(verbose=False)
-        c2 = Card(t2)
+        c2 = Card(t2, use_store_data=False)
         personalize_payment_app(
             c2, aid="A0000009511010", profile=profile,
             pan="6690750012345678", expiry_yymmdd="271231", certs=certs,

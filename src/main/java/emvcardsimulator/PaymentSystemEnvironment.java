@@ -80,36 +80,21 @@ public class PaymentSystemEnvironment extends EmvApplet {
     }
 
     protected void processReadRecord(APDU apdu, byte[] buf) {
-        short p1p2 = Util.getShort(buf, ISO7816.OFFSET_P1);
         byte p1 = buf[ISO7816.OFFSET_P1];  // Record number
         byte p2 = buf[ISO7816.OFFSET_P2];  // SFI encoding
 
-        // Check if this is SFI=1 with proper encoding: (P2 & 0x07) == 0x04
-        // SFI = (P2 & 0xF8) >> 3
+        // PSE SFI=1, Record 2: hardcoded empty record per EMV Book 1 §12.2.3.
+        // Contact terminals use this to detect end-of-directory.
         byte sfi = (byte) ((p2 & 0xF8) >> 3);
-        boolean isSfi1Properly = (sfi == (byte) 1) && ((p2 & 0x07) == 0x04);
-
-        // PSE SFI=1 special handling: record 2 returns empty 70 00
-        if (isSfi1Properly && p1 == (byte) 2) {
-            // Return empty record template: 70 00
-            tmpBuffer[0] = (byte) 0x70;
-            tmpBuffer[1] = (byte) 0x00;
-            apdu.setOutgoing();
-            apdu.setOutgoingLength((short) 2);
-            apdu.sendBytesLong(tmpBuffer, (short) 0, (short) 2);
+        if (sfi == (byte) 1 && (p2 & 0x07) == 0x04 && p1 == (byte) 2) {
+            buf[ISO7816.OFFSET_CDATA] = (byte) 0x70;
+            buf[(short)(ISO7816.OFFSET_CDATA + 1)] = (byte) 0x00;
+            apdu.setOutgoingAndSend(ISO7816.OFFSET_CDATA, (short) 2);
             return;
         }
 
-        // Record data stored as EmvTag entry keyed by P1P2
-        EmvTag recordTag = EmvTag.findTag(p1p2);
-        if (recordTag == null) {
-            EmvApplet.logAndThrow(ISO7816.SW_RECORD_NOT_FOUND);
-        }
-
-        // Copy raw record data and wrap in tag 70
-        short recordLen = recordTag.copyDataToArray(tmpBuffer, (short) 0);
-        EmvTag.setTag((short) 0x0070, tmpBuffer, (short) 0, recordLen);
-        sendResponse(apdu, buf, (short) 0x0070);
+        // Delegate to base class — uses RecordTemplate for O(k) lookup
+        super.processReadRecord(apdu, buf);
     }
 
     /**

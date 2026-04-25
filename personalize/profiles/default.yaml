@@ -72,18 +72,26 @@ tags:
   Application Version Number: "0002"
   Application Effective Date: "240101"
   Issuer Country Code: "0840"
-  # AUC per EMV Book 3 Annex B4: byte 1 = AB (domestic cash/goods/services + ATM + non-ATM POS;
-  # no international), byte 2 = 80 (domestic cashback allowed, intl cashback disabled).
-  # Suits a US-issued debit rollout (grocery/pharmacy cashback common); switch to AB00 for credit.
-  Application Usage Control: "AB80"
+  # AUC per EMV Book 3 Annex B4: byte 1 = FF (all bits set — valid for domestic
+  # + international, cash + goods + services, ATM + non-ATM POS); byte 2 = 00
+  # (no cashback). Suits an internationally-acceptable card without cashback.
+  Application Usage Control: "FF00"
   SDA Tag List: "82"
   Track 1 Discretionary Data: "00000000000000000000000000000000000000"
-  Service Code: "0701"
+  # Service Code per ISO 7813: digit 1 = 2 (international, use IC where feasible),
+  # digit 2 = 0 (normal authorization), digit 3 = 1 (no restrictions). Standard
+  # ICC chip-card service code for general-purpose retail.
+  Service Code: "0201"
   Application Currency Code: "0840"
   Application Currency Exponent: "02"
   IAC-Default: "D84000A800"
   IAC-Denial: "0010000000"
-  IAC-Online: "D84004F800"
+  # IAC-Online: byte 1 = DC (ODA not performed b8, SDA failed b7, Card on exception file b5,
+  # DDA failed b4, CDA failed b3); byte 2 = 40 (Expired application); byte 3 = 04 (New card);
+  # byte 4 = F8 (floor-limit exceeded, random-selection, etc.); byte 5 = 00.
+  # CDA-failed bit (byte 1 b3) added for defensive coverage — ODA-not-performed alone
+  # already routes online, but setting b3 ensures a pure "CDA failed" TVR flag also triggers online.
+  IAC-Online: "DC4004F800"
   Issuer Code Table Index: "01"
   Language Preference: "656E"
   Issuer Application Data: "06010A03A4A002"
@@ -121,6 +129,7 @@ contactless:
         Transaction Type: 1
         Unpredictable Number: 4
         Terminal Identification: 8
+        Merchant Category Code: 2   # 9F15 — ColossusNet spec §7.3
         Merchant Identifier: 15
         Acquirer Identifier: 6
 

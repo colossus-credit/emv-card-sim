@@ -13,7 +13,7 @@ from .apdu import ApduBuilder, ApduCommand, Transport, PSE_AID, PPSE_AID
 from .apdu import CLA_PROPRIETARY, INS_SET_READ_RECORD_TEMPLATE
 from .tags import resolve_tag, tag_name
 from .tlv import (
-    build_dol, hex_to_bytes, format_pan,
+    build_dol, build_tlv, hex_to_bytes, format_pan,
     build_track2, build_afl, build_cvm_list,
 )
 from .crypto import CertificateHierarchy
@@ -41,15 +41,52 @@ class Card:
 
     Args:
         transport: APDU transport backend
-        use_store_data: If True, use CPS v2.0 STORE DATA (INS E2) instead of
-                       custom dev commands (80 01/02/03/04). Required for
-                       production personalization via bureau.
+        use_store_data: If True (default), use CPS v2.0 STORE DATA (INS E2)
+                       with standard DGI numbering. Required for production
+                       handoff to card manufacturers. If False, use the
+                       proprietary 80xx dev commands — only works on
+                       non-production builds where they haven't been stripped.
+
+    Tag-value cache:
+        To build record bodies in CPS mode (DGI ``01XX..1EXX``), the Card
+        maintains a local cache of the raw bytes set for each EMV tag. The
+        cache is populated by every ``set_tag``/``set_pan``/``set_track2``/etc.
+        call so that a later ``set_record_cps(sfi, rec, [tags...])`` can build
+        the inner TLV without round-tripping to the card.
     """
 
-    def __init__(self, transport: Transport, *, use_store_data: bool = False):
+    def __init__(self, transport: Transport, *, use_store_data: bool = True):
         self.builder = ApduBuilder(transport)
         self.transport = transport
         self.use_store_data = use_store_data
+        # Cache of raw tag values, populated as set_* methods are called.
+        # Used by set_record_cps to build record inner TLVs without round-tripping.
+        self._tag_cache: dict[int, bytes] = {}
+        # Tags that have been included in record DGIs — these don't need
+        # standalone DGI sends since their data is already on the card.
+        self._tags_in_records: set[int] = set()
+
+    # ---- Tag cache ----
+
+    def _cache_tag(self, tag: int, data: bytes) -> None:
+        """Remember what value we set for this tag so records can reference it."""
+        self._tag_cache[tag] = data
+
+    def set_emv_tag(self, tag: int, data: bytes, description: str = "") -> None:
+        """Set a raw EMV tag value, caching locally for later record/DGI use.
+
+        In CPS mode (``use_store_data=True``), values are cached only.
+        Tags that belong in records are sent inside record DGIs by
+        ``set_record_cps()``. Remaining tags are sent as standalone DGIs
+        (DGI = tag ID, per CPS §3.2 bullet 7) by ``send_standalone_tags()``.
+
+        In dev mode (``use_store_data=False``), the value is sent immediately
+        via the proprietary ``80 01`` command.
+        """
+        self._cache_tag(tag, data)
+        if not self.use_store_data:
+            desc = description or f"SET_TAG {tag_name(tag)}"
+            self.builder.set_emv_tag(tag, data, desc)
 
     # ---- Application Selection ----
 
@@ -67,7 +104,29 @@ class Card:
     # ---- Factory Reset ----
 
     def factory_reset(self) -> None:
-        self.builder.factory_reset()
+        """Clear the applet and local tag cache.
+
+        Sends the proprietary ``0x8005 FACTORY_RESET`` dev command which
+        wipes the applet's persistent state (EmvTag list, record store,
+        lifecycle). On production builds this command is stripped and
+        the card will return 6D00 — in that case we skip the reset
+        (a freshly installed applet is already in PERSO_PENDING).
+
+        Also clears the local Python tag-value cache so stale values from
+        a previous applet (e.g. PSE) don't leak into records personalized
+        on the next one.
+        """
+        try:
+            self.builder.factory_reset()
+        except RuntimeError as exc:
+            if "6D00" in str(exc):
+                import logging
+                logging.info("factory_reset rejected (production build) — "
+                             "continuing with fresh applet state")
+            else:
+                raise
+        self._tag_cache.clear()
+        self._tags_in_records.clear()
 
     # ---- EMV Tag Setting ----
 
@@ -93,48 +152,29 @@ class Card:
         else:
             raise ValueError("Must provide either 'value' or 'dol'")
 
-        if self.use_store_data:
-            self.builder.store_data(tag, data, description=f"STORE_DATA tag {tag_name(tag)}")
-        else:
-            self.builder.set_emv_tag(tag, data)
+        self.set_emv_tag(tag, data, f"tag {tag_name(tag)}")
 
     def set_pan(self, pan: str) -> None:
         data = format_pan(pan)
         tag = resolve_tag("PAN")
-        desc = f"PAN ({pan})"
-        if self.use_store_data:
-            self.builder.store_data(tag, data, description=f"STORE_DATA {desc}")
-        else:
-            self.builder.set_emv_tag(tag, data, f"SET_TAG {desc}")
+        self.set_emv_tag(tag, data, f"PAN ({pan})")
 
     def set_track2(self, pan: str, expiry_yymm: str,
                    service_code: str = "2201") -> None:
         data = build_track2(pan, expiry_yymm, service_code)
         tag = resolve_tag("Track2")
-        desc = f"Track2 ({len(data)} bytes)"
-        if self.use_store_data:
-            self.builder.store_data(tag, data, description=f"STORE_DATA {desc}")
-        else:
-            self.builder.set_emv_tag(tag, data, f"SET_TAG {desc}")
+        self.set_emv_tag(tag, data, f"Track2 ({len(data)} bytes)")
 
     def set_afl(self, entries: list[tuple[int, int, int, int]]) -> None:
         data = build_afl(entries)
         tag = resolve_tag("AFL")
-        desc = f"AFL ({len(entries)} entries)"
-        if self.use_store_data:
-            self.builder.store_data(tag, data, description=f"STORE_DATA {desc}")
-        else:
-            self.builder.set_emv_tag(tag, data, f"SET_TAG {desc}")
+        self.set_emv_tag(tag, data, f"AFL ({len(entries)} entries)")
 
     def set_cvm_list(self, amount_x: int, amount_y: int,
                      rules: list[tuple[int, int]]) -> None:
         data = build_cvm_list(amount_x, amount_y, rules)
         tag = resolve_tag("CVM List")
-        desc = f"CVM List ({len(rules)} rules)"
-        if self.use_store_data:
-            self.builder.store_data(tag, data, description=f"STORE_DATA {desc}")
-        else:
-            self.builder.set_emv_tag(tag, data, f"SET_TAG {desc}")
+        self.set_emv_tag(tag, data, f"CVM List ({len(rules)} rules)")
 
     # ---- Template Configuration ----
 
@@ -200,20 +240,99 @@ class Card:
 
     def set_read_record_template(self, sfi: int, record: int,
                                  tags: list[str | int]) -> None:
+        """Set the contents of a linear-fixed EF record.
+
+        In CPS mode (``use_store_data=True``, the default), builds the inner
+        TLV by looking up each tag in the local cache and sends it via
+        STORE DATA DGI ``(sfi << 8) | record``. Each tag referenced MUST
+        already have been set on the card (via ``set_tag``, ``set_pan``,
+        etc.) — otherwise a ``KeyError`` is raised with the missing tag.
+
+        In legacy dev mode (``use_store_data=False``), sends a tag-list
+        template via the proprietary ``INS=0x03 SET_READ_RECORD_TEMPLATE``
+        command. The applet expands this at READ RECORD time by looking
+        each tag up in its EmvTag store.
+        """
         resolved = [resolve_tag(str(t)) for t in tags]
-        # Always use dev command 8003 for record templates — STORE DATA DGI path
-        # stores records that aren't accessible over contactless on JCOP cards
-        self.builder.set_read_record_template(sfi, record, resolved)
+        if self.use_store_data:
+            self.set_record_cps(sfi, record, resolved)
+        else:
+            self.builder.set_read_record_template(sfi, record, resolved)
+
+    def set_record_cps(self, sfi: int, record: int, tags: list[int]) -> None:
+        """Send a record via CPS STORE DATA DGI ``(sfi<<8) | record``.
+
+        Builds the inner TLV (concatenated tag-length-value tuples) from the
+        tag cache and sends it as the DGI payload. The applet's
+        processOneDgi for DGI ``01XX..1EXX`` stores the raw bytes in its
+        RecordStore, and READ RECORD wraps them in tag 70 when responding.
+
+        Raises KeyError if any referenced tag hasn't been set yet.
+        """
+        if not (1 <= sfi <= 30):
+            raise ValueError(f"SFI must be 1..30, got {sfi}")
+        if not (1 <= record <= 255):
+            raise ValueError(f"Record number must be 1..255, got {record}")
+
+        body = bytearray()
+        for tag_id in tags:
+            if tag_id not in self._tag_cache:
+                raise KeyError(
+                    f"Tag {tag_id:#06X} ({tag_name(tag_id)}) not in cache; "
+                    f"set it via set_tag/set_pan/etc. before building record "
+                    f"SFI{sfi}/REC{record}"
+                )
+            body.extend(build_tlv(tag_id, self._tag_cache[tag_id]))
+            self._tags_in_records.add(tag_id)
+
+        dgi = (sfi << 8) | record
+        self.builder.store_data(
+            dgi, bytes(body),
+            description=f"STORE_DATA record SFI{sfi}/REC{record} ({len(body)}B, {len(tags)} tags)",
+        )
+
+    def create_ef(self, sfi: int, num_records: int,
+                  max_record_size: int) -> None:
+        """Send DGI 0062 to pre-declare an EF's file structure.
+
+        Builds a single 62-FCP TLV per CPS v2.0 Annex A.5 Table A-27:
+
+          62 L
+            80 02 <file_size>      (number of data bytes)
+            82 05 0A 01 <max_rec> <num_recs>   (linear fixed, T=1, max rec size, num recs)
+            88 01 <sfi>            (short EF identifier)
+
+        The applet preallocates the SFI's record slots so subsequent record
+        DGIs (XX YY) are validated against the declared bounds. Optional per
+        spec but recommended for real perso bureau workflows.
+        """
+        if not (1 <= sfi <= 30):
+            raise ValueError(f"SFI must be 1..30, got {sfi}")
+        if not (1 <= num_records <= 16):
+            raise ValueError(f"num_records must be 1..16, got {num_records}")
+        if not (1 <= max_record_size <= 254):
+            raise ValueError(f"max_record_size must be 1..254, got {max_record_size}")
+
+        file_size = num_records * max_record_size
+        inner = (
+            b"\x80\x02" + file_size.to_bytes(2, "big") +
+            b"\x82\x05\x0a\x01" + max_record_size.to_bytes(2, "big") + bytes([num_records]) +
+            b"\x88\x01" + bytes([sfi])
+        )
+        fcp = b"\x62" + bytes([len(inner)]) + inner
+        self.builder.store_data(
+            0x0062, fcp,
+            description=f"STORE_DATA DGI 0062 (create EF SFI{sfi}, {num_records}x{max_record_size}B)",
+        )
 
     # ---- Settings ----
 
-    # CPS DGIs for settings
-    DGI_PIN = 0x8010         # CPS standard: offline PIN block
-    DGI_RSA_KEY = 0x8000     # CPS standard: block cipher keys (symmetric)
-    # App-specific DGIs for asymmetric keys and config (not in CPS standard)
-    DGI_RSA_MODULUS = 0x8201
-    DGI_RSA_EXPONENT = 0x8202
-    DGI_EC_SCALAR = 0x8203
+    # CPS v2.0 Annex A.2 Data Grouping Identifiers for key material.
+    DGI_PIN = 0x8010          # CPS: offline PIN block
+    DGI_BLOCK_CIPHER = 0x8000  # CPS: block cipher keys (symmetric) — Table A-2
+    DGI_RSA_EXPONENT = 0x8101  # CPS: ICC Private Key exponent — Table A-8
+    DGI_RSA_MODULUS = 0x8103   # CPS: ICC Modulus — Table A-10
+    DGI_EC_SCALAR = 0x8105     # CPS: ICC ECC Secret Key — Table A-11b
     DGI_RESPONSE_TEMPLATE = 0xA002
     DGI_FLAGS = 0xA003
 
@@ -245,11 +364,13 @@ class Card:
 
     def set_rsa_key(self, modulus: bytes, private_exp: bytes) -> None:
         if self.use_store_data:
-            # App-specific DGIs for RSA key components (not CPS 8000 which is symmetric)
+            # CPS v2.0 plain-form RSA: DGI 8103 (modulus) + DGI 8101 (exponent).
+            # Modulus must arrive first so the applet can build the RSAPrivateKey
+            # object before the exponent is applied.
             self.builder.store_data(self.DGI_RSA_MODULUS, modulus,
-                                    description=f"STORE_DATA RSA modulus ({len(modulus)}B)")
+                                    description=f"STORE_DATA RSA modulus (CPS 8103, {len(modulus)}B)")
             self.builder.store_data(self.DGI_RSA_EXPONENT, private_exp,
-                                    description=f"STORE_DATA RSA exponent ({len(private_exp)}B)")
+                                    description=f"STORE_DATA RSA exponent (CPS 8101, {len(private_exp)}B)")
         else:
             self.builder.set_settings(SETTING_RSA_MODULUS, modulus,
                                       f"RSA modulus ({len(modulus)} bytes)")
@@ -261,9 +382,56 @@ class Card:
             raise ValueError(f"EC scalar must be 32 bytes, got {len(scalar)}")
         if self.use_store_data:
             self.builder.store_data(self.DGI_EC_SCALAR, scalar,
-                                    description="STORE_DATA EC P-256 private key")
+                                    description="STORE_DATA EC P-256 private key (CPS 8105)")
         else:
             self.builder.set_settings(SETTING_EC_PRIVATE, scalar, "EC P-256 private key")
+
+    # ---- Personalization Lifecycle ----
+
+    def finalize_personalization(self) -> None:
+        """Commit the applet's personalization lifecycle.
+
+        Sends a final STORE DATA command with bit 8 of P1 set (CPS v2.0
+        §4.3.4 Table 4-9). On receipt, the applet transitions from
+        PERSO_PENDING to PERSO_DONE (CPS §4.3.5.1). Once committed, any
+        further STORE DATA on the same applet returns 6985.
+
+        The payload is DGI 7FFF (personalization integrity MAC per CPS
+        §4.3.5.2). We don't compute a real MAC here — the applet accepts
+        DGI 7FFF as a no-op placeholder — but CPS recommends it be present
+        in the last STORE DATA command.
+
+        Should only be called in STORE DATA mode (use_store_data=True).
+        In dev-command mode the lifecycle stays PERSO_PENDING.
+        """
+        if not self.use_store_data:
+            log.debug("finalize_personalization() no-op in dev-command mode")
+            return
+        # DGI 7FFF placeholder payload (8 bytes of zeros). Real perso bureau
+        # would put the computed CPS integrity MAC here.
+        self.builder.store_data(0x7FFF, b"\x00" * 8,
+                                last=True,
+                                description="STORE_DATA DGI 7FFF (finalize perso)")
+
+    def send_standalone_tags(self) -> None:
+        """Send standalone DGIs for cached tags not already in a record.
+
+        Per CPS §3.2 bullet 7, tags not contained in any record are sent
+        as standalone DGIs where DGI value == tag ID. This must be called
+        after all ``set_record_cps()`` calls so the record-membership set
+        is complete.
+
+        Only meaningful in CPS mode — in dev mode tags were already sent
+        individually by ``set_emv_tag()``.
+        """
+        if not self.use_store_data:
+            return
+        for tag_id, data in self._tag_cache.items():
+            if tag_id not in self._tags_in_records:
+                self.builder.store_data(
+                    tag_id, data,
+                    description=f"STORE_DATA standalone DGI {tag_id:#06X} ({tag_name(tag_id)})",
+                )
 
 
 # ---- Personalization Functions ----
@@ -292,14 +460,14 @@ def personalize_pse(
     dir_entry += b"\x4F" + bytes([len(aid_bytes)]) + aid_bytes
     dir_entry += b"\x50" + bytes([len(label_bytes)]) + label_bytes
     dir_entry += b"\x87\x01\x01"
-    card.builder.set_emv_tag(0x61, bytes(dir_entry), "PSE directory entry (61)")
+    # Set tag 61 (caches the value) and bind it to SFI 1 REC 1 as the PSE's
+    # directory record. set_read_record_template will build the inner TLV
+    # `61 LL <dir_entry>` from the cached tag and send STORE DATA DGI 0101.
+    card.set_emv_tag(0x61, bytes(dir_entry), "PSE directory entry (61)")
+    card.set_read_record_template(1, 1, ["61"])
 
-    # READ RECORD SFI1/REC1: full 61-wrapped entry
-    full_entry = b"\x61" + bytes([len(dir_entry)]) + bytes(dir_entry)
-    apdu = ApduCommand(CLA_PROPRIETARY, INS_SET_READ_RECORD_TEMPLATE,
-                       0x01, (0x01 << 3) | 0x04, full_entry,
-                       description="READ_RECORD SFI1/REC1 (PSE dir entry)")
-    card.builder.send(apdu)
+    # Send tags not in any record as standalone DGIs (CPS §3.2 bullet 7)
+    card.send_standalone_tags()
 
 
 def personalize_ppse(
@@ -307,7 +475,18 @@ def personalize_ppse(
     preferred_name: str | None = None,
     kernel_identifier: str | None = None,
 ) -> None:
-    """Personalize the PPSE (2PAY.SYS.DDF01) directory applet."""
+    """Personalize the PPSE (2PAY.SYS.DDF01) directory applet.
+
+    The PPSE applet is specialised — it does NOT use the generic EmvTag store
+    or RecordStore. It has its own proprietary STORE DATA handler that accepts
+    only two DGIs:
+
+      * ``D001`` — directory entry (inside-tag-61 content)
+      * ``D002`` — complete FCI template (not used here)
+
+    We therefore bypass ``card.set_emv_tag()`` and send the directory entry
+    directly via STORE DATA DGI D001 regardless of ``use_store_data`` mode.
+    """
     aid_bytes = hex_to_bytes(contactless_aid)
     label_bytes = label.encode()
 
@@ -322,7 +501,12 @@ def personalize_ppse(
     if kernel_identifier:
         kid = bytes.fromhex(kernel_identifier)
         dir_entry += b"\x9F\x2A" + bytes([len(kid)]) + kid
-    card.builder.set_emv_tag(0x61, bytes(dir_entry), "PPSE directory entry (61)")
+
+    # Send to PPSE's proprietary STORE DATA handler as DGI D001.
+    card.builder.store_data(
+        0xD001, bytes(dir_entry),
+        description=f"STORE_DATA PPSE directory entry (DGI D001, {len(dir_entry)}B)",
+    )
 
 
 def personalize_payment_app(
@@ -379,15 +563,15 @@ def personalize_payment_app(
     # ── Certificates ──
     card.set_tag("CA Public Key Index", value=certs.capk_index)
     card.set_tag("Issuer PK Exponent", value="03")
-    card.builder.set_emv_tag(0x90, certs.issuer_cert.certificate,
-                             "Issuer PK Certificate")
-    card.builder.set_emv_tag(0x92, certs.issuer_cert.remainder,
-                             "Issuer PK Remainder")
+    card.set_emv_tag(0x90, certs.issuer_cert.certificate,
+                     "Issuer PK Certificate")
+    card.set_emv_tag(0x92, certs.issuer_cert.remainder,
+                     "Issuer PK Remainder")
     card.set_tag("ICC PK Exponent", value="03")
-    card.builder.set_emv_tag(0x9F46, certs.icc_cert.certificate,
-                             "ICC PK Certificate")
-    card.builder.set_emv_tag(0x9F48, certs.icc_cert.remainder,
-                             "ICC PK Remainder")
+    card.set_emv_tag(0x9F46, certs.icc_cert.certificate,
+                     "ICC PK Certificate")
+    card.set_emv_tag(0x9F48, certs.icc_cert.remainder,
+                     "ICC PK Remainder")
 
     # ── Response Templates (from profile) ──
     templates = profile.get("templates", {})
@@ -401,12 +585,6 @@ def personalize_payment_app(
         tags_a5=cl_fci.get("a5", fci.get("a5", ["Application Label", "Application Priority Indicator"])),
         tags_6f=cl_fci.get("6f", fci.get("6f", ["DF Name", "A5"])),
     )
-
-    # ── READ RECORD Templates (from profile) ──
-    for sfi_def in profile.get("records", []):
-        sfi = sfi_def["sfi"]
-        for rec_def in sfi_def["records"]:
-            card.set_read_record_template(sfi, rec_def["record"], rec_def["tags"])
 
     # ── ATC ──
     card.set_tag("ATC", value="0001")
@@ -462,3 +640,15 @@ def personalize_payment_app(
                 card.set_tag(tag_name_or_hex, value=spec["value"])
         else:
             card.set_tag(tag_name_or_hex, value=str(spec))
+
+    # ── READ RECORD Templates (LAST — records reference tags set above) ──
+    # In CPS mode, records are built as inner TLVs from the tag cache, so every
+    # referenced tag must already have been set by the time we get here. Keep
+    # this block at the bottom of the personalization sequence.
+    for sfi_def in profile.get("records", []):
+        sfi = sfi_def["sfi"]
+        for rec_def in sfi_def["records"]:
+            card.set_read_record_template(sfi, rec_def["record"], rec_def["tags"])
+
+    # Send tags not in any record as standalone DGIs (CPS §3.2 bullet 7)
+    card.send_standalone_tags()

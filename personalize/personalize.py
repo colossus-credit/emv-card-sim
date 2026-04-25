@@ -65,9 +65,17 @@ def resolve_keys(
 def run_personalization(
     profile: dict, transport, *,
     pan: str, expiry: str, keys_dir: str | None, gen_keys: bool,
-    use_store_data: bool = False,
+    use_store_data: bool = False, finalize: bool = True,
 ) -> None:
-    """Execute full personalization from a profile."""
+    """Execute full personalization from a profile.
+
+    finalize: when True (default), send the last STORE DATA with P1 bit 8 = 1
+    after each applet's perso stream, committing its lifecycle to PERSO_DONE.
+    Once committed, subsequent STORE DATA calls return 6985 (CPS §4.3.5.4).
+    Set False to leave each applet's lifecycle in PERSO_PENDING so the card
+    remains re-personalizable without needing to DELETE + INSTALL via ISD —
+    useful for dev/test cards, unsafe for cards going to real cardholders.
+    """
     card = Card(transport, use_store_data=use_store_data)
 
     label = profile.get("application_label", "COLOSSUS")
@@ -107,6 +115,28 @@ def run_personalization(
         contactless=True,
     )
 
+    # Commit the lifecycle on all applets personalized via CPS STORE DATA.
+    # In dev-command mode (use_store_data=False) this is a no-op — the applet
+    # stays in PERSO_PENDING and the dev 80xx commands remain accepted.
+    #
+    # Note: PPSE is deliberately excluded — its specialized STORE DATA handler
+    # only accepts DGI D001/D002 (its own proprietary format) and rejects
+    # DGI 7FFF with 6A86. PPSE doesn't have a lifecycle gate; it's fully
+    # configured as soon as the D001 directory entry is stored.
+    if use_store_data and finalize:
+        log.info("=== Finalizing personalization (committing lifecycle) ===")
+        # Each applet has its own lifecycle, so we select each one and send
+        # the final STORE DATA against it.
+        card.select(contactless_aid)
+        card.finalize_personalization()
+        if contact_aid != contactless_aid:
+            card.select(contact_aid)
+            card.finalize_personalization()
+        card.select_pse()
+        card.finalize_personalization()
+    elif use_store_data and not finalize:
+        log.info("=== Skipping finalize (--no-finalize); applets stay PERSO_PENDING ===")
+
     log.info("=== Personalization complete ===")
     log.info("  PAN:              %s", pan)
     log.info("  Expiry:           %s", expiry)
@@ -139,7 +169,23 @@ Examples:
                         help="Generate new certificate hierarchy")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--store-data", action="store_true",
-                        help="Use CPS v2.0 STORE DATA (INS E2) instead of custom dev commands")
+                        default=True,
+                        help="(default) Use CPS v2.0 STORE DATA (INS E2). "
+                             "This is the production-ready path and the mode "
+                             "card manufacturers' perso bureaus will use.")
+    parser.add_argument("--legacy-dev", dest="store_data", action="store_false",
+                        help="Opt out of CPS mode and use the proprietary "
+                             "dev 80xx commands instead. Only works on "
+                             "non-production builds where dev commands "
+                             "haven't been stripped.")
+    parser.add_argument("--no-finalize", dest="finalize", action="store_false",
+                        default=True,
+                        help="Skip the final P1 b8=1 STORE DATA for each "
+                             "applet. Lifecycle stays PERSO_PENDING so the "
+                             "card can be re-personalized later without "
+                             "needing ISD keys for DELETE + INSTALL. Use for "
+                             "dev/test cards ONLY — cards going to real "
+                             "cardholders MUST finalize (default behavior).")
     parser.add_argument("--gp-jar-format", action="store_true",
                         help="In dry-run, output as gp.jar -a arguments")
 
@@ -185,7 +231,7 @@ Examples:
         run_personalization(
             profile, transport, pan=pan, expiry=expiry,
             keys_dir=keys_dir, gen_keys=args.gen_keys,
-            use_store_data=args.store_data,
+            use_store_data=args.store_data, finalize=args.finalize,
         )
     finally:
         if args.dry_run and args.gp_jar_format:
